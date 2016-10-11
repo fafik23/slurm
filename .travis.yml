@@ -3,6 +3,7 @@ compiler:
   - clang
   - gcc
 cache: ccache
+
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
 script:
