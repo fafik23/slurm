@@ -112,8 +112,9 @@ sudo service munge start
 sudo /tmp/slurm/sbin/slurmdbd -D -v &
 sleep 1
 sudo /tmp/slurm/bin/sacctmgr -i add cluster test
-sleep 1
+sleep 2
 sudo /tmp/slurm/sbin/slurmctld -D &
+sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
