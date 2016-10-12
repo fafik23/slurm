@@ -1,4 +1,4 @@
-sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  "required" ;else "false" ; fi
+sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  required ;else false ; fi
 #dist: trusty
 language: c
 addons:
