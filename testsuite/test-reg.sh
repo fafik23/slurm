@@ -8,6 +8,7 @@ sudo mkdir /sys/fs/cgroup/freezer
 sudo mount -t cgroup -ofreezer cpuset /sys/fs/cgroup/freezer
 
 mkdir /tmp/slurm/etc
+mkdir /tmp/slurm_save
 
 export PATH=$PATH:/tmp/slurm/bin/:/tmp/slurm/sbin/
 
