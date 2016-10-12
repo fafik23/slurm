@@ -104,6 +104,10 @@ create database slurm_acct_db;
 create user 'slurm'@'localhost';
 grant all on slurm_acct_db.* TO 'slurm'@'localhost';
 EOL
+
+sudo /usr/sbin/create-munge-key
+sudo service munge start
+
 sudo /tmp/slurm/sbin/slurmdbd
 sudo /tmp/slurm/bin/sacctmgr add cluster test
 sudo /tmp/slurm/sbin/slurmctld
