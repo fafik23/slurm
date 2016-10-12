@@ -109,7 +109,7 @@ EOL
 sudo /usr/sbin/create-munge-key
 sudo service munge start
 
-sudo /tmp/slurm/sbin/slurmdbd -D &
+sudo /tmp/slurm/sbin/slurmdbd -D -v &
 sudo /tmp/slurm/bin/sacctmgr -i add cluster test
 sudo /tmp/slurm/sbin/slurmctld -D &
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
