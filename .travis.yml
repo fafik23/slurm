@@ -9,6 +9,9 @@ addons:
     - liblua5.2-dev
     - munge
     - expect
+    - libhwloc-dev
+    - libnuma1
+    - libpam-dev
 compiler:
   - clang
   - gcc
