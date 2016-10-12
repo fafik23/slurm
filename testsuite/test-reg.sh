@@ -116,8 +116,7 @@ service munge start
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
-ls
-
+cat /proc/sys/kernel/core_pattern
 for f in *.core; do
 
     ## Check if the glob gets expanded to existing files.
