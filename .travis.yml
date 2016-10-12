@@ -1,4 +1,5 @@
 #sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  required ;else false ; fi
+sudo: required
 #dist: trusty
 language: c
 addons:
@@ -25,4 +26,4 @@ script:
   - ls /tmp/slurm
 
 after_script:
-  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; fi
+  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; df ; fi
