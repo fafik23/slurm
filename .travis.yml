@@ -9,7 +9,6 @@ addons:
     - libmunge-dev 
     - libmysqlclient-dev
     - liblua5.2-dev
-    - liblua5.3-dev
     - munge
     - expect
 compiler:
@@ -26,4 +25,4 @@ script:
   - ls /tmp/slurm
 
 after_script:
-  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; df ; fi
+  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; cat /proc/mounts ; fi
