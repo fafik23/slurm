@@ -1,11 +1,16 @@
-sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  required ;else false ; fi
+#sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  required ;else false ; fi
 #dist: trusty
 language: c
 addons:
   apt:
     packages:
     - cmake
-    - time
+    - libmunge-dev 
+    - libmysqlclient-dev
+    - liblua5.2-dev
+    - liblua5.3-dev
+    - munge
+    - expect
 compiler:
   - clang
   - gcc
