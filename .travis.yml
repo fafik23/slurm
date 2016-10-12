@@ -6,7 +6,6 @@ addons:
     packages:
     - cmake
     - libmunge-dev 
-    - libmysqlclient-dev
     - liblua5.2-dev
     - munge
     - expect

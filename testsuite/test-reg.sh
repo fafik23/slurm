@@ -16,7 +16,7 @@ CgroupMountpoint=/sys/fs/cgroup/
 ConstrainCores=yes
 EOL
 
-cat >/tmp/slurm/etc/cgroup.conf <<EOL
+cat >/tmp/slurm/etc/slurmdbd.conf <<EOL
 AuthType=auth/munge
 DbdAddr=localhost
 DbdHost=localhost
@@ -101,13 +101,12 @@ EOL
 
 sudo mysql -uroot <<EOL  
 create database slurm_acct_db;
-creat user 'slurm'@'localhost';
 grant all on slurm_acct_db.* TO 'slurm'@'localhost';
 EOL
-sudo /tmp/slurm/sbin/sacctmgr add cluster test
-sudo /tmp/slurm/sbin/slurmctld
+sudo /tmp/slurm/bin/sacctmgr add cluster test
 sudo /tmp/slurm/sbin/slurmdbd
-scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo slurmd -N XXX
+sudo /tmp/slurm/sbin/slurmctld
+scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
 
