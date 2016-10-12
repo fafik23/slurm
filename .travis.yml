@@ -25,4 +25,4 @@ script:
   - make -j install > /dev/null
 
 after_script:
-  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else  testsuite/test-reg.sh ; fi
+  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else sudo testsuite/test-reg.sh ; fi

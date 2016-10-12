@@ -1,11 +1,13 @@
 #!/bin/bash
 
-sudo mount -t tmpfs cgroup_root /sys/fs/cgroup
-sudo mkdir /sys/fs/cgroup/cpuset
-sudo mount -t cgroup -ocpuset cpuset /sys/fs/cgroup/cpuset
+ulimit -c unlimited
 
-sudo mkdir /sys/fs/cgroup/freezer
-sudo mount -t cgroup -ofreezer cpuset /sys/fs/cgroup/freezer
+mount -t tmpfs cgroup_root /sys/fs/cgroup
+mkdir /sys/fs/cgroup/cpuset
+mount -t cgroup -ocpuset cpuset /sys/fs/cgroup/cpuset
+
+mkdir /sys/fs/cgroup/freezer
+mount -t cgroup -ofreezer cpuset /sys/fs/cgroup/freezer
 
 mkdir /tmp/slurm/etc
 mkdir /tmp/slurm_save
@@ -105,16 +107,25 @@ create user 'slurm'@'localhost';
 grant all on slurm_acct_db.* TO 'slurm'@'localhost';
 EOL
 
-sudo /usr/sbin/create-munge-key
-sudo service munge start
+/usr/sbin/create-munge-key
+service munge start
 
-sudo /tmp/slurm/sbin/slurmdbd
-sudo /tmp/slurm/bin/sacctmgr -i add cluster test
-sudo /tmp/slurm/sbin/slurmctld
-scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
+/tmp/slurm/sbin/slurmdbd
+/tmp/slurm/bin/sacctmgr -i add cluster test
+/tmp/slurm/sbin/slurmctld
+scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
 ls
+
+for f in *.core; do
+
+    ## Check if the glob gets expanded to existing files.
+    ## If not, f here will be exactly the pattern above
+    ## and the exists test will evaluate to false.
+    [ -e "$f" ] && echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
+
+done
 
 srun hostname
 
