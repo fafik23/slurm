@@ -101,12 +101,12 @@ EOL
 
 sudo mysql -uroot <<EOL  
 create database slurm_acct_db;
-creat user slurm@localhost;
+creat user 'slurm'@'localhost';
 grant all on slurm_acct_db.* TO 'slurm'@'localhost';
 EOL
-sudo sacctmgr add cluster test
-sudo slurmctld
-sudo slurmdbd
+sudo /tmp/slurm/sbin/sacctmgr add cluster test
+sudo /tmp/slurm/sbin/slurmctld
+sudo /tmp/slurm/sbin/slurmdbd
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo slurmd -N XXX
 
 sinfo
