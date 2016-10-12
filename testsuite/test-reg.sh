@@ -114,6 +114,7 @@ sudo /tmp/slurm/sbin/slurmctld
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo -vv
+ls
 
 srun hostname
 
