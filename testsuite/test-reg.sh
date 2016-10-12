@@ -119,3 +119,7 @@ scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/sl
 
 sinfo
 
+srun hostname
+
+kill -9 %1
+kill -9 %2
