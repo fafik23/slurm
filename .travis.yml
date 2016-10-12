@@ -12,6 +12,7 @@ addons:
     - libhwloc-dev
     - libnuma1
     - libpam-dev
+    - mailutils
 compiler:
   - clang
   - gcc
