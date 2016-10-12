@@ -109,14 +109,11 @@ sudo /usr/sbin/create-munge-key
 sudo service munge start
 
 sudo /tmp/slurm/sbin/slurmdbd
-sleep 1
 sudo /tmp/slurm/bin/sacctmgr -i add cluster test
-sleep 2
 sudo /tmp/slurm/sbin/slurmctld
-sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX sudo /tmp/slurm/sbin/slurmd -N XXX
 
-sinfo
+sinfo -vv
 
 srun hostname
 
