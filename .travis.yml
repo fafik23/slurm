@@ -1,4 +1,11 @@
+sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  "required" ;else "false" ; fi
+dist: trusty
 language: c
+addons:
+  apt:
+    packages:
+    - cmake
+    - time
 compiler:
   - clang
   - gcc
@@ -7,5 +14,10 @@ cache: ccache
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
 script:
-- ./configure
-- make -j
+  - ./configure --enable-multiple-slurmd --enable-developer --prefix=/tmp/slurm/
+  - make -j > /dev/null
+  - make -j install > /dev/null
+  - ls /tmp/slurm
+
+after_script:
+  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; fi
