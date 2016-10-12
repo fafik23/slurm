@@ -1,8 +1,7 @@
-#sudo:  if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  required ;else false ; fi
 sudo: required
-#dist: trusty
 language: c
 addons:
+  mariadb: '10.1'
   apt:
     packages:
     - cmake
@@ -15,14 +14,12 @@ compiler:
   - clang
   - gcc
 cache: ccache
-
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
   - make -j > /dev/null
   - make -j install > /dev/null
-  - ls /tmp/slurm
 
 after_script:
-  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else echo PULL ; cat /proc/mounts ; fi
+  - if [[ "$TRAVIS_EVENT_TYPE" == "cron" ]]; then  echo CRON ;else  testsuite/test-reg.sh ; fi
