@@ -16,7 +16,7 @@ cache: ccache
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
 script:
-  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
+  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
   - make -j install > /dev/null
 
