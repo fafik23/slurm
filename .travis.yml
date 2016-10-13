@@ -17,13 +17,11 @@ addons:
 compiler:
   - clang
   - gcc
-#cache: ccache
-#before_script:
-#  - export PATH=/usr/lib/ccache:$PATH
+cache: ccache
+before_script:
+  - export PATH=/usr/lib/ccache:$PATH
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
   - make -j install > /dev/null
-
-after_script:
   - sudo testsuite/test-reg.sh

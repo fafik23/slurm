@@ -132,7 +132,7 @@ sinfo
 
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
-    gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
+    gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch | mailx -s "CoreDump $ff $TRAVIS_JOB_NUMBER"  bart@schedmd.com
 #    echo "Send $f via email"
 #    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
 
