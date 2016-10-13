@@ -2,8 +2,8 @@
 
 if [ -z "$TRAVIS_TAG" ]; then
     echo "Build is not for a git tag"
-    echo "Skiping test"
-    exit 0
+#    echo "Skiping test"
+#    exit 0
 fi 
 
 ulimit -c unlimited
