@@ -13,6 +13,7 @@ addons:
     - libnuma1
     - libpam-dev
     - mailutils
+    - gdb
 compiler:
   - clang
   - gcc

@@ -6,7 +6,11 @@ if [ -z "$TRAVIS_TAG" ]; then
 #    exit 0
 fi 
 
-ulimit -c unlimited
+ulimit -c unlimited -S
+ulimit -c
+ulimit -a -S
+ulimit -a -H
+echo "/tmp/core.%e.%p.%h.%t" > /proc/sys/kernel/core_pattern
 
 mount -t tmpfs cgroup_root /sys/fs/cgroup
 mkdir /sys/fs/cgroup/cpuset
@@ -126,13 +130,10 @@ scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd
 sinfo
 
 
-for f in /var/crash/*.core; do
-
-    ## Check if the glob gets expanded to existing files.
-    ## If not, f here will be exactly the pattern above
-    ## and the exists test will evaluate to false.
+for f in $(ls /tmp/core.* 2>/dev/null) ; do
+    gdb -c $f -ex "thread apply all bt" -ex "set pagination 0" -batch
     echo "Send $f via email"
-    [ -e "$f" ] && echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
+    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
 
 done
 
