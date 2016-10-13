@@ -1,5 +1,11 @@
 #!/bin/bash
 
+if [ -z "$TRAVIS_TAG" ]; then
+    echo "Build is not for a git tag"
+    echo "Skiping test"
+    exit 0
+fi 
+
 ulimit -c unlimited
 
 mount -t tmpfs cgroup_root /sys/fs/cgroup
@@ -111,13 +117,14 @@ EOL
 service munge start
 
 /tmp/slurm/sbin/slurmdbd
+sleep 1
 /tmp/slurm/bin/sacctmgr -i add cluster test
 /tmp/slurm/sbin/slurmctld
+sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
-cat /proc/sys/kernel/core_pattern
-for f in *.core; do
+for f in /var/crash/*.core; do
 
     ## Check if the glob gets expanded to existing files.
     ## If not, f here will be exactly the pattern above
