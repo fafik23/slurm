@@ -124,11 +124,14 @@ sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo
+
+
 for f in /var/crash/*.core; do
 
     ## Check if the glob gets expanded to existing files.
     ## If not, f here will be exactly the pattern above
     ## and the exists test will evaluate to false.
+    echo "Send $f via email"
     [ -e "$f" ] && echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
 
 done
