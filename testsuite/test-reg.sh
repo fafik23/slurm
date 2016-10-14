@@ -6,8 +6,8 @@ if [ -z "$TRAVIS_TAG" ]; then
 #    exit 0
 fi 
 
-ulimit -c unlimited -S
-ulimit -c
+ulimit -c unlimited -S >/dev/null
+ulimit -c 
 ulimit -a -S
 ulimit -a -H
 echo "/tmp/core.%e.%p.%h.%t" > /proc/sys/kernel/core_pattern
@@ -132,9 +132,9 @@ sinfo
 
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
-    gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch | mailx -s "CoreDump $ff $TRAVIS_JOB_NUMBER"  bart@schedmd.com
-#    echo "Send $f via email"
-#    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -A $f bart@schedmd.com 
+    gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
+    echo "Send $f via email"
+    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -a $f bart@schedmd.com 
 
 done
 
