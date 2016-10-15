@@ -110,6 +110,9 @@ PartitionName=test2             Nodes=test0[1-3],test[11-13]    MaxTime=168:00:0
 
 EOL
 
+cat > ~/.mailrc <<EOL
+set smtp=smtp://mail.schedmd.com:25
+EOL
 
 sudo mysql -uroot <<EOL  
 create database slurm_acct_db;
