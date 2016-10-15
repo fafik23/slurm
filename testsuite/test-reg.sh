@@ -134,7 +134,7 @@ for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
     echo "Send $f via email"
-    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -a $f bart@schedmd.com 
+    echo "CoreDump $f" |  mail -s "CoreDump $TRAVIS_JOB_NUMBER" -a $f bart@schedmd.com 
 
 done
 
