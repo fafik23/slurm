@@ -138,37 +138,7 @@ set max_job_delay 100
 EOL
 
 cd ./testsuite/expect/
-BEGIN_TIME=`date +%s`
-for major in `seq 1 6`; do
-  for minor in `seq 1 150`; do
-    TEST=test${major}.${minor}
-    if [ ! -f ./$TEST ]; then continue; fi
-    BEGIN=`date +%s`
-    ./$TEST
-    END=`date +%s`
-    DELTA=`expr $END_TIME - $BEGIN_TIME`
-    if [ $? -eq 0 ]
-    then
-      COMPLETIONS=$((COMPLETIONS+1))
-      echo "$TEST DONE in $COMPLETIONS sec"
-    else
-      FAILURES=$((FAILURES+1))
-      echo "$TEST FAILURE in $COMPLETIONS sec"
-    fi
-    /bin/echo "============================================"
-  done
-done
-END_TIME=`date +%s`
-DELTA_TIME=`expr $END_TIME - $BEGIN_TIME`
-
-# Report the results
-/bin/date
-echo ""
-echo ""
-echo "Completions:$COMPLETIONS"
-echo "Failures:   $FAILURES"
-echo "Time (sec): $DELTA_TIME"
-
+./regression.py - t -i '1.*'
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
