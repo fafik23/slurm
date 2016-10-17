@@ -138,7 +138,7 @@ set max_job_delay 100
 EOL
 
 cd ./testsuite/expect/
-./regression.py - t -i '1.*'
+./regression.py -t -i '1.*'
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
