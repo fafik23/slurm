@@ -15,6 +15,7 @@ addons:
     - libhwloc-dev
     - gdb
     - heirloom-mailx
+    - valgrind
 compiler:
   - clang
   - gcc

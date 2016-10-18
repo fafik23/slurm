@@ -131,6 +131,7 @@ sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo -vvvv
+valgrind --leak-check=yes sinfo
 
 #cat > ./testsuite/expect/globals.local <<EOL
 #set slurm_dir     "/tmp/slurm/"
