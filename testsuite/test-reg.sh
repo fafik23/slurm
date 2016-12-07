@@ -131,20 +131,18 @@ sleep 1
 scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo -vvvv
-valgrind --leak-check=yes sinfo
+#valgrind --leak-check=yes sinfo
 
-#cat > ./testsuite/expect/globals.local <<EOL
-#set slurm_dir     "/tmp/slurm/"
-#set max_job_delay 100
-#EOL
+cat > ./testsuite/expect/globals.local <<EOL
+set slurm_dir     "/tmp/slurm/"
+set max_job_delay 100
+EOL
 
-#cd ./testsuite/expect/
-#./regression.py -t -i '1.*' -e '1.26'
+cd ./testsuite/expect/
+./regression.py -t -i '1.*' -e '1.26'
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
-#    echo "Send $f via email"
-#    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -a $f bart@schedmd.com 
 
 done
 

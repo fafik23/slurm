@@ -14,7 +14,6 @@ addons:
     - libpam-dev
     - libhwloc-dev
     - gdb
-    - heirloom-mailx
     - valgrind
 compiler:
   - clang
