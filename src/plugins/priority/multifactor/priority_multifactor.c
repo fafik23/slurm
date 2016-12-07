@@ -130,6 +130,8 @@ const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 static pthread_t decay_handler_thread;
 static pthread_t cleanup_handler_thread;
 static pthread_mutex_t decay_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t decay_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t decay_init_cond = PTHREAD_COND_INITIALIZER;
 static bool running_decay = 0, reconfig = 0, calc_fairshare = 1;
 static bool favor_small; /* favor small jobs over large */
 static uint16_t damp_factor = 1;  /* weight for age factor */
@@ -609,8 +611,12 @@ static uint32_t _get_priority_internal(time_t start_time,
 				tmp_64 = 0xffffffff;
 				priority_part = (double) tmp_64;
 			}
-			job_ptr->priority_array[i] = (uint32_t) priority_part;
-
+			if (((flags & PRIORITY_FLAGS_INCR_ONLY) == 0) ||
+			    (job_ptr->priority_array[i] <
+			     (uint32_t) priority_part)) {
+				job_ptr->priority_array[i] =
+					(uint32_t) priority_part;
+			}
 			debug("Job %u has more than one partition (%s)(%u)",
 			      job_ptr->job_id, part_ptr->name,
 			      job_ptr->priority_array[i]);
@@ -657,7 +663,7 @@ static uint32_t _get_priority_internal(time_t start_time,
 		}
 
 		info("Job %u priority: %.2f + %.2f + %.2f + %.2f + %.2f + %2.f "
-		     "- %ld = %.2f",
+		     "- %"PRIi64" = %.2f",
 		     job_ptr->job_id, job_ptr->prio_factors->priority_age,
 		     job_ptr->prio_factors->priority_fs,
 		     job_ptr->prio_factors->priority_js,
@@ -925,6 +931,12 @@ static void _init_grp_used_cpu_run_secs(time_t last_ran)
 	while ((job_ptr = list_next(itr))) {
 		if (priority_debug)
 			debug2("job: %u", job_ptr->job_id);
+
+		/* If end_time_exp is NO_VAL we have already ran the end for
+		 * this job.  We don't want to do it again, so just exit.
+		 */
+		if (job_ptr->end_time_exp == (time_t)NO_VAL)
+			continue;
 
 		if (!IS_JOB_RUNNING(job_ptr))
 			continue;
@@ -1206,6 +1218,9 @@ static void *_decay_thread(void *no_data)
 	 *
 	 * This explain the following declaration.
 	 */
+
+	slurm_mutex_lock(&decay_init_mutex);
+
 	if (decay_hl > 0)
 		decay_factor = 1 - (0.693 / decay_hl);
 
@@ -1215,6 +1230,9 @@ static void *_decay_thread(void *no_data)
 	_read_last_decay_ran(&g_last_ran, &last_reset);
 	if (last_reset == 0)
 		last_reset = start_time;
+
+	pthread_cond_signal(&decay_init_cond);
+	slurm_mutex_unlock(&decay_init_mutex);
 
 	_init_grp_used_cpu_run_secs(g_last_ran);
 
@@ -1622,6 +1640,17 @@ int init ( void )
 				   _decay_thread, NULL))
 			fatal("pthread_create error %m");
 
+		/* The decay_thread sets up some global variables that are
+		 * needed outside of the decay_thread (i.e. decay_factor,
+		 * g_last_ran).  These are needed if a job was completing and
+		 * the slurmctld was reset.  If they aren't setup before
+		 * continuing we could get more time added than should be on a
+		 * restart.  So wait until they are set up.
+		 */
+		slurm_mutex_lock(&decay_init_mutex);
+		pthread_cond_wait(&decay_init_cond, &decay_init_mutex);
+		slurm_mutex_unlock(&decay_init_mutex);
+
 		/* This is here to join the decay thread so we don't core
 		 * dump if in the sleep, since there is no other place to join
 		 * we have to create another thread to do it. */
@@ -1873,6 +1902,8 @@ extern bool decay_apply_new_usage(struct job_record *job_ptr,
 extern int decay_apply_weighted_factors(struct job_record *job_ptr,
 					 time_t *start_time_ptr)
 {
+	uint32_t new_prio;
+
 	/* Always return SUCCESS so that list_for_each will
 	 * continue processing list of jobs. */
 
@@ -1886,8 +1917,13 @@ extern int decay_apply_weighted_factors(struct job_record *job_ptr,
 	     !(flags & PRIORITY_FLAGS_CALCULATE_RUNNING)))
 		return SLURM_SUCCESS;
 
-	job_ptr->priority = _get_priority_internal(*start_time_ptr, job_ptr);
-	last_job_update = time(NULL);
+	new_prio = _get_priority_internal(*start_time_ptr, job_ptr);
+	if (((flags & PRIORITY_FLAGS_INCR_ONLY) == 0) ||
+	    (job_ptr->priority < new_prio)) {
+		job_ptr->priority = new_prio;
+		last_job_update = time(NULL);
+	}
+
 	debug2("priority for job %u is now %u",
 	       job_ptr->job_id, job_ptr->priority);
 

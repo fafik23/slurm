@@ -24,7 +24,7 @@ user's default shell.
 The following document describes the influence of various options on the
 allocation of cpus to jobs and tasks.
 .br
-http://slurm.schedmd.com/cpu_management.html
+https://slurm.schedmd.com/cpu_management.html
 
 NOTE: The salloc logic includes support to save and restore the terminal line
 settings and is designed to be executed in the foreground. If you need to
@@ -98,17 +98,13 @@ applications having less than 10,000 tasks.
 
 .TP
 \fB\-B\fR \fB\-\-extra\-node\-info\fR=<\fIsockets\fR[:\fIcores\fR[:\fIthreads\fR]]>
-Request a specific allocation of resources with details as to the
-number and type of computational resources within a cluster:
-number of sockets (or physical processors) per node,
-cores per socket, and threads per core.
-The total amount of resources being requested is the product of all of
-the terms.
+Restrict node selection to nodes with at least the specified number of
+sockets, cores per socket and/or threads per core.
+NOTE: These options do not specify the resource allocation size.
 Each value specified is considered a minimum.
 An asterisk (*) can be used as a placeholder indicating that all available
 resources of that type are to be utilized.
-As with nodes, the individual levels can also be specified in separate
-options if desired:
+The individual levels can also be specified in separate options if desired:
 .nf
     \fB\-\-sockets\-per\-node\fR=<\fIsockets\fR>
     \fB\-\-cores\-per\-socket\fR=<\fIcores\fR>
@@ -613,6 +609,16 @@ Multiple license names should be comma separated (e.g.
 "\-\-licenses=foo:4,bar").
 
 .TP
+\fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
+Clusters to issue commands to.  Multiple cluster names may be comma separated.
+The job will be submitted to the one cluster providing the earliest expected
+job initiation time. The default value is the current cluster. A value of
+\(aq\fIall\fR' will query to run on all clusters.  Note the
+\fB\-\-export\fR option to control environment variables exported
+between clusters.
+Note that the SlurmDBD must be up for this option to work properly.
+
+.TP
 \fB\-m\fR, \fB\-\-distribution\fR=
 \fIarbitrary\fR|<\fIblock\fR|\fIcyclic\fR|\fIplane=<options>\fR[:\fIblock\fR|\fIcyclic\fR|\fIfcyclic\fR]>
 
@@ -627,7 +633,7 @@ nodes. The optional second distribution method (after the ":")
 controls the distribution of resources across sockets within a node.
 Note that with select/cons_res, the number of cpus allocated on each
 socket and node may be different. Refer to
-http://slurm.schedmd.com/mc_support.html
+https://slurm.schedmd.com/mc_support.html
 for more information on resource allocation, assignment of tasks to
 nodes, and binding of tasks to CPUs.
 .RS
@@ -666,11 +672,11 @@ distributed to each node is the same as for cyclic distribution, but the
 taskids assigned to each node depend on the plane size. For more
 details (including examples and diagrams), please see
 .br
-http://slurm.schedmd.com/mc_support.html
+https://slurm.schedmd.com/mc_support.html
 .br
 and
 .br
-http://slurm.schedmd.com/dist_plane.html
+https://slurm.schedmd.com/dist_plane.html
 .TP
 .B arbitrary
 The arbitrary method of distribution will allocate processes in\-order
@@ -803,9 +809,11 @@ The following informational environment variables are set when
 \fB\-\-mem_bind\fR is in use:
 
 .nf
-	SLURM_MEM_BIND_VERBOSE
-	SLURM_MEM_BIND_TYPE
 	SLURM_MEM_BIND_LIST
+	SLURM_MEM_BIND_PREFER
+	SLURM_MEM_BIND_SORT
+	SLURM_MEM_BIND_TYPE
+	SLURM_MEM_BIND_VERBOSE
 .fi
 
 See the \fBENVIRONMENT VARIABLES\fR section for a more detailed description
@@ -814,17 +822,8 @@ of the individual SLURM_MEM_BIND* variables.
 Supported options include:
 .RS
 .TP
-.B q[uiet]
-quietly bind before task runs (default)
-.TP
-.B v[erbose]
-verbosely report binding before task runs
-.TP
-.B no[ne]
-don't bind tasks to memory (default)
-.TP
-.B rank
-bind by task rank (not recommended)
+.B help
+show this help message
 .TP
 .B local
 Use memory local to the processor in use
@@ -840,6 +839,9 @@ with '0x' in which case they interpreted as hexadecimal values.
 If the number of tasks (or ranks) exceeds the number of elements in this list,
 elements in the list will be reused as needed starting from the beginning of
 the list.
+To simplify support for large task counts, the lists may follow a map with an
+asterisk and repetition count
+For example "map_mem:0x0f*4,0xf0*4".
 Not supported unless the entire node is allocated to the job.
 .TP
 .B mask_mem:<list>
@@ -854,10 +856,29 @@ with [0-9] so they are seen as numerical values.
 If the number of tasks (or ranks) exceeds the number of elements in this list,
 elements in the list will be reused as needed starting from the beginning of
 the list.
+To simplify support for large task counts, the lists may follow a mask with an
+asterisk and repetition count
+For example "mask_mem:0*4,1*4".
 Not supported unless the entire node is allocated to the job.
 .TP
-.B help
-show this help message
+.B no[ne]
+don't bind tasks to memory (default)
+.TP
+.B p[refer]
+Prefer use of first specified NUMA node, but permit
+ use of other available NUMA nodes.
+.TP
+.B q[uiet]
+quietly bind before task runs (default)
+.TP
+.B rank
+bind by task rank (not recommended)
+.TP
+.B sort
+sort free cache pages (run zonesort on Intel KNL nodes)
+.TP
+.B v[erbose]
+verbosely report binding before task runs
 .RE
 
 .TP
@@ -1470,8 +1491,14 @@ Same as \fB\-\-bell\fR
 \fBSALLOC_BURST_BUFFER\fR
 Same as \fB\-\-bb\fR
 .TP
+\fBSALLOC_CLUSTERS\fR or \fBSLURM_CLUSTERS\fR
+Same as \fB\-\-clusters\fR
+.TP
 \fBSALLOC_CONN_TYPE\fR
 Same as \fB\-\-conn\-type\fR
+.TP
+\fBSALLOC_CONSTRAINT\fR
+Same as \fB\-C\fR, \fB\-\-constraint\fR
 .TP
 \fBSALLOC_CORE_SPEC\fR
 Same as \fB\-\-core\-spec\fR
@@ -1638,6 +1665,20 @@ Advanced reservation containing the job allocation, if any.
 \fBSLURM_MEM_BIND\fR
 Set to value of the \-\-mem_bind\fR option.
 .TP
+\fBSLURM_MEM_BIND_LIST\fR
+Set to bit mask used for memory binding.
+.TP
+\fBSLURM_MEM_BIND_SORT\fR
+Sort free cache pages (run zonesort on Intel KNL nodes)
+.TP
+\fBSLURM_MEM_BIND_TYPE\fR
+Set to the memory binding type specified with the \-\-mem_bind\fR option.
+Possible values are "none", "rank", "map_map", "mask_mem" and "local".
+.TP
+\fBSLURM_MEM_BIND_VERBOSE\fR
+Set to "verbose" if the \-\-mem_bind\fR option includes the verbose option.
+Set to "quiet" otherwise.
+.TP
 \fBSLURM_MEM_PER_CPU\fR
 Same as \fB\-\-mem\-per\-cpu\fR
 .TP
@@ -1713,7 +1754,7 @@ Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 Copyright (C) 2010\-2015 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+For details, see <https://slurm.schedmd.com/>.
 .LP
 Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free

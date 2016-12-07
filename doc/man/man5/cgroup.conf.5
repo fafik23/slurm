@@ -1,4 +1,4 @@
-.TH "cgroup.conf" "5" "Slurm Configuration File" "November 2015" "Slurm Configuration File"
+.TH "cgroup.conf" "5" "Slurm Configuration File" "October 2016" "Slurm Configuration File"
 
 .SH "NAME"
 cgroup.conf \- Slurm configuration file for the cgroup support
@@ -21,7 +21,7 @@ of the command "scontrol reconfigure" unless otherwise noted.
 
 .LP
 For general Slurm Cgroups information, see the Cgroups Guide at
-<http://slurm.schedmd.com/cgroups.html>.
+<https://slurm.schedmd.com/cgroups.html>.
 
 .LP
 The following cgroup.conf parameters are defined to control the general behavior
@@ -40,11 +40,6 @@ plugin will first try to mount the required subsystems.
 Specify the \fIPATH\fR under which cgroups should be mounted. This
 should be a writable directory which will contain cgroups mounted
 one per subsystem. The default \fIPATH\fR is /sys/fs/cgroup.
-
-.TP
-\fBCgroupReleaseAgentDir\fR=<path_to_release_agent_directory>
-Used to tune the cgroup system behavior. This parameter identifies the location
-of the directory containing Slurm cgroup release_agent files.
 
 .SH "TASK/CGROUP PLUGIN"
 
@@ -123,6 +118,12 @@ used to constrain swap space.
 Also see \fBAllowedSwapSpace\fR.
 
 .TP
+\fBConstrainKmemSpace\fR=<yes|no>
+If configured to "yes" then constrain the job's kernel memory usage.
+The default value is "yes". It is automatically disabled if \fBConstrainRAMSpace\fR=no.
+Also see \fBAllowedKmemSpace\fR.
+
+.TP
 \fBMaxRAMPercent\fR=\fIPERCENT\fR
 Set an upper bound in percent of total RAM on the RAM constraint for a job.
 This will be the memory constraint applied to jobs that are not explicitly
@@ -137,6 +138,16 @@ that may be used for a job. This will be the swap limit applied to jobs
 on systems where memory is not being explicitly allocated to job. The
 \fIPERCENT\fR may be an arbitrary floating point number between 0 and 100.
 The default value is 100.
+
+.TP
+\fBMaxKmemPercent\fR=\fIPERCENT\fR
+Set an upper bound in percent of total Kmem for a job. The \fIPERCENT\fR may be an
+arbitrary floating point number. The default value is 100.
+
+.TP
+\fBMinKmemSpace\fR=<number>
+Set a lower bound (in MB) on the memory limits defined by
+\fBAllowedKmemSpace\fR. The default limit is 30M.
 
 .TP
 \fBMinRAMSpace\fR=<number>
@@ -175,8 +186,6 @@ after updating the file.
 .br
 CgroupAutomount=yes
 .br
-CgroupReleaseAgentDir="/etc/slurm/cgroup"
-.br
 ConstrainCores=yes
 .br
 #
@@ -188,7 +197,7 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 Copyright (C) 2010\-2015 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+For details, see <https://slurm.schedmd.com/>.
 .LP
 Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free

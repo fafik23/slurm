@@ -329,7 +329,6 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 	uint16_t cpus_per_task = job_ptr->details->cpus_per_task;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 	bool alloc_cores = false, alloc_sockets = false;
-	uint16_t ncpus_per_core = 0xffff;	/* Usable CPUs per core */
 	uint16_t ntasks_per_core = 0xffff;
 	int tmp_cpt = 0;
 	int count, cpu_min, b_min, elig, s_min, comb_idx, sock_idx;
@@ -376,11 +375,6 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 		if ((mc_ptr->ntasks_per_core != (uint16_t) INFINITE) &&
 		    (mc_ptr->ntasks_per_core)) {
 			ntasks_per_core = mc_ptr->ntasks_per_core;
-			ncpus_per_core  = ntasks_per_core * cpus_per_task;
-		}
-		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
-		    (mc_ptr->threads_per_core <  ncpus_per_core)) {
-			ncpus_per_core = mc_ptr->threads_per_core;
 		}
 	}
 
@@ -409,7 +403,7 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 			fatal("cons_res: _block_sync_core_bitmap index error");
 
 		cpus  = job_res->cpus[i];
-		vpus = MIN(select_node_record[n].vpus, ncpus_per_core);
+		vpus = cr_cpus_per_core(job_ptr->details, n);
 
 		/* compute still required cores on the node */
 		req_cores = cpus / vpus;
@@ -445,7 +439,15 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 		}
 
 		/* Count available cores on each socket and board */
-		sock_per_brd = nsockets_nb / nboards_nb;
+		if (nsockets_nb >= nboards_nb) {
+			sock_per_brd = nsockets_nb / nboards_nb;
+		} else {
+			error("Node socket count lower than board count "
+			      "(%u < %u), job %u node %s",
+			      nsockets_nb, nboards_nb, job_ptr->job_id,
+			      node_record_table_ptr[n].name);
+			sock_per_brd = 1;
+		}
 		for (b = 0; b < nboards_nb; b++) {
 			boards_core_cnt[b] = 0;
 			sort_brds_core_cnt[b] = 0;
@@ -713,12 +715,10 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 {
 	uint32_t c, i, j, s, n, *sock_start, *sock_end, size, csize, core_cnt;
 	uint16_t cps = 0, cpus, vpus, sockets, sock_size;
-	uint16_t cpus_per_task = job_ptr->details->cpus_per_task;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 	bitstr_t *core_map;
 	bool *sock_used, *sock_avoid;
 	bool alloc_cores = false, alloc_sockets = false;
-	uint16_t ncpus_per_core = 0xffff;	/* Usable CPUs per core */
 	uint16_t ntasks_per_socket = 0xffff;
 	uint16_t ntasks_per_core = 0xffff;
 	int error_code = SLURM_SUCCESS;
@@ -739,12 +739,6 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 		if ((mc_ptr->ntasks_per_core != (uint16_t) INFINITE) &&
 		    (mc_ptr->ntasks_per_core)) {
 			ntasks_per_core = mc_ptr->ntasks_per_core;
-			ncpus_per_core  = ntasks_per_core * cpus_per_task;
-		}
-
-		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
-		    (mc_ptr->threads_per_core <  ncpus_per_core)) {
-			ncpus_per_core = mc_ptr->threads_per_core;
 		}
 
 		if (mc_ptr->ntasks_per_socket)
@@ -764,7 +758,7 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 			continue;
 		sockets = select_node_record[n].sockets;
 		cps     = select_node_record[n].cores;
-		vpus = MIN(select_node_record[n].vpus, ncpus_per_core);
+		vpus    = cr_cpus_per_core(job_ptr->details, n);
 
 		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("DEBUG: job %u node %s vpus %u cpus %u",
@@ -991,11 +985,24 @@ extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type,
 
 	if ((job_ptr->job_resrcs->node_req == NODE_CR_RESERVED) ||
 	    (job_ptr->details->whole_node == 1)) {
+		int n, i;
+		job_resources_t *job_res = job_ptr->job_resrcs;
 		/* The job has been allocated an EXCLUSIVE set of nodes,
 		 * so it gets all of the bits in the core_bitmap and
 		 * all of the available CPUs in the cpus array. */
-		int size = bit_size(job_ptr->job_resrcs->core_bitmap);
-		bit_nset(job_ptr->job_resrcs->core_bitmap, 0, size-1);
+		int size = bit_size(job_res->core_bitmap);
+		bit_nset(job_res->core_bitmap, 0, size-1);
+
+		/* Up to this point we might not have the job_res pointer have
+		 * the right cpu count.  It is most likely a core count.  We
+		 * will fix that so we can layout tasks correctly.
+		 */
+		size = bit_size(job_res->node_bitmap);
+		for (i = 0, n = bit_ffs(job_res->node_bitmap); n < size; n++) {
+			if (bit_test(job_res->node_bitmap, n) == 0)
+				continue;
+			job_res->cpus[i++] = select_node_record[n].cpus;
+		}
 		return SLURM_SUCCESS;
 	}
 

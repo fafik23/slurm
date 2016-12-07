@@ -1,5 +1,5 @@
 RELEASE NOTES FOR SLURM VERSION 17.02
-13 July 2016
+21 November 2016
 
 IMPORTANT NOTES:
 THE MAXJOBID IS NOW 67,108,863. ANY PRE-EXISTING JOBS WILL CONTINUE TO RUN BUT
@@ -29,15 +29,29 @@ of Slurm will result in loss of state information.
 If using SPANK plugins that use the Slurm APIs, they should be recompiled when
 upgrading Slurm to a new major release.
 
+NOTE: If you are not using Munge, but are using the "service" scripts to
+      start Slurm daemons, then you will need to remove this check from the
+      etc/slurm*service scripts.
 
 HIGHLIGHTS
 ==========
+ -- Added infrastructure for managing workload across a federation of clusters.
+    (partial functionality in version 17.02, fully operational in May 2017)
  -- In order to support federated jobs, the MaxJobID configuration parameter
     default value has been reduced from 2,147,418,112 to 67,043,328 and its
     maximum value is now 67,108,863. Upon upgrading, any pre-existing jobs that
     have a job ID above the new range will continue to run and new jobs will get
     job IDs in the new range.
- -- The database index for jobs is now 64 bit.  If you happen to be close to
+ -- Add MailDomain configuration parameter to qualify email addresses.
+ -- Automatically clean up task/cgroup cpuset and devices cgroups after steps
+    are completed.
+ -- Added burst buffer support for job arrays. Add new SchedulerParameters
+    configuration parameter of bb_array_stage_cnt=# to indicate how many pending
+    tasks of a job array should be made available for burst buffer resource
+    allocation.
+ -- Add new sacctmgr commands: "shutdown" (shutdown the server), "list stats"
+    (get server statistics) "clear stats" (clear server statistics).
+ -- The database index for jobs is now 64 bits.  If you happen to be close to
     4 billion jobs in your database you will want to update your slurmctld at
     the same time as your slurmdbd to prevent roll over of this variable as
     it is 32 bit previous versions of Slurm.
@@ -47,18 +61,51 @@ HIGHLIGHTS
 
 RPMBUILD CHANGES
 ================
+ -- Remove separate slurm_blcr package. If Slurm is built with BLCR support,
+    the files will now be part of the main Slurm packages.
+ -- Replace sjstat, seff and sjobexit RPM packages with a single "contribs"
+    package.
 
 CONFIGURATION FILE CHANGES (see man appropriate man page for details)
 =====================================================================
--- Add new TRESWeights option to NodeName line for caclulating how busy a node
-   is. Currently only used for federation configurations.
+ -- Add new TRESWeights configuration parameter to NodeName line for calculating
+    how busy a node is. Currently only used for federation configurations.
+ -- Add new PriorityFlags option of INCR_ONLY, which prevents a job's priority
+    from being decremented.
 
 COMMAND CHANGES (see man pages for details)
 ===========================================
--- Add commands to sacctmgr for managing and displaying federations.
+ -- Add commands to sacctmgr for managing and displaying federations.
+ -- Add salloc, sbatch and srun option of --delay-boot=<time>, which will
+    temporarily delay booting nodes into the desired state for a job in the
+    hope of using nodes already in the proper state which will be available at
+    a later time.
+ -- Add salloc/sbatch/srun --spread-job option to distribute tasks over as many
+    nodes as possible. This also treats the --ntasks-per-node option as a
+    maximum value.
+ -- Add support for sbatch --bbf option to specify a burst buffer input file.
+ -- Add SLURM_ARRAY_TASK_COUNT environment variable. Total number of tasks in a
+    job array (e.g. "--array=2,4,8" will set SLURM_ARRAY_TASK_COUNT=3).
+ -- Modify cpu_bind and mem_bind map and mask options to accept a repetition
+    count to better support large task count. For example:
+    "mask_mem:0x0f*2,0xf0*2" is equivalent to "mask_mem:0x0f,0x0f,0xf0,0xf0".
+ -- Add support for --mem_bind=prefer option to prefer, but not restrict memory
+    use to the identified NUMA node.
+ -- Add --mem_bind option of "sort" to run zonesort on KNL nodes at step start.
+ -- Do not process SALLOC_HINT, SBATCH_HINT or SLURM_HINT environment variables
+    if any of the following salloc, sbatch or srun command line options are
+    specified: -B, --cpu_bind, --hint, --ntasks-per-core, or --threads-per-core.
 
 OTHER CHANGES
 =============
+ -- Add event trigger on burst buffer errors (see strigger man page,
+    --burst_buffer option).
+ -- Add job AdminComment field which can only be set by a Slurm administrator.
+ -- Add mechanism to constrain kernel memory allocation using cgroups. New
+    cgroup.conf parameters added: ConstrainKmemSpace, MaxKmemPercent, and
+    MinKmemSpace.
+ -- burst_buffer/cray: Accept new jobs on backup slurmctld daemon without access
+    to dw_wlm_cli command. No burst buffer actions will take place.
 
 API CHANGES
 ===========
@@ -82,6 +129,11 @@ In slurmctld_lock_t: Added federation
 In will_run_response_msg_t: Added double sys_usage_per to report back how busy a
 	cluster is.
 In slurm_ctl_conf: Added mail_domain.
+In slurm_msg_t: Added buffer to keep received message buffer to use for later
+		      purposes.
+In job_desc_msg_t: Added fed_siblings to track which clusters have sibling jobs.
+In slurm_job_info_t: Added fed_origin_str, fed_siblings, fed_siblings_str to
+		      display job federation information.
 
 Added the following struct definitions
 ======================================
@@ -90,6 +142,7 @@ Added slurmdb_cluster_fed_t to store federation information on
 Added slurmdb_federation_cond_t for selecting federations from db.
 Added slurmdb_federation_rec_t to represent federation objects.
 Added job_fed_details_t for storing federated job information.
+Added sib_msg_t for sending messages to siblings.
 
 Removed members from the following struct definitions
 =====================================================
@@ -103,6 +156,8 @@ Changed DEFAULT_MAX_JOB_ID from 0x7fff0000 to 0x03ff0000.
 Added SELECT_NODEDATA_TRES_ALLOC_FMT_STR to select_nodedata_type.
 Added SELECT_NODEDATA_TRES_ALLOC_WEIGHTED to select_nodedata_type.
 Changed MEM_PER_CPU flag to 0x8000000000000000 from 0x80000000.
+Added SLURM_MSG_KEEP_BUFFER msg flag to instruct slurm_receive_msg() to save the
+	buffer ptr.
 
 Added the following API's
 =========================

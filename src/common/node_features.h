@@ -64,11 +64,14 @@ extern int node_features_g_job_valid(char *job_features);
  * RET node boot options, must be xfreed */
 extern char *node_features_g_job_xlate(char *job_features);
 
-/* Return true if the plugin requires RebootProgram for booting nodes */
-extern bool node_features_g_node_reboot(void);
-
 /* Return true if the plugin requires PowerSave mode for booting nodes */
 extern bool node_features_g_node_power(void);
+
+/* Set's the node's active features based upon job constraints.
+ * NOTE: Executed by the slurmd daemon.
+ * IN active_features - New active features
+ * RET error code */
+extern int node_features_g_node_set(char *active_features);
 
 /* Get this node's current and available MCDRAM and NUMA settings from BIOS.
  * avail_modes IN/OUT - available modes, must be xfreed
@@ -92,6 +95,11 @@ extern int node_features_g_node_update(char *active_features,
  * RET node's new merged features, must be xfreed */
 extern char *node_features_g_node_xlate(char *new_features,char *orig_features,
 					int mode);
+
+/* Perform set up for step launch
+ * mem_sort IN - Trigger sort of memory pages (KNL zonesort)
+ * numa_bitmap IN - NUMA nodes allocated to this job */
+extern void node_features_g_step_config(bool mem_sort, bitstr_t *numa_bitmap);
 
 /* Determine if the specified user can modify the currently available node
  * features */

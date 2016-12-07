@@ -77,6 +77,7 @@ typedef struct {
 
 typedef struct {
 	char *account;
+	char *admin_comment;
 	char *alloc_nodes;
 	char *associd;
 	char *array_jobid;
@@ -512,6 +513,7 @@ static void _pack_local_job(local_job_t *object,
 			    uint16_t rpc_version, Buf buffer)
 {
 	packstr(object->account, buffer);
+	packstr(object->admin_comment, buffer);
 	packstr(object->alloc_nodes, buffer);
 	packstr(object->associd, buffer);
 	packstr(object->array_jobid, buffer);
@@ -576,7 +578,45 @@ static int _unpack_local_job(local_job_t *object,
 	 * and it unpacks in the expected order.
 	 */
 
-	if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->account, &tmp32, buffer);
+		unpackstr_ptr(&object->admin_comment, &tmp32, buffer);
+		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->array_jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->array_max_tasks, &tmp32, buffer);
+		unpackstr_ptr(&object->array_taskid, &tmp32, buffer);
+		unpackstr_ptr(&object->blockid, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
+		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
+		unpackstr_ptr(&object->timelimit, &tmp32, buffer);
+		unpackstr_ptr(&object->eligible, &tmp32, buffer);
+		unpackstr_ptr(&object->end, &tmp32, buffer);
+		unpackstr_ptr(&object->gid, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->partition, &tmp32, buffer);
+		unpackstr_ptr(&object->priority, &tmp32, buffer);
+		unpackstr_ptr(&object->qos, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->req_mem, &tmp32, buffer);
+		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		unpackstr_ptr(&object->start, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->submit, &tmp32, buffer);
+		unpackstr_ptr(&object->suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_alloc_str, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_req_str, &tmp32, buffer);
+		unpackstr_ptr(&object->uid, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
 		unpackstr_ptr(&object->account, &tmp32, buffer);
 		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
 		unpackstr_ptr(&object->associd, &tmp32, buffer);
@@ -2489,7 +2529,7 @@ extern int as_mysql_jobacct_process_archive_load(
 {
 	char *data = NULL, *cluster_name = NULL;
 	int error_code = SLURM_SUCCESS;
-	Buf buffer;
+	Buf buffer = NULL;
 	time_t buf_time;
 	uint16_t type = 0, ver = 0;
 	uint32_t data_size = 0, rec_cnt = 0, tmp32 = 0;
@@ -2573,7 +2613,7 @@ extern int as_mysql_jobacct_process_archive_load(
 		      "got %u need <= %u", ver,
 		      SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return EFAULT;
 	}
 	safe_unpack_time(&buf_time, buffer);
@@ -2584,7 +2624,7 @@ extern int as_mysql_jobacct_process_archive_load(
 	if (!rec_cnt) {
 		error("we didn't get any records from this file of type '%s'",
 		      slurmdbd_msg_type_2_str(type, 0));
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		goto got_sql;
 	}
 
@@ -2608,7 +2648,7 @@ extern int as_mysql_jobacct_process_archive_load(
 		error("Unknown type '%u' to load from archive", type);
 		break;
 	}
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 got_sql:
 	if (!data) {
@@ -2620,8 +2660,9 @@ got_sql:
 	error_code = mysql_db_query_check_after(mysql_conn, data);
 	xfree(data);
 	if (error_code != SLURM_SUCCESS) {
-	unpack_error:
+unpack_error:
 		error("Couldn't load old data");
+		FREE_NULL_BUFFER(buffer);
 		return SLURM_ERROR;
 	}
 

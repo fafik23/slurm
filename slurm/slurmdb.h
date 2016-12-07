@@ -194,6 +194,7 @@ enum cluster_fed_states {
 				       /* Removed v16.05 */
 #define CLUSTER_FLAG_XCPU   0x00000020 /* This has xcpu, removed v15.08 */
 #define CLUSTER_FLAG_AIX    0x00000040 /* This is an aix cluster */
+				       /* Removed v17.02 */
 #define CLUSTER_FLAG_MULTSD 0x00000080 /* This cluster is multiple slurmd */
 #define CLUSTER_FLAG_CRAYXT 0x00000100 /* This cluster is a ALPS cray
 					* (deprecated) Same as CRAY_A */
@@ -694,6 +695,7 @@ typedef struct {
 
 typedef struct {
 	char    *account;
+	char	*admin_comment;
 	char	*alloc_gres;
 	uint32_t alloc_nodes;
 	uint32_t array_job_id;	/* job_id of a job array or 0 if N/A */
@@ -953,6 +955,8 @@ typedef struct {
 	uint32_t nnodes;
 	char *nodes;
 	uint32_t ntasks;
+	uint32_t packjobid;	/* jobid of srun first step of the jobpack */
+	uint32_t packstepid;	/* stepid of jobpack member */
 	char *pid_str;
 	uint32_t req_cpufreq_min;
 	uint32_t req_cpufreq_max;

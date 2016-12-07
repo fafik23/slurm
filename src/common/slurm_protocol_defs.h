@@ -137,6 +137,8 @@
 	(_X->node_state & NODE_STATE_POWER_UP)
 #define IS_NODE_MAINT(_X)		\
 	(_X->node_state & NODE_STATE_MAINT)
+#define IS_NODE_REBOOT(_X)		\
+	(_X->node_state & NODE_STATE_REBOOT)
 
 #define THIS_FILE ((strrchr(__FILE__, '/') ?: __FILE__ - 1) + 1)
 #define INFO_LINE(fmt, ...) \
@@ -286,6 +288,9 @@ typedef enum {
 	REQUEST_JOB_NOTIFY,
 	REQUEST_JOB_SBCAST_CRED,
 	RESPONSE_JOB_SBCAST_CRED,
+	REQUEST_SIB_JOB_WILL_RUN,
+	REQUEST_SIB_SUBMIT_BATCH_JOB,
+	REQUEST_SIB_RESOURCE_ALLOCATION,
 
 	REQUEST_JOB_STEP_CREATE = 5001,
 	RESPONSE_JOB_STEP_CREATE,
@@ -433,6 +438,7 @@ typedef struct slurm_protocol_config {
 typedef struct slurm_msg {
 	slurm_addr_t address;
 	void *auth_cred;
+	Buf buffer; /* DON't PACK! ptr to buffer that msg was unpacked from. */
 	slurm_persist_conn_t *conn; /* DON'T PACK OR FREE! this is here to
 				     * distinquish a persistant connection from
 				     * a normal connection it should be filled
@@ -681,8 +687,10 @@ typedef struct epilog_complete_msg {
 	char    *node_name;
 } epilog_complete_msg_t;
 
+#define REBOOT_FLAGS_ASAP 0x0001	/* Drain to reboot ASAP */
 typedef struct reboot_msg {
 	char *features;
+	uint16_t flags;
 	char *node_list;
 } reboot_msg_t;
 
@@ -731,6 +739,8 @@ typedef struct job_step_specs {
 	uint32_t num_tasks;	/* number of tasks required */
 	uint8_t overcommit;     /* flag, 1 to allow overcommit of processors,
 				   0 to disallow overcommit. default is 0 */
+	uint32_t packjobid;	/* jobid of srun first step */
+	uint32_t packstepid;	/* stepid of srun first step */
 	uint16_t plane_size;	/* plane size when task_dist =
 				   SLURM_DIST_PLANE */
 	uint16_t port;		/* port to contact initiating srun */
@@ -767,12 +777,20 @@ typedef struct job_step_create_response_msg {
 typedef struct launch_tasks_request_msg {
 	uint32_t  job_id;
 	uint32_t  job_step_id;
+	uint32_t  mpi_jobid;	/* MPI jobid (same for all steps) */
+	uint32_t  mpi_nnodes;	/* number of MPI nodes in all steps */
+	uint32_t  mpi_ntasks;	/* number of MPI tasks in all steps */
+	uint32_t  mpi_stepfnodeid; /* first MPI nodeid for this step */
+	uint32_t  mpi_stepftaskid; /* first MPI taskid for this step */
+	uint32_t  mpi_stepid;	/* MPI stepid (same for all steps) */
 	uint32_t  nnodes;	/* number of nodes in this job step       */
 	uint32_t  ntasks;	/* number of tasks in this job step   */
 	uint16_t  ntasks_per_board;/* number of tasks to invoke on each board */
 	uint16_t  ntasks_per_core; /* number of tasks to invoke on each core */
 	uint16_t  ntasks_per_socket;/* number of tasks to invoke on
 				     * each socket */
+	uint32_t  packjobid;	/* jobid of srun first step */
+	uint32_t  packstepid;	/* stepid of srun first step */
 	uint32_t  uid;
 	char     *user_name;
 	uint32_t  gid;
@@ -828,6 +846,8 @@ typedef struct launch_tasks_request_msg {
 	job_options_t options;  /* Arbitrary job options */
 	char *complete_nodelist;
 	char *ckpt_dir;		/* checkpoint path */
+	char **pelog_env;       /* prolog/epilog environment vars */
+	uint32_t pelog_env_size;
 	char *restart_dir;	/* restart from checkpoint if set */
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
@@ -888,15 +908,18 @@ typedef struct composite_msg {
 #define SIG_FAILURE	999	/* Dummy signal value to signify sys failure */
 typedef struct kill_job_msg {
 	uint32_t job_id;
-	uint32_t step_id;
 	uint32_t job_state;
 	uint32_t job_uid;
-	time_t   time;		/* slurmctld's time of request */
-	time_t   start_time;	/* time of job start, track job requeue */
 	char *nodes;
+	char **pelog_env;	/* jobpack environment variables for job
+				   prolog/epilog */
+	uint32_t pelog_env_size;/* element count in pelog_env */
 	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
+	time_t   start_time;	/* time of job start, track job requeue */
+	uint32_t step_id;
+	time_t   time;		/* slurmctld's time of request */
 } kill_job_msg_t;
 
 typedef struct signal_job_msg {
@@ -939,6 +962,8 @@ typedef struct prolog_launch_msg {
 	uint32_t nnodes;			/* count of nodes, passed via cred */
 	char *nodes;			/* list of nodes allocated to job_step */
 	char *partition;		/* partition the job is running in */
+	char **pelog_env;               /* prolog/epilog environment vars */
+	uint32_t pelog_env_size;
 	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
 	char **spank_job_env;		/* SPANK job environment variables */
 	uint32_t spank_job_env_size;	/* size of spank_job_env */
@@ -1007,6 +1032,10 @@ typedef struct batch_job_launch_msg {
 	char **spank_job_env;	/* SPANK job environment variables */
 	uint32_t spank_job_env_size;	/* size of spank_job_env */
 	char *resv_name;        /* job's reservation */
+	char **pelog_env;       /* prolog/epilog environment vars */
+	uint32_t pelog_env_size;
+	char *resv_ports;       /* reserve ports for jobpack nodes */
+	uint32_t group_number;  /* jobpack group number index */
 } batch_job_launch_msg_t;
 
 typedef struct job_id_request_msg {
@@ -1179,6 +1208,18 @@ typedef struct slurm_event_log_msg {
 	char *   string;	/* String for slurmctld to log */
 } slurm_event_log_msg_t;
 
+typedef struct {
+	void    *data;		/* Unpacked buffer
+				 * Only populated on the receiving side. */
+	Buf      data_buffer;	/* Buffer that holds an unpacked data type.
+				 * Only populated on the sending side. */
+	uint16_t data_type;	/* date type to unpack */
+	uint16_t data_version;	/* Version that data is packed with */
+	uint64_t fed_siblings;	/* sibling bitmap of job */
+	uint32_t job_id;	/* job_id of job - set in job_desc on receiving
+				 * side */
+} sib_msg_t;
+
 /*****************************************************************************\
  *      ACCOUNTING PUSHS
 \*****************************************************************************/
@@ -1242,6 +1283,7 @@ extern void slurm_free_front_end_info_request_msg(
 extern void slurm_free_node_info_request_msg(node_info_request_msg_t *msg);
 extern void slurm_free_node_info_single_msg(node_info_single_msg_t *msg);
 extern void slurm_free_part_info_request_msg(part_info_request_msg_t *msg);
+extern void slurm_free_sib_msg(sib_msg_t *msg);
 extern void slurm_free_stats_info_request_msg(stats_info_request_msg_t *msg);
 extern void slurm_free_stats_response_msg(stats_info_response_msg_t *msg);
 extern void slurm_free_step_alloc_info_msg(step_alloc_info_msg_t * msg);

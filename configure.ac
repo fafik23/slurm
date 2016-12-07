@@ -423,7 +423,6 @@ AC_CONFIG_FILES([Makefile
 		 contribs/sgather/Makefile
 		 contribs/sgi/Makefile
 		 contribs/sjobexit/Makefile
-		 contribs/slurmdb-direct/Makefile
 		 contribs/pmi2/Makefile
 		 doc/Makefile
 		 doc/man/Makefile
@@ -553,11 +552,13 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/launch/runjob/Makefile
 		 src/plugins/launch/slurm/Makefile
 		 src/plugins/mcs/Makefile
-		 src/plugins/mcs/none/Makefile
+		 src/plugins/mcs/account/Makefile
 		 src/plugins/mcs/group/Makefile
+		 src/plugins/mcs/none/Makefile
 		 src/plugins/mcs/user/Makefile
 		 src/plugins/node_features/Makefile
 		 src/plugins/node_features/knl_cray/Makefile
+		 src/plugins/node_features/knl_generic/Makefile
 		 src/plugins/power/Makefile
 		 src/plugins/power/common/Makefile
 		 src/plugins/power/cray/Makefile

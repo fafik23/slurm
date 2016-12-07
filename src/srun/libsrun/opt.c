@@ -376,6 +376,7 @@ static void argerror(const char *msg, ...)
  */
 static void _opt_default(void)
 {
+	char *launch_params;
 	char buf[MAXPATHLEN + 1];
 	int i;
 	uid_t uid = getuid();
@@ -394,27 +395,39 @@ static void _opt_default(void)
 	opt.cwd = xstrdup(buf);
 	opt.cwd_set = false;
 
+	opt.clusters = NULL;
 	opt.progname = NULL;
 
 	opt.ntasks = 1;
 	opt.ntasks_set = false;
 	opt.cpus_per_task = 0;
 	opt.cpus_set = false;
+	opt.hint_env = NULL;
+	opt.hint_set = false;
 	opt.min_nodes = 1;
 	opt.max_nodes = 0;
 	opt.sockets_per_node = NO_VAL; /* requested sockets */
 	opt.cores_per_socket = NO_VAL; /* requested cores */
 	opt.threads_per_core = NO_VAL; /* requested threads */
+	opt.threads_per_core_set = false;
 	opt.ntasks_per_node      = NO_VAL; /* ntask max limits */
 	opt.ntasks_per_socket    = NO_VAL;
 	opt.ntasks_per_core      = NO_VAL;
+	opt.ntasks_per_core_set  = false;
 	opt.nodes_set = false;
 	opt.nodes_set_env = false;
 	opt.nodes_set_opt = false;
 	opt.cpu_bind_type = 0;
+	opt.cpu_bind_type_set = false;
 	opt.cpu_bind = NULL;
-	opt.mem_bind_type = 0;
+
 	opt.mem_bind = NULL;
+	opt.mem_bind_type = 0;
+	launch_params = slurm_get_launch_params();
+	if (launch_params && strstr(launch_params, "mem_sort"))
+		opt.mem_bind_type |= MEM_BIND_SORT;
+	xfree(launch_params);
+
 	opt.accel_bind_type = 0;
 	opt.core_spec = (uint16_t) NO_VAL;
 	opt.core_spec_set = false;
@@ -574,11 +587,13 @@ env_vars_t env_vars[] = {
 {"SLURM_BCAST",         OPT_BCAST,      NULL,               NULL             },
 {"SLURM_BLRTS_IMAGE",   OPT_STRING,     &opt.blrtsimage,    NULL             },
 {"SLURM_BURST_BUFFER",  OPT_STRING,     &opt.burst_buffer,  NULL             },
+{"SLURM_CLUSTERS",      OPT_STRING,     &opt.clusters,      NULL             },
 {"SLURM_CHECKPOINT",    OPT_STRING,     &opt.ckpt_interval_str, NULL         },
 {"SLURM_CHECKPOINT_DIR",OPT_STRING,     &opt.ckpt_dir,      NULL             },
 {"SLURM_CNLOAD_IMAGE",  OPT_STRING,     &opt.linuximage,    NULL             },
 {"SLURM_COMPRESS",      OPT_COMPRESS,   NULL,               NULL             },
 {"SLURM_CONN_TYPE",     OPT_CONN_TYPE,  NULL,               NULL             },
+{"SLURM_CONSTRAINT",    OPT_STRING,     &opt.constraints,   NULL             },
 {"SLURM_CORE_SPEC",     OPT_INT,        &opt.core_spec,     NULL             },
 {"SLURM_CPUS_PER_TASK", OPT_INT,        &opt.cpus_per_task, &opt.cpus_set    },
 {"SLURM_CPU_BIND",      OPT_CPU_BIND,   NULL,               NULL             },
@@ -742,15 +757,7 @@ _process_env_var(env_vars_t *e, const char *val)
 			error("Invalid --cpu-freq argument: %s. Ignored", val);
 		break;
 	case OPT_HINT:
-		/* Keep after other options filled in */
-		if (verify_hint(val,
-				&opt.sockets_per_node,
-				&opt.cores_per_socket,
-				&opt.threads_per_core,
-				&opt.ntasks_per_core,
-				&opt.cpu_bind_type)) {
-			exit(error_exit);
-		}
+		opt.hint_env = xstrdup(val);
 		break;
 	case OPT_MEM_BIND:
 		if (slurm_verify_mem_bind(val, &opt.mem_bind,
@@ -938,6 +945,8 @@ static void _set_options(const int argc, char **argv)
 		{"kill-on-bad-exit", optional_argument, 0, 'K'},
 		{"label",         no_argument,       0, 'l'},
 		{"licenses",      required_argument, 0, 'L'},
+		{"cluster",       required_argument, 0, 'M'},
+		{"clusters",      required_argument, 0, 'M'},
 		{"distribution",  required_argument, 0, 'm'},
 		{"ntasks",        required_argument, 0, 'n'},
 		{"nodes",         required_argument, 0, 'N'},
@@ -1048,7 +1057,7 @@ static void _set_options(const int argc, char **argv)
 		{"wckey",            required_argument, 0, LONG_OPT_WCKEY},
 		{NULL,               0,                 0, 0}
 	};
-	char *opt_string = "+A:B:c:C:d:D:e:Eg:hHi:I::jJ:kK::lL:m:n:N:"
+	char *opt_string = "+A:B:c:C:d:D:e:Eg:hHi:I::jJ:kK::lL:m:M:n:N:"
 		"o:Op:P:qQr:RsS:t:T:uU:vVw:W:x:XZ";
 	char *pos_delimit;
 	bool ntasks_set_opt = false;
@@ -1090,12 +1099,13 @@ static void _set_options(const int argc, char **argv)
 						&opt.cores_per_socket,
 						&opt.threads_per_core,
 						&opt.cpu_bind_type);
-
 			if (opt.extra_set == false) {
 				error("invalid resource allocation -B `%s'",
 					optarg);
 				exit(error_exit);
 			}
+			opt.cpu_bind_type_set = true;
+			opt.threads_per_core_set = true;
 			break;
 		case (int)'c':
 			tmp_int = _get_int(optarg, "cpus-per-task", false);
@@ -1186,6 +1196,10 @@ static void _set_options(const int argc, char **argv)
 		case 'L':
 			xfree(opt.licenses);
 			opt.licenses = xstrdup(optarg);
+			break;
+		case 'M':
+			xfree(opt.clusters);
+			opt.clusters = xstrdup(optarg);
 			break;
 		case (int)'m':
 			opt.distribution = verify_dist_type(optarg,
@@ -1341,6 +1355,7 @@ static void _set_options(const int argc, char **argv)
 			if (slurm_verify_cpu_bind(optarg, &opt.cpu_bind,
 						  &opt.cpu_bind_type))
 				exit(error_exit);
+			opt.cpu_bind_type_set = true;
 			break;
 		case LONG_OPT_LAUNCH_CMD:
 			opt.launch_cmd = true;
@@ -1385,6 +1400,7 @@ static void _set_options(const int argc, char **argv)
 				      optarg);
 				exit(error_exit);
 			}
+			opt.threads_per_core_set = true;
 			break;
 		case LONG_OPT_MEM:
 			opt.pn_min_memory = (int64_t) str_to_mbytes(optarg);
@@ -1629,6 +1645,7 @@ static void _set_options(const int argc, char **argv)
 			if ((opt.threads_per_core == 1) &&
 			    (max_val == INT_MAX))
 				opt.threads_per_core = NO_VAL;
+			opt.threads_per_core_set = true;
 			break;
 		case LONG_OPT_NTASKSPERNODE:
 			opt.ntasks_per_node = _get_int(optarg,
@@ -1642,6 +1659,7 @@ static void _set_options(const int argc, char **argv)
 		case LONG_OPT_NTASKSPERCORE:
 			opt.ntasks_per_core = _get_int(optarg,
 						       "ntasks-per-core", true);
+			opt.ntasks_per_core_set  = true;
 			break;
 		case LONG_OPT_HINT:
 			/* Keep after other options filled in */
@@ -1653,6 +1671,9 @@ static void _set_options(const int argc, char **argv)
 					&opt.cpu_bind_type)) {
 				exit(error_exit);
 			}
+			opt.hint_set = true;
+			opt.ntasks_per_core_set  = true;
+			opt.threads_per_core  = true;
 			break;
 		case LONG_OPT_BLRTS_IMAGE:
 			xfree(opt.blrtsimage);
@@ -2031,6 +2052,19 @@ static bool _opt_verify(void)
 		verified = false;
 	}
 
+	if (opt.hint_env &&
+	    (!opt.hint_set && !opt.cpu_bind_type_set &&
+	     !opt.ntasks_per_core_set && !opt.threads_per_core_set)) {
+		if (verify_hint(opt.hint_env,
+				&opt.sockets_per_node,
+				&opt.cores_per_socket,
+				&opt.threads_per_core,
+				&opt.ntasks_per_core,
+				&opt.cpu_bind_type)) {
+			exit(error_exit);
+		}
+	}
+
 	if (opt.cpus_set && (opt.pn_min_cpus < opt.cpus_per_task))
 		opt.pn_min_cpus = opt.cpus_per_task;
 
@@ -2199,6 +2233,7 @@ static bool _opt_verify(void)
 			opt.min_nodes = MAX(hl_cnt, opt.min_nodes);
 		else
 			opt.min_nodes = hl_cnt;
+		opt.nodes_set = true;
 	}
 
 	if ((opt.nodes_set || opt.extra_set)				&&
@@ -2558,10 +2593,10 @@ static void _opt_list(void)
 	info("distribution   : %s", format_task_dist_states(opt.distribution));
 	if ((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_PLANE)
 		info("plane size   : %u", opt.plane_size);
-	info("cpu_bind       : %s",
-	     opt.cpu_bind == NULL ? "default" : opt.cpu_bind);
-	info("mem_bind       : %s",
-	     opt.mem_bind == NULL ? "default" : opt.mem_bind);
+	info("cpu_bind       : %s (%u)",
+	     opt.cpu_bind == NULL ? "default" : opt.cpu_bind, opt.cpu_bind_type);
+	info("mem_bind       : %s (%u)",
+	     opt.mem_bind == NULL ? "default" : opt.mem_bind, opt.mem_bind_type);
 	info("verbose        : %d", _verbose);
 	info("slurmd_debug   : %d", opt.slurmd_debug);
 	if (opt.immediate <= 1)
@@ -2723,7 +2758,7 @@ static void _usage(void)
 "            [--oversubscribe] [--label] [--unbuffered] [-m dist] [-J jobname]\n"
 "            [--jobid=id] [--verbose] [--slurmd_debug=#] [--gres=list]\n"
 "            [-T threads] [-W sec] [--checkpoint=time] [--gres-flags=opts]\n"
-"            [--checkpoint-dir=dir]  [--licenses=names]\n"
+"            [--checkpoint-dir=dir] [--licenses=names] [--clusters=cluster_names]\n"
 "            [--restart-dir=dir] [--qos=qos] [--time-min=minutes]\n"
 "            [--contiguous] [--mincpus=n] [--mem=MB] [--tmp=MB] [-C list]\n"
 "            [--mpi=type] [--account=name] [--dependency=type:jobid]\n"
@@ -2800,10 +2835,14 @@ static void _help(void)
 "  -K, --kill-on-bad-exit      kill the job if any task terminates with a\n"
 "                              non-zero exit code\n"
 "  -l, --label                 prepend task number to lines of stdout/err\n"
-"  -L, --licenses=names        required license, comma separated\n"
 "      --launch-cmd            print external launcher command line if not SLURM\n"
 "      --launcher-opts=        options for the external launcher command if not\n"
 "                              SLURM\n"
+"  -L, --licenses=names        required license, comma separated\n"
+"  -M, --clusters=names        Comma separated list of clusters to issue\n"
+"                              commands to.  Default is current cluster.\n"
+"                              Name of 'all' will submit to run on all clusters.\n"
+"                              NOTE: SlurmDBD must up.\n"
 "  -m, --distribution=type     distribution method for processes to nodes\n"
 "                              (type = block|cyclic|arbitrary)\n"
 "      --mail-type=type        notify on state change: BEGIN, END, FAIL or ALL\n"

@@ -286,6 +286,7 @@ static void _opt_default()
 	opt.uid = uid;
 	opt.gid = getgid();
 
+	opt.clusters = NULL;
 	opt.cwd = NULL;
 	opt.progname = NULL;
 
@@ -293,15 +294,19 @@ static void _opt_default()
 	opt.ntasks_set = false;
 	opt.cpus_per_task = 0;
 	opt.cpus_set = false;
+	opt.hint_env = NULL;
+	opt.hint_set = false;
 	opt.min_nodes = 1;
 	opt.max_nodes = 0;
 	opt.nodes_set = false;
 	opt.sockets_per_node = NO_VAL; /* requested sockets */
 	opt.cores_per_socket = NO_VAL; /* requested cores */
 	opt.threads_per_core = NO_VAL; /* requested threads */
+	opt.threads_per_core_set = false;
 	opt.ntasks_per_node      = 0;  /* ntask max limits */
 	opt.ntasks_per_socket    = NO_VAL;
 	opt.ntasks_per_core      = NO_VAL;
+	opt.ntasks_per_core_set  = false;
 	opt.mem_bind_type = 0;
 	opt.mem_bind = NULL;
 	opt.core_spec = (uint16_t) NO_VAL;
@@ -404,7 +409,10 @@ env_vars_t env_vars[] = {
   {"SALLOC_ACCTG_FREQ",    OPT_STRING,     &opt.acctg_freq,    NULL          },
   {"SALLOC_BELL",          OPT_BELL,       NULL,               NULL          },
   {"SALLOC_BURST_BUFFER",  OPT_STRING,     &opt.burst_buffer,  NULL          },
+  {"SALLOC_CLUSTERS",      OPT_STRING,     &opt.clusters,      NULL          },
+  {"SLURM_CLUSTERS",       OPT_STRING,     &opt.clusters,      NULL          },
   {"SALLOC_CONN_TYPE",     OPT_CONN_TYPE,  NULL,               NULL          },
+  {"SALLOC_CONSTRAINT",    OPT_STRING,     &opt.constraints,   NULL          },
   {"SALLOC_CORE_SPEC",     OPT_INT,        &opt.core_spec,     NULL          },
   {"SALLOC_CPU_FREQ_REQ",  OPT_CPU_FREQ,   NULL,               NULL          },
   {"SALLOC_DEBUG",         OPT_DEBUG,      NULL,               NULL          },
@@ -587,15 +595,7 @@ _process_env_var(env_vars_t *e, const char *val)
 		opt.overcommit = true;
 		break;
 	case OPT_HINT:
-		/* Keep after other options filled in */
-		if (verify_hint(val,
-				&opt.sockets_per_node,
-				&opt.cores_per_socket,
-				&opt.threads_per_core,
-				&opt.ntasks_per_core,
-				NULL)) {
-			exit(error_exit);
-		}
+		opt.hint_env = xstrdup(val);
 		break;
 	case OPT_MEM_BIND:
 		if (slurm_verify_mem_bind(val, &opt.mem_bind,
@@ -686,6 +686,8 @@ void set_options(const int argc, char **argv)
 		{"kill-command",  optional_argument, 0, 'K'},
 		{"licenses",      required_argument, 0, 'L'},
 		{"distribution",  required_argument, 0, 'm'},
+		{"cluster",       required_argument, 0, 'M'},
+		{"clusters",      required_argument, 0, 'M'},
 		{"tasks",         required_argument, 0, 'n'},
 		{"ntasks",        required_argument, 0, 'n'},
 		{"nodes",         required_argument, 0, 'N'},
@@ -767,7 +769,7 @@ void set_options(const int argc, char **argv)
 		{NULL,            0,                 0, 0}
 	};
 	char *opt_string =
-		"+A:B:c:C:d:D:F:g:hHI::J:kK::L:m:n:N:Op:P:QRsS:t:uU:vVw:W:x:";
+		"+A:B:c:C:d:D:F:g:hHI::J:kK::L:m:M:n:N:Op:P:QRsS:t:uU:vVw:W:x:";
 	char *pos_delimit;
 
 	struct option *optz = spank_option_table_create(long_options);
@@ -806,6 +808,7 @@ void set_options(const int argc, char **argv)
 					optarg);
 				exit(error_exit);
 			}
+			opt.threads_per_core_set = true;
 			break;
 		case 'c':
 			opt.cpus_set = true;
@@ -884,6 +887,10 @@ void set_options(const int argc, char **argv)
 				      "is not recognized", optarg);
 				exit(error_exit);
 			}
+			break;
+		case 'M':
+			xfree(opt.clusters);
+			opt.clusters = xstrdup(optarg);
 			break;
 		case 'n':
 			opt.ntasks_set = true;
@@ -1030,6 +1037,7 @@ void set_options(const int argc, char **argv)
 				      optarg);
 				exit(error_exit);
 			}
+			opt.threads_per_core_set = true;
 			break;
 		case LONG_OPT_MEM:
 			opt.realmem = (int64_t) str_to_mbytes(optarg);
@@ -1188,6 +1196,7 @@ void set_options(const int argc, char **argv)
 			if ((opt.threads_per_core == 1) &&
 			    (max_val == INT_MAX))
 				opt.threads_per_core = NO_VAL;
+			opt.threads_per_core_set = true;
 			break;
 		case LONG_OPT_NTASKSPERNODE:
 			opt.ntasks_per_node = parse_int("ntasks-per-node",
@@ -1200,6 +1209,7 @@ void set_options(const int argc, char **argv)
 		case LONG_OPT_NTASKSPERCORE:
 			opt.ntasks_per_core = parse_int("ntasks-per-core",
 							optarg, true);
+			opt.ntasks_per_core_set  = true;
 			break;
 		case LONG_OPT_HINT:
 			/* Keep after other options filled in */
@@ -1211,6 +1221,9 @@ void set_options(const int argc, char **argv)
 					NULL)) {
 				exit(error_exit);
 			}
+			opt.hint_set = true;
+			opt.ntasks_per_core_set  = true;
+			opt.threads_per_core_set = true;
 			break;
 		case LONG_OPT_REBOOT:
 #if defined HAVE_BG
@@ -1453,10 +1466,25 @@ static bool _opt_verify(void)
 {
 	bool verified = true;
 	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
+	hostlist_t hl = NULL;
+	int hl_cnt = 0;
 
 	if (opt.quiet && opt.verbose) {
 		error ("don't specify both --verbose (-v) and --quiet (-Q)");
 		verified = false;
+	}
+
+	if (opt.hint_env &&
+	    (!opt.hint_set && !opt.ntasks_per_core_set &&
+	     !opt.threads_per_core_set)) {
+		if (verify_hint(opt.hint_env,
+				&opt.sockets_per_node,
+				&opt.cores_per_socket,
+				&opt.threads_per_core,
+				&opt.ntasks_per_core,
+				NULL)) {
+			exit(error_exit);
+		}
 	}
 
 	if (!opt.nodelist) {
@@ -1487,8 +1515,7 @@ static bool _opt_verify(void)
 	}
 
 	if (opt.nodelist) {
-		int hl_cnt;
-		hostlist_t hl = hostlist_create(opt.nodelist);
+		hl = hostlist_create(opt.nodelist);
 		if (!hl) {
 			error("memory allocation failure");
 			exit(error_exit);
@@ -1499,6 +1526,7 @@ static bool _opt_verify(void)
 			opt.min_nodes = MAX(hl_cnt, opt.min_nodes);
 		else
 			opt.min_nodes = hl_cnt;
+		opt.nodes_set = true;
 	}
 
 
@@ -1655,6 +1683,12 @@ static bool _opt_verify(void)
 		}
 
 	} else if (opt.nodes_set && opt.ntasks_set) {
+		/*
+		 * Make sure that the number of
+		 * max_nodes is <= number of tasks
+		 */
+		if (opt.ntasks < opt.max_nodes)
+			opt.max_nodes = opt.ntasks;
 
 		/*
 		 *  make sure # of procs >= min_nodes
@@ -1665,10 +1699,21 @@ static bool _opt_verify(void)
 			      "nodes, setting nnodes to %d",
 			      opt.ntasks, opt.min_nodes, opt.ntasks);
 
-			opt.min_nodes = opt.ntasks;
-			if (   opt.max_nodes
-			       && (opt.min_nodes > opt.max_nodes) )
-				opt.max_nodes = opt.min_nodes;
+			opt.min_nodes = opt.max_nodes = opt.ntasks;
+
+			if (hl_cnt > opt.min_nodes) {
+				int del_cnt, i;
+				char *host;
+				del_cnt = hl_cnt - opt.min_nodes;
+				for (i=0; i<del_cnt; i++) {
+					host = hostlist_pop(hl);
+					free(host);
+				}
+				xfree(opt.nodelist);
+				opt.nodelist =
+					hostlist_ranged_string_xmalloc(hl);
+			}
+
 		}
 
 	} /* else if (opt.ntasks_set && !opt.nodes_set) */
@@ -1677,7 +1722,8 @@ static bool _opt_verify(void)
 	   of nodes */
 	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	    && (!opt.nodes_set || !opt.ntasks_set)) {
-		hostlist_t hl = hostlist_create(opt.nodelist);
+		if (!hl)
+			hl = hostlist_create(opt.nodelist);
 		if (!opt.ntasks_set) {
 			opt.ntasks_set = 1;
 			opt.ntasks = hostlist_count(hl);
@@ -1687,8 +1733,10 @@ static bool _opt_verify(void)
 			hostlist_uniq(hl);
 			opt.min_nodes = opt.max_nodes = hostlist_count(hl);
 		}
-		hostlist_destroy(hl);
 	}
+
+	if (hl)
+		hostlist_destroy(hl);
 
 	if (opt.time_limit_str) {
 		opt.time_limit = time_str2mins(opt.time_limit_str);
@@ -1730,6 +1778,19 @@ static bool _opt_verify(void)
 			setenvf(NULL, "SLURM_MEM_BIND", "%s", tmp);
 		}
 	}
+	if (opt.mem_bind_type && (getenv("SLURM_MEM_BIND_SORT") == NULL) &&
+	    (opt.mem_bind_type & MEM_BIND_SORT)) {
+		setenvf(NULL, "SLURM_MEM_BIND_SORT", "sort");
+	}
+
+	if (opt.mem_bind_type && (getenv("SLURM_MEM_BIND_VERBOSE") == NULL)) {
+		if (opt.mem_bind_type & MEM_BIND_VERBOSE) {
+			setenvf(NULL, "SLURM_MEM_BIND_VERBOSE", "verbose");
+		} else {
+			setenvf(NULL, "SLURM_MEM_BIND_VERBOSE", "quiet");
+		}
+	}
+
 	if ((opt.ntasks_per_node > 0) &&
 	    (getenv("SLURM_NTASKS_PER_NODE") == NULL)) {
 		setenvf(NULL, "SLURM_NTASKS_PER_NODE", "%d",
@@ -2043,6 +2104,7 @@ static void _usage(void)
 "              [--immediate[=secs]] [--no-kill] [--overcommit] [-D path]\n"
 "              [--oversubscribe] [-J jobname] [--jobid=id]\n"
 "              [--verbose] [--gid=group] [--uid=user] [--licenses=names]\n"
+"              [--clusters=cluster_names]\n"
 "              [--contiguous] [--mincpus=n] [--mem=MB] [--tmp=MB] [-C list]\n"
 "              [--account=name] [--dependency=type:jobid] [--comment=name]\n"
 #ifdef HAVE_BG		/* Blue gene specific options */
@@ -2095,6 +2157,10 @@ static void _help(void)
 "  -k, --no-kill               do not kill job on node failure\n"
 "  -K, --kill-command[=signal] signal to send terminating job\n"
 "  -L, --licenses=names        required license, comma separated\n"
+"  -M, --clusters=names        Comma separated list of clusters to issue\n"
+"                              commands to.  Default is current cluster.\n"
+"                              Name of 'all' will submit to run on all clusters.\n"
+"                              NOTE: SlurmDBD must up.\n"
 "  -m, --distribution=type     distribution method for processes to nodes\n"
 "                              (type = block|cyclic|arbitrary)\n"
 "      --mail-type=type        notify on state change: BEGIN, END, FAIL or ALL\n"

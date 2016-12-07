@@ -75,6 +75,7 @@
 #include "src/slurmctld/acct_policy.h"
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/burst_buffer.h"
+#include "src/slurmctld/fed_mgr.h"
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/licenses.h"
@@ -104,7 +105,7 @@ typedef struct epilog_arg {
 	char **my_env;
 } epilog_arg_t;
 
-static char **	_build_env(struct job_record *job_ptr);
+static char **	_build_env(struct job_record *job_ptr, bool is_epilog);
 static void	_depend_list_del(void *dep_ptr);
 static void	_feature_list_delete(void *x);
 static void	_job_queue_append(List job_queue, struct job_record *job_ptr,
@@ -276,6 +277,9 @@ static bool _job_runnable_test1(struct job_record *job_ptr, bool sched_plugin)
 
 	xassert(job_ptr->magic == JOB_MAGIC);
 	if (!IS_JOB_PENDING(job_ptr) || IS_JOB_COMPLETING(job_ptr))
+		return false;
+
+	if (job_ptr->fed_details && fed_mgr_is_tracker_only_job(job_ptr))
 		return false;
 
 	select_g_select_jobinfo_get(job_ptr->select_jobinfo,
@@ -1469,6 +1473,9 @@ static int _schedule(uint32_t job_limit)
 	bit_not(avail_node_bitmap);
 	unavail_node_str = bitmap2node_name(avail_node_bitmap);
 	bit_not(avail_node_bitmap);
+	bit_not(booting_node_bitmap);
+	bit_and(avail_node_bitmap, booting_node_bitmap);
+	bit_not(booting_node_bitmap);
 
 	if (max_jobs_per_part) {
 		ListIterator part_iterator;
@@ -3146,7 +3153,8 @@ static void _delayed_job_start_time(struct job_record *job_ptr)
 		if (!IS_JOB_PENDING(job_q_ptr) || !job_q_ptr->details ||
 		    (job_q_ptr->part_ptr != job_ptr->part_ptr) ||
 		    (job_q_ptr->priority < job_ptr->priority) ||
-		    (job_q_ptr->job_id == job_ptr->job_id))
+		    (job_q_ptr->job_id == job_ptr->job_id) ||
+		    (fed_mgr_is_tracker_only_job(job_q_ptr)))
 			continue;
 		if (job_q_ptr->details->min_nodes == NO_VAL)
 			job_size_nodes = 1;
@@ -3238,10 +3246,11 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	else
 		start_res = now;
 
-	i = job_test_resv(job_ptr, &start_res, false, &resv_bitmap,
+	i = job_test_resv(job_ptr, &start_res, true, &resv_bitmap,
 			  &exc_core_bitmap, &resv_overlap);
 	if (i != SLURM_SUCCESS) {
 		FREE_NULL_BITMAP(avail_bitmap);
+		FREE_NULL_BITMAP(exc_core_bitmap);
 		return i;
 	}
 	bit_and(avail_bitmap, resv_bitmap);
@@ -3388,7 +3397,7 @@ extern int epilog_slurmctld(struct job_record *job_ptr)
 	epilog_arg = xmalloc(sizeof(epilog_arg_t));
 	epilog_arg->job_id = job_ptr->job_id;
 	epilog_arg->epilog_slurmctld = xstrdup(slurmctld_conf.epilog_slurmctld);
-	epilog_arg->my_env = _build_env(job_ptr);
+	epilog_arg->my_env = _build_env(job_ptr, true);
 
 	slurm_attr_init(&thread_attr_epilog);
 	pthread_attr_setdetachstate(&thread_attr_epilog,
@@ -3411,7 +3420,7 @@ extern int epilog_slurmctld(struct job_record *job_ptr)
 	}
 }
 
-static char **_build_env(struct job_record *job_ptr)
+static char **_build_env(struct job_record *job_ptr, bool is_epilog)
 {
 	char **my_env, *name, *eq, buf[32];
 	int exit_code, i, signal;
@@ -3442,18 +3451,21 @@ static char **_build_env(struct job_record *job_ptr)
 		setenvf(&my_env, "SLURM_JOB_CONSTRAINTS",
 			"%s", job_ptr->details->features);
 	}
-	setenvf(&my_env, "SLURM_JOB_DERIVED_EC", "%u",
-		job_ptr->derived_ec);
 
-	exit_code = signal = 0;
-	if (WIFEXITED(job_ptr->exit_code)) {
-		exit_code = WEXITSTATUS(job_ptr->exit_code);
+	if (is_epilog) {
+		exit_code = signal = 0;
+		if (WIFEXITED(job_ptr->exit_code)) {
+			exit_code = WEXITSTATUS(job_ptr->exit_code);
+		}
+		if (WIFSIGNALED(job_ptr->exit_code)) {
+			signal = WTERMSIG(job_ptr->exit_code);
+		}
+		snprintf(buf, sizeof(buf), "%d:%d", exit_code, signal);
+		setenvf(&my_env, "SLURM_JOB_DERIVED_EC", "%u",
+			job_ptr->derived_ec);
+		setenvf(&my_env, "SLURM_JOB_EXIT_CODE2", "%s", buf);
+		setenvf(&my_env, "SLURM_JOB_EXIT_CODE", "%u", job_ptr->exit_code);
 	}
-	if (WIFSIGNALED(job_ptr->exit_code)) {
-		signal = WTERMSIG(job_ptr->exit_code);
-	}
-	sprintf(buf, "%d:%d", exit_code, signal);
-	setenvf(&my_env, "SLURM_JOB_EXIT_CODE2", "%s", buf);
 
 	if (job_ptr->array_task_id != NO_VAL) {
 		setenvf(&my_env, "SLURM_ARRAY_JOB_ID", "%u",
@@ -3483,7 +3495,6 @@ static char **_build_env(struct job_record *job_ptr)
 			slurmctld_cluster_name);
 	}
 
-	setenvf(&my_env, "SLURM_JOB_EXIT_CODE", "%u", job_ptr->exit_code);
 	setenvf(&my_env, "SLURM_JOB_GID", "%u", job_ptr->group_id);
 	name = gid_to_string((uid_t) job_ptr->group_id);
 	setenvf(&my_env, "SLURM_JOB_GROUP", "%s", name);
@@ -3677,9 +3688,9 @@ extern int reboot_job_nodes(struct job_record *job_ptr)
 		node_ptr->node_state |= NODE_STATE_NO_RESPOND;
 		node_ptr->node_state |= NODE_STATE_POWER_UP;
 		bit_clear(avail_node_bitmap, i);
+		bit_set(booting_node_bitmap, i);
 		node_ptr->boot_req_time = now;
-		node_ptr->last_response = now + slurmctld_conf.resume_timeout -
-					  slurmctld_conf.slurmd_timeout;
+		node_ptr->last_response = now + slurmctld_conf.resume_timeout;
 	}
 	FREE_NULL_BITMAP(boot_node_bitmap);
 	agent_queue_request(reboot_agent_args);
@@ -3834,7 +3845,7 @@ static void *_run_prolog(void *arg)
 	lock_slurmctld(config_read_lock);
 	argv[0] = xstrdup(slurmctld_conf.prolog_slurmctld);
 	argv[1] = NULL;
-	my_env = _build_env(job_ptr);
+	my_env = _build_env(job_ptr, false);
 	job_id = job_ptr->job_id;
 	if (job_ptr->node_bitmap) {
 		node_bitmap = bit_copy(job_ptr->node_bitmap);
@@ -3880,8 +3891,7 @@ static void *_run_prolog(void *arg)
 		error("prolog_slurmctld job %u prolog exit status %u:%u",
 		      job_id, WEXITSTATUS(status), WTERMSIG(status));
 		lock_slurmctld(job_write_lock);
-		if ((rc = job_requeue(0, job_id, -1, (uint16_t) NO_VAL,
-				      false, 0))) {
+		if ((rc = job_requeue(0, job_id, NULL, false, 0))) {
 			info("unable to requeue job %u: %m", job_id);
 			kill_job = true;
 		}
@@ -3913,6 +3923,7 @@ static void *_run_prolog(void *arg)
 		for (i=0; i<node_record_count; i++) {
 			if (bit_test(job_ptr->node_bitmap, i) == 0)
 				continue;
+			bit_clear(booting_node_bitmap, i);
 			node_record_table_ptr[i].node_state &=
 				(~NODE_STATE_POWER_UP);
 		}
@@ -3920,6 +3931,7 @@ static void *_run_prolog(void *arg)
 		for (i=0; i<node_record_count; i++) {
 			if (bit_test(node_bitmap, i) == 0)
 				continue;
+			bit_clear(booting_node_bitmap, i);
 			node_record_table_ptr[i].node_state &=
 				(~NODE_STATE_POWER_UP);
 		}

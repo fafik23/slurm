@@ -236,6 +236,7 @@ extern List avail_feature_list;	/* list of available node features */
  *
  *  avail_node_bitmap       Set if node's state is not DOWN, DRAINING/DRAINED,
  *                          FAILING or NO_RESPOND (i.e. available to run a job)
+ *  booting_node_bitmap     Set if node in process of booting
  *  cg_node_bitmap          Set if node in completing state
  *  idle_node_bitmap        Set if node has no jobs allocated to it
  *  power_node_bitmap       Set for nodes which are powered down
@@ -247,6 +248,7 @@ extern List avail_feature_list;	/* list of available node features */
 \*****************************************************************************/
 extern bitstr_t *avail_node_bitmap;	/* bitmap of available nodes,
 					 * state not DOWN, DRAIN or FAILING */
+extern bitstr_t *booting_node_bitmap;	/* bitmap of booting nodes */
 extern bitstr_t *cg_node_bitmap;	/* bitmap of completing nodes */
 extern bitstr_t *idle_node_bitmap;	/* bitmap of idle nodes */
 extern bitstr_t *power_node_bitmap;	/* Powered down nodes */
@@ -344,6 +346,8 @@ struct part_record {
 	char *nodes;		/* comma delimited list names of nodes */
 	double   norm_priority;	/* normalized scheduling priority for
 				 * jobs (DON'T PACK) */
+	uint16_t over_time_limit; /* job's time limit can be exceeded by this
+				   * number of minutes before cancellation */
 	uint16_t preempt_mode;	/* See PREEMPT_MODE_* in slurm/slurm.h */
 	uint16_t priority_job_factor;	/* job priority weight factor */
 	uint16_t priority_tier;	/* tier for scheduling and preemption */
@@ -443,6 +447,14 @@ typedef struct job_feature {
 	uint8_t op_code;		/* separator, see FEATURE_OP_ above */
 } job_feature_t;
 
+/*
+ * these related to the JOB_SHARED_ macros in slurm.h
+ * but with the logic for zero vs one inverted
+ */
+#define WHOLE_NODE_REQUIRED	0x01
+#define WHOLE_NODE_USER		0x02
+#define WHOLE_NODE_MCS		0x03
+
 /* job_details - specification of a job's constraints,
  * can be purged after initiation */
 struct job_details {
@@ -526,9 +538,9 @@ struct job_details {
 					 * useful when Consumable Resources
 					 * is enabled */
 	uint32_t usable_nodes;		/* node count needed by preemption */
-	uint8_t whole_node;		/* 1: --exclusive
-					 * 2: --exclusive=user
-					 * 3: --exclusive=mcs */
+	uint8_t whole_node;		/* WHOLE_NODE_REQUIRED: 1: --exclusive
+					 * WHOLE_NODE_USER: 2: --exclusive=user
+					 * WHOLE_NODE_MCS:  3: --exclusive=mcs */
 	char *work_dir;			/* pathname of working directory */
 };
 
@@ -553,10 +565,10 @@ typedef struct {
 	uint16_t *tres;
 } acct_policy_limit_set_t;
 
-
 typedef struct {
-	bitstr_t *siblings;		/* bitmap of sibling cluster ids where
-					 * sibling jobs exist */
+	char    *origin_str;	/* origin cluster name */
+	uint64_t siblings;	/* bitmap of sibling cluster ids */
+	char    *siblings_str;	/* comma separated list of sibling names */
 } job_fed_details_t;
 
 /*
@@ -587,7 +599,7 @@ struct job_record {
 					 * billing weight. Recalculated upon job
 					 * resize.  Cannot be calculated until
 					 * the job is alloocated resources. */
-	uint32_t bit_flags;             /* various flags */
+	uint32_t bit_flags;             /* various job flags */			// GRES_ENFORCE_BIND
 	char *burst_buffer;		/* burst buffer specification */
 	char *burst_buffer_state;	/* burst buffer state */
 	check_jobinfo_t check_job;      /* checkpoint context, opaque */
@@ -630,6 +642,9 @@ struct job_record {
 	List gres_list;			/* generic resource allocation detail */
 	char *gres_alloc;		/* Allocated GRES added over all nodes
 					 * to be passed to slurmdbd */
+	uint32_t gres_detail_cnt;	/* Count of gres_detail_str records,
+					 * one per allocated node */
+	char **gres_detail_str;		/* Details of GRES index alloc per node */
 	char *gres_req;			/* Requested GRES added over all nodes
 					 * to be passed to slurmdbd */
 	char *gres_used;		/* Actual GRES use added over all nodes
@@ -677,11 +692,16 @@ struct job_record {
 					 * for this job, used to insure
 					 * epilog is not re-run for job */
 	uint16_t other_port;		/* port for client communications */
+	uint32_t pack_leader;		/* job_id of pack_leader for job_pack
+	                                 * or 0 */
 	char *partition;		/* name of job partition(s) */
 	List part_ptr_list;		/* list of pointers to partition recs */
 	bool part_nodes_missing;	/* set if job's nodes removed from this
 					 * partition */
 	struct part_record *part_ptr;	/* pointer to the partition record */
+	char **pelog_env;		/* other environment variables for job
+					   prolog and epilog scripts */
+	uint32_t pelog_env_size;	/* element count in pelog_env */
 	uint8_t power_flags;		/* power management flags,
 					 * see SLURM_POWER_FLAGS_ */
 	time_t pre_sus_time;		/* time job ran prior to last suspend */
@@ -825,6 +845,8 @@ struct 	step_record {
 	char *name;			/* name of job step */
 	char *network;			/* step's network specification */
 	uint8_t no_kill;		/* 1 if no kill on node failure */
+	uint32_t packjobid;		/* jobid of srun first step */
+	uint32_t packstepid;		/* stepid of srun first step */
 	uint16_t port;			/* port for srun communications */
 	time_t pre_sus_time;		/* time step ran prior to last suspend */
 	uint16_t start_protocol_ver;	/* Slurm version step was
@@ -1101,10 +1123,12 @@ extern char **get_job_env (struct job_record *job_ptr, uint32_t *env_size);
 extern char *get_job_script (struct job_record *job_ptr);
 
 /*
- * get_next_job_id - return the job_id to be used by default for
- *	the next job
+ * Return the next available job_id to be used.
+ * IN test_only - if true, doesn't advance the job_id sequence, just returns
+ * 	what the next job id will be.
+ * RET a valid job_id or SLURM_ERROR if all job_ids are exhausted.
  */
-extern uint32_t get_next_job_id(void);
+extern uint32_t get_next_job_id(bool test_only);
 
 /*
  * get_part_list - find record for named partition(s)
@@ -1274,7 +1298,7 @@ extern bool job_epilog_complete(uint32_t job_id, char *node_name,
  * job_end_time - Process JOB_END_TIME
  * IN time_req_msg - job end time request
  * OUT timeout_msg - job timeout response to be sent
- * RET SLURM_SUCESS or an error code
+ * RET SLURM_SUCCESS or an error code
  */
 extern int job_end_time(job_alloc_info_msg_t *time_req_msg,
 			srun_timeout_msg_t *timeout_msg);
@@ -1457,28 +1481,24 @@ extern int job_req_node_filter(struct job_record *job_ptr,
  * job_requeue - Requeue a running or pending batch job
  * IN uid - user id of user issuing the RPC
  * IN job_id - id of the job to be requeued
- * IN conn_fd - file descriptor on which to send reply
- * IN protocol_version - slurm protocol version of client
+ * IN msg - slurm_msg to send response back on
  * IN preempt - true if job being preempted
  * IN state - may be set to JOB_SPECIAL_EXIT and/or JOB_REQUEUE_HOLD
  * RET 0 on success, otherwise ESLURM error code
  */
-extern int job_requeue(uid_t uid, uint32_t job_id,
-                       int conn_fd, uint16_t protocol_version,
-                       bool preempt, uint32_t state);
+extern int job_requeue(uid_t uid, uint32_t job_id, slurm_msg_t *msg,
+		       bool preempt, uint32_t state);
 
 /*
  * job_requeue2 - Requeue a running or pending batch job
  * IN uid - user id of user issuing the RPC
  * IN req_ptr - request including ID of the job to be requeued
- * IN conn_fd - file descriptor on which to send reply
- * IN protocol_version - slurm protocol version of client
+ * IN msg - slurm_msg to send response back on
  * IN preempt - true if job being preempted
  * RET 0 on success, otherwise ESLURM error code
  */
-extern int job_requeue2(uid_t uid, requeue_msg_t *req_ptr,
-                        int conn_fd, uint16_t protocol_version,
-                        bool preempt);
+extern int job_requeue2(uid_t uid, requeue_msg_t *req_ptr, slurm_msg_t *msg,
+			bool preempt);
 
 /*
  * job_set_top - Move the specified job to the top of the queue (at least
@@ -2404,4 +2424,9 @@ waitpid_timeout(const char *, pid_t, int *, int);
  */
 extern void set_partition_tres();
 
+/*
+ * Set job's siblings and make sibling strings
+ */
+extern void set_job_fed_details(struct job_record *job_ptr,
+				uint64_t fed_siblings);
 #endif /* !_HAVE_SLURMCTLD_H */

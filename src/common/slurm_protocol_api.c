@@ -961,6 +961,24 @@ uint16_t slurm_get_private_data(void)
 	return private_data;
 }
 
+/* slurm_get_resume_program
+ * returns the ResumeProgram from slurmctld_conf object
+ * RET char *    - ResumeProgram, MUST be xfreed by caller
+ */
+char *slurm_get_resume_program(void)
+{
+	char *resume_program = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		resume_program = xstrdup(conf->resume_program);
+		slurm_conf_unlock();
+	}
+	return resume_program;
+}
+
 /* slurm_get_state_save_location
  * get state_save_location from slurmctld_conf object from slurmctld_conf object
  * RET char *   - state_save_location directory, MUST be xfreed by caller
@@ -1786,8 +1804,6 @@ char *slurm_get_accounting_storage_pass(void)
 
 /* slurm_get_auth_info
  * returns the auth_info from slurmctld_conf object (AuthInfo parameter)
- * cache value in local buffer for best performance
- * WARNING: The return of this function can be used in many different
  * RET char * - AuthInfo value,  MUST be xfreed by caller
  */
 extern char *slurm_get_auth_info(void)
@@ -1804,6 +1820,23 @@ extern char *slurm_get_auth_info(void)
 	}
 
 	return auth_info;
+}
+
+/* slurm_get_sbcast_parameters
+ * RET char * - SbcastParameters from slurm.conf,  MUST be xfreed by caller
+ */
+char *slurm_get_sbcast_parameters(void)
+{
+	char *sbcast_parameters = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (!slurmdbd_conf) {
+		conf = slurm_conf_lock();
+		sbcast_parameters = xstrdup(conf->sbcast_parameters);
+		slurm_conf_unlock();
+	}
+
+	return sbcast_parameters;
 }
 
 /* slurm_get_auth_ttl
@@ -3095,6 +3128,7 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer)
 	header_t header;
 	int rc;
 	void *auth_cred = NULL;
+	uint32_t body_offset = 0;
 
 	if (unpack_header(&header, buffer) == SLURM_ERROR) {
 		rc = SLURM_COMMUNICATIONS_RECEIVE_ERROR;
@@ -3166,12 +3200,16 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer)
 	msg->msg_type = header.msg_type;
 	msg->flags = header.flags;
 
+	body_offset = get_buf_offset(buffer);
+
 	if ((header.body_length > remaining_buf(buffer)) ||
 	    (unpack_msg(msg, buffer) != SLURM_SUCCESS)) {
 		rc = ESLURM_PROTOCOL_INCOMPLETE_PACKET;
 		(void) g_slurm_auth_destroy(auth_cred);
 		goto total_return;
 	}
+
+	set_buf_offset(buffer, body_offset);
 
 	msg->auth_cred = (void *)auth_cred;
 
@@ -3210,6 +3248,10 @@ int slurm_receive_msg(int fd, slurm_msg_t *msg, int timeout)
 	size_t buflen = 0;
 	int rc;
 	Buf buffer;
+	bool keep_buffer = false;
+
+	if (msg->flags & SLURM_MSG_KEEP_BUFFER)
+		keep_buffer = true;
 
 	if (msg->conn) {
 		persist_msg_t persist_msg;
@@ -3222,7 +3264,13 @@ int slurm_receive_msg(int fd, slurm_msg_t *msg, int timeout)
 		}
 		memset(&persist_msg, 0, sizeof(persist_msg_t));
 		rc = slurm_persist_msg_unpack(msg->conn, &persist_msg, buffer);
-		free_buf(buffer);
+
+		if (keep_buffer) {
+			set_buf_offset(buffer, 0);
+			msg->buffer = buffer;
+		} else {
+			free_buf(buffer);
+		}
 
 		if (rc) {
 			error("%s: Failed to unpack persist msg", __func__);
@@ -3269,7 +3317,10 @@ int slurm_receive_msg(int fd, slurm_msg_t *msg, int timeout)
 
 	rc = slurm_unpack_received_msg(msg, fd, buffer);
 
-	free_buf(buffer);
+	if (keep_buffer)
+		msg->buffer = buffer;
+	else
+		free_buf(buffer);
 
 endit:
 	slurm_seterrno(rc);
@@ -4638,6 +4689,7 @@ extern void slurm_free_msg_members(slurm_msg_t *msg)
 	if (msg) {
 		if (msg->auth_cred)
 			(void) g_slurm_auth_destroy(msg->auth_cred);
+		free_buf(msg->buffer);
 		slurm_free_msg_data(msg->msg_type, msg->data);
 		FREE_NULL_LIST(msg->ret_list);
 	}
@@ -4694,17 +4746,10 @@ extern void convert_num_unit2(double num, char *buf, int buf_size,
 	if ((int64_t)num == 0) {
 		snprintf(buf, buf_size, "0");
 		return;
-	} else if (spec_type == NO_VAL && (flags & CONVERT_NUM_UNIT_EXACT)) {
-		i = (uint64_t)num % (divisor / 2);
-
-		if (i > 0) {
-			snprintf(buf, buf_size, "%"PRIu64"%c",
-				 (uint64_t)num, unit[orig_type]);
-			return;
-		}
 	}
 
 	if (spec_type != NO_VAL) {
+		/* spec_type overrides all flags */
 		if (spec_type < orig_type) {
 			while (spec_type < orig_type) {
 				num *= divisor;
@@ -4716,8 +4761,20 @@ extern void convert_num_unit2(double num, char *buf, int buf_size,
 				orig_type++;
 			}
 		}
-	} else if (!(flags & CONVERT_NUM_UNIT_NO)) {
-		while (num > divisor) {
+	} else if (flags & CONVERT_NUM_UNIT_NO) {
+		/* no op */
+	} else if (flags & CONVERT_NUM_UNIT_EXACT) {
+		/* convert until we would loose precision */
+		/* half values  (e.g., 2.5G) are still considered precise */
+
+		while (num >= divisor
+		       && ((uint64_t)num % (divisor / 2) == 0)) {
+			num /= divisor;
+			orig_type++;
+		}
+	} else {
+		/* aggressively convert values */
+		while (num >= divisor) {
 			num /= divisor;
 			orig_type++;
 		}

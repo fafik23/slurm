@@ -75,6 +75,7 @@ static void _free_cluster_rec_members(slurmdb_cluster_rec_t *cluster)
 		xfree(cluster->control_host);
 		xfree(cluster->dim_size);
 		xfree(cluster->fed.name);
+		slurm_persist_conn_destroy(cluster->fed.send);
 		xfree(cluster->name);
 		xfree(cluster->nodes);
 		slurmdb_destroy_assoc_rec(cluster->root_assoc);
@@ -837,6 +838,7 @@ extern void slurmdb_destroy_job_rec(void *object)
 	slurmdb_job_rec_t *job = (slurmdb_job_rec_t *)object;
 	if (job) {
 		xfree(job->account);
+		xfree(job->admin_comment);
 		xfree(job->alloc_gres);
 		xfree(job->array_task_str);
 		xfree(job->blockid);
@@ -2997,6 +2999,23 @@ extern char *slurmdb_get_selected_step_id(
 	return job_id_str;
 }
 
+static int _find_char_in_list(void *name, void *key)
+{
+	char *name_str = (char *)name;
+	char *key_str  = (char *)key;
+
+	if (!xstrcmp(name_str,key_str))
+		return 1;
+
+	return 0;
+}
+
+/* Return the cluster with the fastest start_time.
+ *
+ * Note: The will_runs are not threaded. Currently it relies on the
+ * working_cluster_rec to pack the job_desc's jobinfo. See previous commit for
+ * an example of how to thread this.
+ */
 extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	char *cluster_names, slurmdb_cluster_rec_t **cluster_rec)
 {
@@ -3007,6 +3026,7 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	ListIterator itr;
 	List cluster_list = NULL;
 	List ret_list = NULL;
+	List tried_feds = list_create(NULL);
 
 	*cluster_rec = NULL;
 	cluster_list = slurmdb_get_info_cluster(cluster_names);
@@ -3032,13 +3052,25 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 	ret_list = list_create(_destroy_local_cluster_rec);
 	itr = list_iterator_create(cluster_list);
 	while ((working_cluster_rec = list_next(itr))) {
-		if ((local_cluster = _job_will_run(req)))
+
+		/* only try one cluster from each federation */
+		if (working_cluster_rec->fed.id &&
+		    list_find_first(tried_feds, _find_char_in_list,
+				    working_cluster_rec->fed.name))
+			continue;
+
+		if ((local_cluster = _job_will_run(req))) {
 			list_append(ret_list, local_cluster);
-		else
+			if (working_cluster_rec->fed.id)
+				list_append(tried_feds,
+					    working_cluster_rec->fed.name);
+		} else {
 			error("Problem with submit to cluster %s: %m",
 			      working_cluster_rec->name);
+		}
 	}
 	list_iterator_destroy(itr);
+	FREE_NULL_LIST(tried_feds);
 
 	/* restore working_cluster_rec in case it was already set */
 	if (*cluster_rec) {

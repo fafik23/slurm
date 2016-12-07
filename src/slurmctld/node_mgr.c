@@ -92,6 +92,7 @@
 
 /* Global variables */
 bitstr_t *avail_node_bitmap = NULL;	/* bitmap of available nodes */
+bitstr_t *booting_node_bitmap = NULL;	/* bitmap of booting nodes */
 bitstr_t *cg_node_bitmap    = NULL;	/* bitmap of completing nodes */
 bitstr_t *idle_node_bitmap  = NULL;	/* bitmap of idle nodes */
 bitstr_t *power_node_bitmap = NULL;	/* bitmap of powered down nodes */
@@ -230,7 +231,6 @@ _dump_node_state (struct node_record *dump_node_ptr, Buf buffer)
 	pack16  (dump_node_ptr->core_spec_cnt, buffer);
 	pack16  (dump_node_ptr->threads, buffer);
 	pack64  (dump_node_ptr->real_memory, buffer);
-	pack64  (dump_node_ptr->mem_spec_limit, buffer);
 	pack32  (dump_node_ptr->tmp_disk, buffer);
 	pack32  (dump_node_ptr->reason_uid, buffer);
 	pack_time(dump_node_ptr->reason_time, buffer);
@@ -291,7 +291,7 @@ extern int load_all_node_state ( bool state_only )
 	uint16_t core_spec_cnt = 0;
 	uint32_t node_state;
 	uint16_t cpus = 1, boards = 1, sockets = 1, cores = 1, threads = 1;
-	uint64_t real_memory, mem_spec_limit = 0;
+	uint64_t real_memory;
 	uint32_t tmp_disk, data_size = 0, name_len;
 	uint32_t reason_uid = NO_VAL;
 	time_t boot_req_time = 0, reason_time = 0;
@@ -380,7 +380,6 @@ extern int load_all_node_state ( bool state_only )
 			safe_unpack16 (&core_spec_cnt, buffer);
 			safe_unpack16 (&threads,     buffer);
 			safe_unpack64 (&real_memory, buffer);
-			safe_unpack64 (&mem_spec_limit, buffer);
 			safe_unpack32 (&tmp_disk,    buffer);
 			safe_unpack32 (&reason_uid,  buffer);
 			safe_unpack_time (&reason_time, buffer);
@@ -413,8 +412,13 @@ extern int load_all_node_state ( bool state_only )
 			safe_unpack16 (&threads,     buffer);
 			safe_unpack32 (&tmp_mem, buffer);
 			real_memory = xlate_mem_old2new(tmp_mem);
+			/* Following unpack was for mem_spec_limit which should
+			 * have never been packed in the first place.  We
+			 * don't need to keep state as the value is always read
+			 * from the slurm.conf.  If we used this value it would
+			 * over write that value so we will throw it away here.
+			 */
 			safe_unpack32 (&tmp_mem, buffer);
-			mem_spec_limit = xlate_mem_old2new(tmp_mem);
 			safe_unpack32 (&tmp_disk,    buffer);
 			safe_unpack32 (&reason_uid,  buffer);
 			safe_unpack_time (&reason_time, buffer);
@@ -445,8 +449,13 @@ extern int load_all_node_state ( bool state_only )
 			safe_unpack16 (&threads,     buffer);
 			safe_unpack32 (&tmp_mem, buffer);
 			real_memory = xlate_mem_old2new(tmp_mem);
+			/* Following unpack was for mem_spec_limit which should
+			 * have never been packed in the first place.  We
+			 * don't need to keep state as the value is always read
+			 * from the slurm.conf.  If we used this value it would
+			 * over write that value so we will throw it away here.
+			 */
 			safe_unpack32 (&tmp_mem, buffer);
-			mem_spec_limit = xlate_mem_old2new(tmp_mem);
 			safe_unpack32 (&tmp_disk,    buffer);
 			safe_unpack32 (&reason_uid,  buffer);
 			safe_unpack_time (&reason_time, buffer);
@@ -555,12 +564,12 @@ extern int load_all_node_state ( bool state_only )
 							     /* to free */
 					node_ptr->threads       = threads;
 					node_ptr->real_memory   = real_memory;
-					node_ptr->mem_spec_limit =
-						mem_spec_limit;
 					node_ptr->tmp_disk      = tmp_disk;
 				}
 				if (node_state & NODE_STATE_MAINT)
 					node_ptr->node_state |= NODE_STATE_MAINT;
+				if (node_state & NODE_STATE_REBOOT)
+					node_ptr->node_state |= NODE_STATE_REBOOT;
 				if (node_state & NODE_STATE_POWER_UP) {
 					if (power_save_mode) {
 						node_ptr->node_state |=
@@ -598,8 +607,6 @@ extern int load_all_node_state ( bool state_only )
 				cpu_spec_list = NULL; /* Nothing to free */
 				node_ptr->threads       = threads;
 				node_ptr->real_memory   = real_memory;
-				node_ptr->mem_spec_limit =
-					mem_spec_limit;
 				node_ptr->tmp_disk      = tmp_disk;
 			}
 
@@ -661,7 +668,6 @@ extern int load_all_node_state ( bool state_only )
 			node_ptr->core_spec_cnt = core_spec_cnt;
 			node_ptr->threads       = threads;
 			node_ptr->real_memory   = real_memory;
-			node_ptr->mem_spec_limit = mem_spec_limit;
 			node_ptr->tmp_disk      = tmp_disk;
 			node_ptr->last_response = (time_t) 0;
 			xfree(node_ptr->mcs_label);
@@ -1424,11 +1430,9 @@ int update_node ( update_node_msg_t * update_node_msg )
 				node_features_g_node_xlate(
 					update_node_msg->features_act,
 					node_ptr->features, 2);
-			xfree(update_node_msg->features_act);
-			update_node_msg->features_act =
-				xstrdup(node_ptr->features_act);
-			/* _update_node_active_features() logs and updates
-			 * active_feature_list */
+			error_code = _update_node_active_features(
+						node_ptr->name,
+						node_ptr->features_act);
 		}
 
 		if (update_node_msg->gres) {
@@ -1484,13 +1488,15 @@ int update_node ( update_node_msg_t * update_node_msg )
 				node_ptr->node_state &= (~NODE_STATE_DRAIN);
 				node_ptr->node_state &= (~NODE_STATE_FAIL);
 				node_ptr->node_state &= (~NODE_STATE_MAINT);
+				node_ptr->node_state &= (~NODE_STATE_REBOOT);
 				if (IS_NODE_DOWN(node_ptr)) {
 					state_val = NODE_STATE_IDLE;
 #ifndef HAVE_FRONT_END
 					node_ptr->node_state |=
 							NODE_STATE_NO_RESPOND;
 #endif
-					node_ptr->last_response = now;
+					node_ptr->last_response = MAX(now,
+						node_ptr->last_response);
 					ping_nodes_now = true;
 				} else if (IS_NODE_FUTURE(node_ptr)) {
 					if (node_ptr->port == 0) {
@@ -1506,7 +1512,9 @@ int update_node ( update_node_msg_t * update_node_msg )
 						node_ptr->node_state |=
 							NODE_STATE_NO_RESPOND;
 #endif
-						node_ptr->last_response = now;
+						node_ptr->last_response =
+							MAX(now,
+							node_ptr->last_response);
 						ping_nodes_now = true;
 					} else {
 						error("slurm_set_addr failure "
@@ -1648,7 +1656,8 @@ int update_node ( update_node_msg_t * update_node_msg )
 				   (IS_NODE_POWER_UP(node_ptr))) {
 				/* Clear any reboot operation in progress */
 				node_ptr->node_state &= (~NODE_STATE_POWER_UP);
-				node_ptr->last_response = now;
+				node_ptr->last_response = MAX(now,
+						node_ptr->last_response);
 				state_val = base_state;
 			} else if (state_val == NODE_STATE_NO_RESPOND) {
 				node_ptr->node_state |= NODE_STATE_NO_RESPOND;
@@ -1689,11 +1698,6 @@ int update_node ( update_node_msg_t * update_node_msg )
 	FREE_NULL_HOSTLIST(hostname_list);
 	last_node_update = now;
 
-	if ((error_code == 0) && (update_node_msg->features_act)) {
-		error_code = _update_node_active_features(
-					update_node_msg->node_names,
-					update_node_msg->features_act);
-	}
 	if ((error_code == 0) && (update_node_msg->features)) {
 		error_code = _update_node_avail_features(
 					update_node_msg->node_names,
@@ -1951,7 +1955,10 @@ static int _update_node_avail_features(char *node_names, char *avail_features)
 		FREE_NULL_BITMAP(tmp_bitmap);
 	}
 	list_iterator_destroy(config_iterator);
-	update_feature_list(avail_feature_list, avail_features, node_bitmap);
+	if (avail_feature_list) {	/* List not set at startup */
+		update_feature_list(avail_feature_list, avail_features,
+				    node_bitmap);
+	}
 	FREE_NULL_BITMAP(node_bitmap);
 
 	info("%s: nodes %s available features set to: %s",
@@ -2163,6 +2170,7 @@ static bool _valid_node_state_change(uint32_t old, uint32_t new)
 			    (base_state == NODE_STATE_FUTURE) ||
 			    (node_flags & NODE_STATE_DRAIN)   ||
 			    (node_flags & NODE_STATE_FAIL)    ||
+			    (node_flags & NODE_STATE_REBOOT)  ||
 			    (node_flags & NODE_STATE_MAINT))
 				return true;
 			break;
@@ -2292,7 +2300,7 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 	int error_code, i, node_inx;
 	struct config_record *config_ptr;
 	struct node_record *node_ptr;
-	char *reason_down = NULL, *tmp_str;
+	char *reason_down = NULL, *tmp_str, *orig_act;
 	uint32_t node_flags;
 	time_t now = time(NULL);
 	bool gang_flag = false;
@@ -2319,6 +2327,7 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		debug("Still waiting for boot of node %s", node_ptr->name);
 		return SLURM_SUCCESS;
 	}
+	bit_clear(booting_node_bitmap, node_inx);
 
 	if (cr_flag == NO_VAL) {
 		cr_flag = 0;  /* call is no-op for select/linear and bluegene */
@@ -2330,14 +2339,6 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 	if (slurm_get_preempt_mode() != PREEMPT_MODE_OFF)
 		gang_flag = true;
 
-	if (reg_msg->features_active) {
-		tmp_str = node_features_g_node_xlate(reg_msg->features_active,
-						     node_ptr->features_act, 1);
-		xfree(node_ptr->features_act);
-		node_ptr->features_act = tmp_str;
-		(void) _update_node_active_features(node_ptr->name,
-						    node_ptr->features_act);
-	}
 	if (reg_msg->features_avail) {
 		tmp_str = node_features_g_node_xlate(reg_msg->features_avail,
 						     node_ptr->features, 1);
@@ -2345,6 +2346,18 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		node_ptr->features = tmp_str;
 		(void) _update_node_avail_features(node_ptr->name,
 						   node_ptr->features);
+	}
+	if (reg_msg->features_active) {
+		if (node_ptr->features_act)
+			orig_act = node_ptr->features_act;
+		else
+			orig_act = node_ptr->features;
+		tmp_str = node_features_g_node_xlate(reg_msg->features_active,
+						     orig_act, 1);
+		xfree(node_ptr->features_act);
+		node_ptr->features_act = tmp_str;
+		(void) _update_node_active_features(node_ptr->name,
+						    node_ptr->features_act);
 	}
 
 	if (gres_plugin_node_config_unpack(reg_msg->gres_info,
@@ -2365,6 +2378,17 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		int sockets1, sockets2;	/* total sockets on node */
 		int cores1, cores2;	/* total cores on node */
 		int threads1, threads2;	/* total threads on node */
+		char *node_features_plugin = slurm_get_node_features_plugins();
+		bool validate_socket_cnt = true;
+
+		if (node_features_plugin &&
+		    strstr(node_features_plugin, "knl")) {
+			/* KNL reboots can change the NUMA count (treated like
+			 * a socket count) without changing the total core
+			 * count, which Slurm will support. */
+			validate_socket_cnt = false;
+		}
+		xfree(node_features_plugin);
 
 		sockets1 = reg_msg->sockets;
 		cores1   = sockets1 * reg_msg->cores;
@@ -2391,13 +2415,18 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 			xstrcat(reason_down, "Low socket*core count");
 		} else if ((slurmctld_conf.fast_schedule == 0) &&
 			   ((cr_flag == 1) || gang_flag) &&
-			   ((sockets1 > sockets2) || (cores1 > cores2) ||
-			    (threads1 > threads2))) {
+			   ((validate_socket_cnt && (sockets1 > sockets2)) ||
+			    (cores1 > cores2) || (threads1 > threads2))) {
 			error("Node %s has high socket,core,thread count "
 			      "(%d,%d,%d > %d,%d,%d), extra resources ignored",
-			      reg_msg->node_name, sockets1, cores1, threads1,
-			      sockets2, cores2, threads2);
-			/* Preserve configured values */
+			      reg_msg->node_name, reg_msg->sockets,
+			      reg_msg->cores, reg_msg->threads,
+			      config_ptr->sockets, config_ptr->cores,
+			      config_ptr->threads);
+			/* Preserve configured values as we can't change the
+			 * total core count on the node without the core_bitmaps
+			 * in select/cons_res or gang scheduler being rebuilt */
+			reg_msg->boards  = config_ptr->boards;
 			reg_msg->sockets = config_ptr->sockets;
 			reg_msg->cores   = config_ptr->cores;
 			reg_msg->threads = config_ptr->threads;
@@ -2427,6 +2456,11 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		     (config_ptr->sockets * config_ptr->cores))) {
 			_split_node_config(node_ptr, reg_msg);
 		}
+	}
+	if (reg_msg->boards > reg_msg->sockets) {
+		error("Node %s has more boards than sockets (%u > %u), setting board count to 1",
+		      reg_msg->node_name, reg_msg->boards, reg_msg->sockets);
+		reg_msg->boards = 1;
 	}
 
 	/* reset partition and node config (in that order) */
@@ -2524,6 +2558,7 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		info("Node %s now responding", node_ptr->name);
 		node_ptr->node_state &= (~NODE_STATE_NO_RESPOND);
 		node_ptr->node_state &= (~NODE_STATE_POWER_UP);
+		node_ptr->node_state &= (~NODE_STATE_REBOOT);
 		if (!is_node_in_maint_reservation(node_inx))
 			node_ptr->node_state &= (~NODE_STATE_MAINT);
 		last_node_update = now;
@@ -2573,10 +2608,12 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 			debug("validate_node_specs: node %s registered with "
 			      "%u jobs",
 			      reg_msg->node_name,reg_msg->job_count);
-			if (IS_NODE_FUTURE(node_ptr) &&
-			    IS_NODE_MAINT(node_ptr) &&
-			    !is_node_in_maint_reservation(node_inx))
-				node_flags &= (~NODE_STATE_MAINT);
+			if (IS_NODE_FUTURE(node_ptr)) {
+				if (IS_NODE_MAINT(node_ptr) &&
+				    !is_node_in_maint_reservation(node_inx))
+					node_flags &= (~NODE_STATE_MAINT);
+				node_flags &= (~NODE_STATE_REBOOT);
+			}
 			if (reg_msg->job_count) {
 				node_ptr->node_state = NODE_STATE_ALLOCATED |
 					node_flags;
@@ -2599,11 +2636,18 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 			}
 		} else if (IS_NODE_DOWN(node_ptr) &&
 			   ((slurmctld_conf.ret2service == 2) ||
-			    !xstrcmp(node_ptr->reason, "Scheduled reboot") ||
+			    IS_NODE_REBOOT(node_ptr) ||
 			    ((slurmctld_conf.ret2service == 1) &&
 			     !xstrcmp(node_ptr->reason, "Not responding") &&
 			     (node_ptr->boot_time <
 			      node_ptr->last_response)))) {
+			node_flags &= (~NODE_STATE_REBOOT);
+			if (!xstrcmp(node_ptr->reason, "Reboot ASAP")) {
+				xfree(node_ptr->reason);
+				node_ptr->reason_time = 0;
+				node_ptr->reason_uid = 0;
+				node_flags &= (~NODE_STATE_DRAIN);
+			}
 			if (reg_msg->job_count) {
 				node_ptr->node_state = NODE_STATE_ALLOCATED |
 					node_flags;
@@ -2619,14 +2663,13 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 			if (!IS_NODE_DRAIN(node_ptr)
 			    && !IS_NODE_FAIL(node_ptr)) {
 				/* reason information is handled in
-				   clusteracct_storage_g_node_up()
-				*/
+				 * clusteracct_storage_g_node_up() */
 				clusteracct_storage_g_node_up(
 					acct_db_conn, node_ptr, now);
 			}
-		} else if (node_ptr->last_response
-			   && (node_ptr->boot_time > node_ptr->last_response)
-			   && (slurmctld_conf.ret2service != 2)) {
+		} else if (node_ptr->last_response &&
+			   (node_ptr->boot_time > node_ptr->last_response) &&
+			   (slurmctld_conf.ret2service != 2)) {
 			if (!node_ptr->reason ||
 			    (node_ptr->reason &&
 			     !xstrcmp(node_ptr->reason, "Not responding"))) {
@@ -2692,6 +2735,7 @@ extern int validate_node_specs(slurm_node_registration_status_msg_t *reg_msg,
 		       sizeof(acct_gather_energy_t));
 
 	node_ptr->last_response = MAX(now, node_ptr->last_response);
+	node_ptr->boot_req_time = (time_t) 0;
 
 	*newly_up = (!orig_node_avail && bit_test(avail_node_bitmap, node_inx));
 
@@ -2986,16 +3030,14 @@ extern int validate_nodes_via_front_end(
 				if (!IS_NODE_DRAIN(node_ptr) &&
 				    !IS_NODE_FAIL(node_ptr)) {
 					/* reason information is handled in
-					   clusteracct_storage_g_node_up()
-					*/
+					 * clusteracct_storage_g_node_up() */
 					clusteracct_storage_g_node_up(
 						acct_db_conn,
 						node_ptr, now);
 				}
 			} else if (IS_NODE_DOWN(node_ptr) &&
 				   ((slurmctld_conf.ret2service == 2) ||
-				    !xstrcmp(node_ptr->reason,
-					     "Scheduled reboot") ||
+				    (node_ptr->boot_req_time != 0)    ||
 				    ((slurmctld_conf.ret2service == 1) &&
 				     !xstrcmp(node_ptr->reason,
 					      "Not responding")))) {
@@ -3015,8 +3057,7 @@ extern int validate_nodes_via_front_end(
 				if (!IS_NODE_DRAIN(node_ptr) &&
 				    !IS_NODE_FAIL(node_ptr)) {
 					/* reason information is handled in
-					   clusteracct_storage_g_node_up()
-					*/
+					 * clusteracct_storage_g_node_up() */
 					clusteracct_storage_g_node_up(
 						acct_db_conn,
 						node_ptr, now);
@@ -3125,7 +3166,6 @@ static void _node_did_resp(front_end_record_t *fe_ptr)
 	}
 	if (IS_NODE_DOWN(fe_ptr) &&
 	    ((slurmctld_conf.ret2service == 2) ||
-	     !xstrcmp(fe_ptr->reason, "Scheduled reboot") ||
 	     ((slurmctld_conf.ret2service == 1) &&
 	      !xstrcmp(fe_ptr->reason, "Not responding")))) {
 		last_front_end_update = now;
@@ -3151,18 +3191,19 @@ static void _node_did_resp(struct node_record *node_ptr)
 	node_inx = node_ptr - node_record_table_ptr;
 	if (IS_NODE_POWER_UP(node_ptr) ||
 	    (IS_NODE_DOWN(node_ptr) &&
-	     !xstrcmp(node_ptr->reason, "Scheduled reboot"))) {
+	    (node_ptr->boot_req_time != 0))) {
 		if (node_ptr->boot_time < node_ptr->boot_req_time) {
 			debug("Still waiting for boot of node %s",
 			      node_ptr->name);
 			return;
 		}
 	}
-	node_ptr->last_response = now;
+	node_ptr->last_response = MAX(now, node_ptr->last_response);
 	if (IS_NODE_NO_RESPOND(node_ptr) || IS_NODE_POWER_UP(node_ptr)) {
 		info("Node %s now responding", node_ptr->name);
 		node_ptr->node_state &= (~NODE_STATE_NO_RESPOND);
 		node_ptr->node_state &= (~NODE_STATE_POWER_UP);
+		node_ptr->node_state &= (~NODE_STATE_REBOOT);
 		if (!is_node_in_maint_reservation(node_inx))
 			node_ptr->node_state &= (~NODE_STATE_MAINT);
 		last_node_update = now;
@@ -3183,7 +3224,7 @@ static void _node_did_resp(struct node_record *node_ptr)
 	}
 	if (IS_NODE_DOWN(node_ptr) &&
 	    ((slurmctld_conf.ret2service == 2) ||
-	     !xstrcmp(node_ptr->reason, "Scheduled reboot") ||
+	     (node_ptr->boot_req_time != 0)    ||
 	     ((slurmctld_conf.ret2service == 1) &&
 	      !xstrcmp(node_ptr->reason, "Not responding")))) {
 		node_ptr->last_idle = now;
@@ -3523,7 +3564,8 @@ extern void make_node_alloc(struct node_record *node_ptr,
 		(node_ptr->no_share_job_cnt)++;
 	}
 
-	if (job_ptr->details && (job_ptr->details->whole_node == 2)) {
+	if (job_ptr->details &&
+	    (job_ptr->details->whole_node == WHOLE_NODE_USER)) {
 		node_ptr->owner_job_cnt++;
 		node_ptr->owner = job_ptr->user_id;
 	}
@@ -3727,7 +3769,8 @@ void make_node_idle(struct node_record *node_ptr,
 		}
 	}
 
-	if (job_ptr && job_ptr->details && (job_ptr->details->whole_node == 2)){
+	if (job_ptr && job_ptr->details &&
+	    (job_ptr->details->whole_node == WHOLE_NODE_USER)) {
 		if (--node_ptr->owner_job_cnt == 0) {
 			node_ptr->owner = NO_VAL;
 			xfree(node_ptr->mcs_label);
@@ -3861,6 +3904,7 @@ extern void node_fini (void)
 	FREE_NULL_LIST(active_feature_list);
 	FREE_NULL_LIST(avail_feature_list);
 	FREE_NULL_BITMAP(avail_node_bitmap);
+	FREE_NULL_BITMAP(booting_node_bitmap);
 	FREE_NULL_BITMAP(cg_node_bitmap);
 	FREE_NULL_BITMAP(idle_node_bitmap);
 	FREE_NULL_BITMAP(power_node_bitmap);

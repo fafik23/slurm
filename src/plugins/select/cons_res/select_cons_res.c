@@ -616,9 +616,7 @@ static void _build_row_bitmaps(struct part_res_record *p_ptr,
 	/* gather data */
 	num_jobs = 0;
 	for (i = 0; i < p_ptr->num_rows; i++) {
-		if (p_ptr->row[i].num_jobs) {
-			num_jobs += p_ptr->row[i].num_jobs;
-		}
+		num_jobs += p_ptr->row[i].num_jobs;
 	}
 	if (num_jobs == 0) {
 		size = bit_size(p_ptr->row[0].row_bitmap);
@@ -1263,7 +1261,7 @@ static int _rm_job_from_res(struct part_res_record *part_record_ptr,
 						p_ptr->row[i].job_list[j+1];
 				}
 				p_ptr->row[i].job_list[j] = NULL;
-				p_ptr->row[i].num_jobs -= 1;
+				p_ptr->row[i].num_jobs--;
 				/* found job - we're done */
 				n = 1;
 				i = p_ptr->num_rows;
@@ -1721,16 +1719,21 @@ top:	orig_map = bit_copy(save_bitmap);
 static time_t _guess_job_end(struct job_record * job_ptr, time_t now)
 {
 	time_t end_time;
+	uint16_t over_time_limit;
 
-	if (slurmctld_conf.over_time_limit == 0) {
-		end_time = job_ptr->end_time +
-			   slurmctld_conf.kill_wait;
-	} else if (slurmctld_conf.over_time_limit == (uint16_t) INFINITE) {
+	if (job_ptr->part_ptr &&
+	    (job_ptr->part_ptr->over_time_limit != NO_VAL16)) {
+		over_time_limit = job_ptr->part_ptr->over_time_limit;
+	} else {
+		over_time_limit = slurmctld_conf.over_time_limit;
+	}
+	if (over_time_limit == 0) {
+		end_time = job_ptr->end_time + slurmctld_conf.kill_wait;
+	} else if (over_time_limit == (uint16_t) INFINITE) {
 		end_time = now + (365 * 24 * 60 * 60);	/* one year */
 	} else {
-		end_time = job_ptr->end_time +
-			   slurmctld_conf.kill_wait +
-			   (slurmctld_conf.over_time_limit  * 60);
+		end_time = job_ptr->end_time + slurmctld_conf.kill_wait +
+			   (over_time_limit  * 60);
 	}
 	if (end_time <= now)
 		end_time = now + 1;
@@ -1819,14 +1822,24 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 		fatal("list_create: memory allocation error");
 	job_iterator = list_iterator_create(job_list);
 	while ((tmp_job_ptr = (struct job_record *) list_next(job_iterator))) {
+		bool cleaning = _job_cleaning(tmp_job_ptr);
 		if (!IS_JOB_RUNNING(tmp_job_ptr) &&
 		    !IS_JOB_SUSPENDED(tmp_job_ptr) &&
-		    !_job_cleaning(tmp_job_ptr))
+		    !cleaning)
 			continue;
 		if (tmp_job_ptr->end_time == 0) {
-			if (!_job_cleaning(tmp_job_ptr)) {
-				error("Job %u has zero end_time",
-				      tmp_job_ptr->job_id);
+			if (!cleaning) {
+				error("%s: Active job %u has zero end_time",
+				      __func__, tmp_job_ptr->job_id);
+			}
+			continue;
+		}
+		if (tmp_job_ptr->node_bitmap == NULL) {
+			/* This should indicated a requeued job was cancelled
+			 * while NHC was running */
+			if (!cleaning) {
+				error("%s: Job %u has NULL node_bitmap",
+				      __func__, tmp_job_ptr->job_id);
 			}
 			continue;
 		}
@@ -1868,15 +1881,20 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 	 * pending job after each one (or a few jobs that end close in time). */
 	if ((rc != SLURM_SUCCESS) &&
 	    ((job_ptr->bit_flags & TEST_NOW_ONLY) == 0)) {
-		int time_window = 0;
+		int time_window = 30;
 		bool more_jobs = true;
+		bool timed_out = false;
+		DEF_TIMERS;
+
 		list_sort(cr_job_list, _cr_job_list_sort);
+		START_TIMER;
 		job_iterator = list_iterator_create(cr_job_list);
 		while (more_jobs) {
 			struct job_record *first_job_ptr = NULL;
 			struct job_record *last_job_ptr = NULL;
 			struct job_record *next_job_ptr = NULL;
 			int overlap, rm_job_cnt = 0;
+
 			while (true) {
 				tmp_job_ptr = list_next(job_iterator);
 				if (!tmp_job_ptr) {
@@ -1895,21 +1913,23 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 				last_job_ptr = tmp_job_ptr;
 				_rm_job_from_res(future_part, future_usage,
 						 tmp_job_ptr, 0);
-				if (rm_job_cnt++ > 20)
+				if ((rm_job_cnt++ > 200) && !timed_out)
 					break;
 				next_job_ptr = list_peek_next(job_iterator);
 				if (!next_job_ptr) {
 					more_jobs = false;
 					break;
+				} else if (timed_out) {
+					continue;
 				} else if (next_job_ptr->end_time >
 				 	   (first_job_ptr->end_time +
 					    time_window)) {
 					break;
 				}
 			}
-			if (!last_job_ptr)
+			if (!last_job_ptr)	/* Should never happen */
 				break;
-			time_window += 60;
+			time_window *= 2;
 			rc = cr_job_test(job_ptr, bitmap, min_nodes,
 					 max_nodes, req_nodes,
 					 SELECT_MODE_WILL_RUN, tmp_cr_type,
@@ -1928,6 +1948,12 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 				}
 				break;
 			}
+			/* After 1 second of iterating over groups of running
+			 * jobs, simulate the termination of all remaining jobs
+			 * in order to determine if pending job can ever run */
+			END_TIMER;
+			if (DELTA_TIMER >= 1000000)
+				timed_out = true;
 		}
 		list_iterator_destroy(job_iterator);
 	}
@@ -3605,4 +3631,27 @@ extern int *select_p_ba_get_dims(void)
 extern bitstr_t *select_p_ba_cnodelist2bitmap(char *cnodelist)
 {
 	return NULL;
+}
+
+extern int cr_cpus_per_core(struct job_details *details, int node_inx)
+{
+	uint16_t ncpus_per_core = 0xffff;	/* Usable CPUs per core */
+	uint16_t threads_per_core = select_node_record[node_inx].vpus;
+
+	if (details && details->mc_ptr) {
+		multi_core_data_t *mc_ptr = details->mc_ptr;
+		if ((mc_ptr->ntasks_per_core != (uint16_t) INFINITE) &&
+		    (mc_ptr->ntasks_per_core)) {
+			ncpus_per_core = MIN(threads_per_core,
+					     (mc_ptr->ntasks_per_core *
+					      details->cpus_per_task));
+		}
+		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
+		    (mc_ptr->threads_per_core <  ncpus_per_core)) {
+			ncpus_per_core = mc_ptr->threads_per_core;
+		}
+	}
+
+	threads_per_core = MIN(threads_per_core, ncpus_per_core);
+	return threads_per_core;
 }

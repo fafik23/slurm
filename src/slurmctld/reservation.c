@@ -1616,7 +1616,6 @@ slurmctld_resv_t *_load_reservation_state(Buf buffer,
 		safe_unpack8((uint8_t *)&resv_ptr->account_not,	buffer);
 		safe_unpackstr_xmalloc(&resv_ptr->assoc_list,
 				       &uint32_tmp,	buffer);
-		resv_ptr->core_resrcs = create_job_resources();
 		if (unpack_job_resources(&resv_ptr->core_resrcs, buffer,
 					 protocol_version) != SLURM_SUCCESS)
 			goto unpack_error;
@@ -4982,6 +4981,14 @@ extern int job_test_resv(struct job_record *job_ptr, time_t *when,
 			    (start_relative >= job_end_time) ||
 			    (end_relative   <= job_start_time))
 				continue;
+
+			if (resv_ptr->flags & RESERVE_FLAG_ALL_NODES) {
+				rc = ESLURM_NODES_BUSY;
+				if (move_time)
+					*when = resv_ptr->end_time;
+				break;
+			}
+
 			if (job_ptr->details->req_node_bitmap &&
 			    bit_overlap(job_ptr->details->req_node_bitmap,
 					resv_ptr->node_bitmap) &&
@@ -5043,6 +5050,9 @@ extern int job_test_resv(struct job_record *job_ptr, time_t *when,
 			break;
 		/* rc == ESLURM_NODES_BUSY here from above break */
 		if (move_time && (i<10)) {  /* Retry for later start time */
+			job_start_time = *when;
+			job_end_time   = *when + _get_job_duration(job_ptr);
+
 			bit_nset(*node_bitmap, 0, (node_record_count - 1));
 			rc = SLURM_SUCCESS;
 			continue;
@@ -5374,25 +5384,44 @@ extern int set_node_maint_mode(bool reset_all)
 	if (!resv_list)
 		return res_start_cnt;
 
-	flags = (NODE_STATE_RES | NODE_STATE_MAINT);
+	flags = NODE_STATE_RES;
+	if (reset_all)
+		flags |= NODE_STATE_MAINT;
 	for (i = 0, node_ptr = node_record_table_ptr;
 	     i <= node_record_count; i++, node_ptr++) {
 		node_ptr->node_state &= (~flags);
 	}
 
+	if (!reset_all) {
+		/* NODE_STATE_RES already cleared above, 
+		 * clear RESERVE_FLAG_MAINT for expired reservations */
+		iter = list_iterator_create(resv_list);
+		while ((resv_ptr = (slurmctld_resv_t *) list_next(iter))) {
+			if ((resv_ptr->flags_set_node) &&
+			    (resv_ptr->flags & RESERVE_FLAG_MAINT) &&
+			    ((now <  resv_ptr->start_time) ||
+			     (now >= resv_ptr->end_time  ))) {
+				flags = NODE_STATE_MAINT;
+				resv_ptr->flags_set_node = false;
+				_set_nodes_flags(resv_ptr, now, flags);
+				last_node_update = now;
+			}
+		}
+		list_iterator_destroy(iter);
+	}
+
+	/* Set NODE_STATE_RES and possibly NODE_STATE_MAINT for nodes in all
+	 * currently active reservations */
 	iter = list_iterator_create(resv_list);
 	while ((resv_ptr = (slurmctld_resv_t *) list_next(iter))) {
-		flags = NODE_STATE_RES;
-		if (resv_ptr->flags & RESERVE_FLAG_MAINT)
-			flags |= NODE_STATE_MAINT;
-
 		if ((now >= resv_ptr->start_time) &&
 		    (now <  resv_ptr->end_time  )) {
+			flags = NODE_STATE_RES;
+			if (resv_ptr->flags & RESERVE_FLAG_MAINT)
+				flags |= NODE_STATE_MAINT;
 			resv_ptr->flags_set_node = true;
 			_set_nodes_flags(resv_ptr, now, flags);
 			last_node_update = now;
-		} else {
-			resv_ptr->flags_set_node = false;
 		}
 
 		if (reset_all)	/* Defer reservation prolog/epilog */

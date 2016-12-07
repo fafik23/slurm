@@ -478,6 +478,8 @@ _node_state_list (void)
 	xstrcat(all_states, node_state_string(NODE_STATE_FAIL));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_MAINT));
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_REBOOT));
 
 	for (i = 0; i < strlen (all_states); i++)
 		all_states[i] = tolower (all_states[i]);
@@ -541,6 +543,8 @@ _node_state_id (char *str)
 		return NODE_STATE_FAIL;
 	if (_node_state_equal (NODE_STATE_MAINT, str))
 		return NODE_STATE_MAINT;
+	if (_node_state_equal (NODE_STATE_REBOOT, str))
+		return NODE_STATE_REBOOT;
 
 	return (-1);
 }
@@ -1311,6 +1315,8 @@ Usage: sinfo [OPTIONS]\n\
   --hide                     do not show hidden or non-accessible partitions\n\
   -i, --iterate=seconds      specify an iteration period\n\
   -l, --long                 long output - displays more information\n\
+  -M, --clusters=names       clusters to issue commands to.\n\
+                             NOTE: SlurmDBD must be up.\n\
   -n, --nodes=NODES          report on specific node(s)\n\
   --noconvert                don't convert units from their original type\n\
 			     (e.g. 2048M won't be converted to 2G).\n\

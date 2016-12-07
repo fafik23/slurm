@@ -82,9 +82,14 @@ enum {
 
 /* slurm_get_auth_info
  * returns the auth_info from slurmctld_conf object (AuthInfo parameter)
- * cache value in local buffer for best performance
+ * RET char * - AuthInfo value,  MUST be xfreed by caller
  */
 char *slurm_get_auth_info(void);
+
+/* slurm_get_sbcast_parameters
+ * RET char * - SbcastParameters from slurm.conf,  MUST be xfreed by caller
+ */
+char *slurm_get_sbcast_parameters(void);
 
 /* slurm_get_auth_ttl
  * returns the credential Time To Live option from the AuthInfo parameter
@@ -392,6 +397,12 @@ double *slurm_get_tres_weight_array(char *weights_str, int tres_cnt);
  * RET uint16_t   - private_data
  */
 uint16_t slurm_get_private_data(void);
+
+/* slurm_get_resume_program
+ * returns the ResumeProgram from slurmctld_conf object
+ * RET char *    - ResumeProgram, MUST be xfreed by caller
+ */
+char *slurm_get_resume_program(void);
 
 /* slurm_get_state_save_location
  * get state_save_location from slurmctld_conf object from slurmctld_conf object

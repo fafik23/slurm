@@ -106,6 +106,9 @@ static void _add_config_feature_inx(List feature_list, char *feature,
 				    int node_inx);
 static int  _build_bitmaps(void);
 static void _build_bitmaps_pre_select(void);
+static int  _compare_hostnames(struct node_record *old_node_table,
+			       int old_node_count,
+			       struct node_record *node_table, int node_count);
 static void _gres_reconfig(bool reconfig);
 static int  _init_all_slurm_conf(void);
 static void _list_delete_feature(void *feature_entry);
@@ -119,6 +122,7 @@ static int  _preserve_plugins(slurm_ctl_conf_t * ctl_conf_ptr,
 static void _purge_old_node_state(struct node_record *old_node_table_ptr,
 				int old_node_record_count);
 static void _purge_old_part_state(List old_part_list, char *old_def_part_name);
+static int  _reset_node_bitmaps(void *x, void *arg);
 static int  _restore_job_dependencies(void);
 static int  _restore_node_state(int recover,
 				struct node_record *old_node_table_ptr,
@@ -132,10 +136,6 @@ static int  _sync_nodes_to_active_job(struct job_record *job_ptr);
 static void _sync_nodes_to_suspended_job(struct job_record *job_ptr);
 static void _sync_part_prio(void);
 static int  _update_preempt(uint16_t old_enable_preempt);
-static int _compare_hostnames(struct node_record *old_node_table,
-							  int old_node_count,
-							  struct node_record *node_table,
-							  int node_count);
 
 
 /* Verify that Slurm directories are secure, not world writable */
@@ -261,7 +261,9 @@ static void _reorder_nodes_by_rank(void)
 static void _build_bitmaps_pre_select(void)
 {
 	struct part_record   *part_ptr;
+	struct node_record   *node_ptr;
 	ListIterator part_iterator;
+	int i;
 
 	/* scan partition table and identify nodes in each */
 	part_iterator = list_iterator_create(part_list);
@@ -271,6 +273,16 @@ static void _build_bitmaps_pre_select(void)
 					part_ptr->name);
 	}
 	list_iterator_destroy(part_iterator);
+
+	/* initialize the configuration bitmaps */
+	list_for_each(config_list, _reset_node_bitmaps, NULL);
+
+	for (i = 0, node_ptr = node_record_table_ptr;
+	     i < node_record_count; i++, node_ptr++) {
+		if (node_ptr->config_ptr)
+			bit_set(node_ptr->config_ptr->node_bitmap, i);
+	}
+
 	return;
 }
 
@@ -322,20 +334,19 @@ static int _build_bitmaps(void)
 
 	/* initialize the idle and up bitmaps */
 	FREE_NULL_BITMAP(avail_node_bitmap);
+	FREE_NULL_BITMAP(booting_node_bitmap);
 	FREE_NULL_BITMAP(cg_node_bitmap);
 	FREE_NULL_BITMAP(idle_node_bitmap);
 	FREE_NULL_BITMAP(power_node_bitmap);
 	FREE_NULL_BITMAP(share_node_bitmap);
 	FREE_NULL_BITMAP(up_node_bitmap);
 	avail_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
+	booting_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	cg_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
 	idle_node_bitmap  = (bitstr_t *) bit_alloc(node_record_count);
 	power_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	share_node_bitmap = (bitstr_t *) bit_alloc(node_record_count);
 	up_node_bitmap    = (bitstr_t *) bit_alloc(node_record_count);
-
-	/* initialize the configuration bitmaps */
-	list_for_each(config_list, _reset_node_bitmaps, NULL);
 
 	/* Set all bits, all nodes initially available for sharing */
 	bit_set_all(share_node_bitmap);
@@ -358,6 +369,8 @@ static int _build_bitmaps(void)
 		if ((IS_NODE_IDLE(node_ptr) && (job_cnt == 0)) ||
 		    IS_NODE_DOWN(node_ptr))
 			bit_set(idle_node_bitmap, i);
+		if (IS_NODE_POWER_UP(node_ptr))
+			bit_set(booting_node_bitmap, i);
 		if (IS_NODE_COMPLETING(node_ptr))
 			bit_set(cg_node_bitmap, i);
 		if (IS_NODE_IDLE(node_ptr) || IS_NODE_ALLOCATED(node_ptr)) {
@@ -368,8 +381,6 @@ static int _build_bitmaps(void)
 		}
 		if (IS_NODE_POWER_SAVE(node_ptr))
 			bit_set(power_node_bitmap, i);
-		if (node_ptr->config_ptr)
-			bit_set(node_ptr->config_ptr->node_bitmap, i);
 	}
 
 	return error_code;
@@ -682,6 +693,7 @@ static int _build_single_partitionline_info(slurm_conf_partition_t *part)
 	part_ptr->max_nodes_orig = part->max_nodes;
 	part_ptr->min_nodes      = part->min_nodes;
 	part_ptr->min_nodes_orig = part->min_nodes;
+	part_ptr->over_time_limit = part->over_time_limit;
 	part_ptr->preempt_mode   = part->preempt_mode;
 	part_ptr->priority_job_factor = part->priority_job_factor;
 	part_ptr->priority_tier  = part->priority_tier;
@@ -2156,7 +2168,7 @@ static int _sync_nodes_to_active_job(struct job_record *job_ptr)
 			continue;
 
 		if (job_ptr->details &&
-		    (job_ptr->details->whole_node == 2)) {
+		    (job_ptr->details->whole_node == WHOLE_NODE_USER)) {
 			node_ptr->owner_job_cnt++;
 			node_ptr->owner = job_ptr->user_id;
 		}

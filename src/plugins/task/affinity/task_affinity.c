@@ -242,9 +242,7 @@ extern int task_p_slurmd_resume_job (uint32_t job_id)
 extern int task_p_slurmd_release_resources (uint32_t job_id)
 {
 	DIR *dirp;
-	struct dirent entry;
-	struct dirent *result;
-	int rc;
+	struct dirent *entryp;
 	char base[PATH_MAX];
 	char path[PATH_MAX];
 
@@ -293,15 +291,12 @@ extern int task_p_slurmd_release_resources (uint32_t job_id)
 	}
 
 	while (1) {
-		rc = readdir_r(dirp, &entry, &result);
-		if (rc && (errno == EAGAIN))
-			continue;
-		if (rc || (result == NULL))
+		if (!(entryp = readdir(dirp)))
 			break;
-		if (xstrncmp(entry.d_name, "slurm", 5))
+		if (xstrncmp(entryp->d_name, "slurm", 5))
 			continue;
 		if (snprintf(path, PATH_MAX, "%s/%s",
-					 base, entry.d_name) >= PATH_MAX) {
+			     base, entryp->d_name) >= PATH_MAX) {
 			error("%s: cpuset path too long", __func__);
 			break;
 		}
@@ -362,6 +357,20 @@ extern int task_p_pre_setuid (stepd_step_rec_t *job)
 
 	return rc;
 }
+
+#ifdef HAVE_NUMA
+static void _numa_set_preferred(nodemask_t *new_mask)
+{
+	int i;
+
+	for (i = 0; i < NUMA_NUM_NODES; i++) {
+		if (nodemask_isset(new_mask, i)) {
+			numa_set_preferred(i);
+			break;
+		}
+	}
+}
+#endif
 
 /*
  * task_p_pre_launch() is called prior to exec of application task.
@@ -451,8 +460,12 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		if (get_memset(&new_mask, job) &&
 		    (!(job->mem_bind_type & MEM_BIND_NONE))) {
 			slurm_set_memset(path, &new_mask);
-			if (numa_available() >= 0)
-				numa_set_membind(&new_mask);
+			if (numa_available() >= 0) {
+				if (job->mem_bind_type & MEM_BIND_PREFER)
+					_numa_set_preferred(&new_mask);
+				else
+					numa_set_membind(&new_mask);
+			}
 			cur_mask = new_mask;
 		}
 		slurm_chk_memset(&cur_mask, job);
@@ -462,7 +475,10 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		cur_mask = numa_get_membind();
 		if (get_memset(&new_mask, job)
 		    &&  (!(job->mem_bind_type & MEM_BIND_NONE))) {
-			numa_set_membind(&new_mask);
+			if (job->mem_bind_type & MEM_BIND_PREFER)
+				_numa_set_preferred(&new_mask);
+			else
+				numa_set_membind(&new_mask);
 			cur_mask = new_mask;
 		}
 		slurm_chk_memset(&cur_mask, job);

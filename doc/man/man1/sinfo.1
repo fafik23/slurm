@@ -1,4 +1,4 @@
-.TH sinfo "1" "Slurm Commands" "March 2016" "Slurm Commands"
+.TH sinfo "1" "Slurm Commands" "November 2016" "Slurm Commands"
 
 .SH "NAME"
 sinfo \- view information about Slurm nodes and partitions.
@@ -62,6 +62,7 @@ This is ignored if the \fB\-\-format\fR option is specified.
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
 A value of of '\fIall\fR' will query to run on all clusters.
+Note that the SlurmDBD must be up for this option to work properly.
 
 .TP
 \fB\-n <nodes>\fR, \fB\-\-nodes=<nodes>\fR
@@ -168,9 +169,9 @@ Features available the nodes, also see \fB%b\fR
 .TP
 \fB%F\fR
 Number of nodes by state in the format
-"allocated/idle/other/total".  Do not use this with a node
-state option ("%t" or "%T") or the different node states will
-be placed on separate lines.
+"allocated/idle/other/total".  Note the use of this format option with a node
+state format option ("%t" or "%T") will result in the different node states
+being be reported on separate lines.
 .TP
 \fB%g\fR
 Groups which may use the nodes
@@ -617,8 +618,10 @@ running at reduced frequency).
 The node is presently being powered up or configured.
 .TP
 \fB$\fR
-The node is currently in a reservation with a flag value of "maintenance"
-or is scheduled to be rebooted.
+The node is currently in a reservation with a flag value of "maintenance".
+.TP
+\fB@\fR
+The node is pending reboot.
 .TP 12
 \fBALLOCATED\fR
 The node has been allocated to one or more jobs.
@@ -687,8 +690,10 @@ some point in the indefinite future for use.
 The node is not allocated to any jobs and is available for use.
 .TP
 \fBMAINT\fR
-The node is currently in a reservation with a flag value of "maintenance"
-or is scheduled to be rebooted.
+The node is currently in a reservation with a flag value of "maintainence".
+.TP
+\fBREBOOT\fR
+The node is currently scheduled to be rebooted.
 .TP
 \fBMIXED\fR
 The node has some of its CPUs ALLOCATED while others are IDLE.
@@ -822,7 +827,7 @@ Copyright (C) 2008\-2009 Lawrence Livermore National Security.
 Copyright (C) 2010-2016 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+For details, see <https://slurm.schedmd.com/>.
 .LP
 Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free

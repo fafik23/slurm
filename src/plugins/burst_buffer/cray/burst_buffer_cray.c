@@ -75,7 +75,7 @@
 #include "src/plugins/burst_buffer/common/burst_buffer_common.h"
 
 #define _DEBUG 0	/* Detailed debugging information */
-#define TIME_SLOP 5	/* time allowed to synchronize operations between
+#define TIME_SLOP 60	/* Time allowed to synchronize operations between
 			 * threads */
 #define MAX_RETRY_CNT 2	/* Hold job if "pre_run" operation fails more than
 			 * 2 times */
@@ -139,7 +139,6 @@ typedef struct bb_configs {
 typedef struct bb_instances {
 	uint32_t id;
 	uint64_t bytes;
-	char *label;
 	uint32_t session;
 } bb_instances_t;
 
@@ -248,6 +247,8 @@ static int	_parse_bb_opts(struct job_descriptor *job_desc,
 static void	_parse_config_links(json_object *instance, bb_configs_t *ent);
 static void	_parse_instance_capacity(json_object *instance,
 					 bb_instances_t *ent);
+static void	_parse_instance_links(json_object *instance,
+				      bb_instances_t *ent);
 static void	_pick_alloc_account(bb_alloc_t *bb_alloc);
 static void	_purge_bb_files(uint32_t job_id, struct job_record *job_ptr);
 static void	_purge_vestigial_bufs(void);
@@ -580,7 +581,7 @@ static bb_job_t *_get_bb_job(struct job_record *job_ptr)
 				//bb_job->buf_ptr[inx].create = false;
 				bb_job->buf_ptr[inx].destroy = true;
 				bb_job->buf_ptr[inx].hurry = (bb_hurry != NULL);
-				bb_job->buf_ptr[inx].name = xstrdup(bb_name);
+				bb_job->buf_ptr[inx].name = bb_name;
 				//bb_job->buf_ptr[inx].pool = NULL;
 				//bb_job->buf_ptr[inx].size = 0;
 				bb_job->buf_ptr[inx].state = BB_STATE_PENDING;
@@ -632,7 +633,7 @@ static bb_job_t *_get_bb_job(struct job_record *job_ptr)
 				//bb_job->buf_ptr[inx].create = false;
 				//bb_job->buf_ptr[inx].destroy = false;
 				//bb_job->buf_ptr[inx].hurry = false;
-				bb_job->buf_ptr[inx].name = xstrdup(bb_name);
+				bb_job->buf_ptr[inx].name = bb_name;
 				//bb_job->buf_ptr[inx].size = 0;
 				bb_job->buf_ptr[inx].state = BB_STATE_PENDING;
 				//bb_job->buf_ptr[inx].type = NULL;
@@ -700,15 +701,19 @@ static bb_job_t *_get_bb_job(struct job_record *job_ptr)
  * update that user's limit */
 static void _apply_limits(void)
 {
+	bool emulate_cray = false;
 	bb_alloc_t *bb_alloc;
 	int i;
+
+	if (bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY)
+		emulate_cray = true;
 
 	for (i = 0; i < BB_HASH_SIZE; i++) {
 		bb_alloc = bb_state.bb_ahash[i];
 		while (bb_alloc) {
 			_set_assoc_mgr_ptrs(bb_alloc);
 			bb_limit_add(bb_alloc->user_id, bb_alloc->size,
-				     bb_alloc->pool, &bb_state);
+				     bb_alloc->pool, &bb_state, emulate_cray);
 			bb_alloc = bb_alloc->next;
 		}
 	}
@@ -1104,7 +1109,6 @@ static void _load_state(bool init_config)
 	char *end_ptr = NULL;
 	time_t now = time(NULL);
 	uint32_t timeout;
-	uint64_t used_space;
 	assoc_mgr_lock_t assoc_locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 					 NO_LOCK, NO_LOCK, NO_LOCK };
 	bool found_pool;
@@ -1139,14 +1143,9 @@ static void _load_state(bool init_config)
 			bb_state.bb_config.granularity = pools[i].granularity;
 			bb_state.total_space = pools[i].quantity *
 					       pools[i].granularity;
-			if (bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY)
-				continue;
-			/* Don't decrease used_space in case buffer allocation
-			 * in progress */
-			used_space = pools[i].quantity - pools[i].free;
-			used_space *= pools[i].granularity;
-			bb_state.used_space = MAX(bb_state.used_space,
-						  used_space);
+			bb_state.unfree_space = pools[i].quantity -
+						pools[i].free;
+			bb_state.unfree_space *= pools[i].granularity;
 
 			/* Everything else is an alternate pool */
 			bb_state.bb_config.pool_cnt = 0;
@@ -1173,15 +1172,10 @@ static void _load_state(bool init_config)
 		}
 
 		pool_ptr->total_space = pools[i].quantity *
-				        pools[i].granularity;
+					pools[i].granularity;
 		pool_ptr->granularity = pools[i].granularity;
-		if (bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY)
-			continue;
-		/* Don't decrease used_space in case buffer allocation
-		 * in progress */
-		used_space = pools[i].quantity - pools[i].free;
-		used_space *= pools[i].granularity;
-		pool_ptr->used_space = MAX(pool_ptr->used_space, used_space);
+		pool_ptr->unfree_space = pools[i].quantity - pools[i].free;
+		pool_ptr->unfree_space *= pools[i].granularity;
 	}
 	slurm_mutex_unlock(&bb_state.bb_mutex);
 	_bb_free_pools(pools, num_pools);
@@ -1221,9 +1215,9 @@ static void _load_state(bool init_config)
 					     sessions[i].user_id);
 		bb_alloc->create_time = sessions[i].created;
 		bb_alloc->id = sessions[i].id;
-		if ((sessions[i].token != NULL)  &&
-		    (sessions[i].token[0] >='0') &&
-		    (sessions[i].token[0] <='9')) {
+		if ((sessions[i].token != NULL)   &&
+		    (sessions[i].token[0] >= '0') &&
+		    (sessions[i].token[0] <= '9')) {
 			bb_alloc->job_id =
 				strtol(sessions[i].token, &end_ptr, 10);
 			job_ptr = find_job_record(bb_alloc->job_id);
@@ -1244,7 +1238,7 @@ static void _load_state(bool init_config)
 		if (!init_config) {	/* Newly found buffer */
 			_pick_alloc_account(bb_alloc);
 			bb_limit_add(bb_alloc->user_id, bb_alloc->size,
-				     bb_alloc->pool, &bb_state);
+				     bb_alloc->pool, &bb_state, false);
 		}
 		if (bb_alloc->job_id == 0)
 			bb_post_persist_create(NULL, bb_alloc, &bb_state);
@@ -1419,7 +1413,8 @@ static int _queue_stage_in(struct job_record *job_ptr, bb_job_t *bb_job)
 #endif
 		setup_argv[16] = xstrdup(client_nodes_file_nid);
 	}
-	bb_limit_add(job_ptr->user_id, bb_job->total_size, job_pool, &bb_state);
+	bb_limit_add(job_ptr->user_id, bb_job->total_size, job_pool, &bb_state,
+		     true);
 
 	data_in_argv = xmalloc(sizeof(char *) * 10);	/* NULL terminated */
 	data_in_argv[0] = xstrdup("dw_wlm_cli");
@@ -1525,7 +1520,8 @@ static void *_start_stage_in(void *x)
 							bb_job);
 				bb_limit_add(stage_args->user_id,
 					     bb_job->total_size,
-					     stage_args->pool, &bb_state);
+					     stage_args->pool, &bb_state,
+					     true);
 				bb_alloc->create_time = time(NULL);
 			}
 		}
@@ -2072,6 +2068,7 @@ static int _test_size_limit(struct job_record *job_ptr, bb_job_t *bb_job)
 {
 	int64_t *add_space = NULL, *avail_space = NULL, *granularity = NULL;
 	int64_t *preempt_space = NULL, *resv_space = NULL, *total_space = NULL;
+	uint64_t unfree_space;
 	burst_buffer_info_msg_t *resv_bb = NULL;
 	struct preempt_bb_recs *preempt_ptr = NULL;
 	char **pool_name, *my_pool;
@@ -2099,15 +2096,17 @@ static int _test_size_limit(struct job_record *job_ptr, bb_job_t *bb_job)
 	total_space = xmalloc(sizeof(int64_t) * ds_len);
 	for (i = 0, pool_ptr = bb_state.bb_config.pool_ptr;
 	     i < bb_state.bb_config.pool_cnt; i++, pool_ptr++) {
-		if (pool_ptr->total_space >= pool_ptr->used_space)
-			avail_space[i] = pool_ptr->total_space -
-					 pool_ptr->used_space;
+		unfree_space = MAX(pool_ptr->used_space,
+				   pool_ptr->unfree_space);
+		if (pool_ptr->total_space >= unfree_space)
+			avail_space[i] = pool_ptr->total_space - unfree_space;
 		granularity[i] = pool_ptr->granularity;
 		pool_name[i] = pool_ptr->name;
 		total_space[i] = pool_ptr->total_space;
 	}
-	if (bb_state.total_space - bb_state.used_space)
-		avail_space[i] = bb_state.total_space - bb_state.used_space;
+	unfree_space = MAX(bb_state.used_space, bb_state.unfree_space);
+	if (bb_state.total_space - unfree_space)
+		avail_space[i] = bb_state.total_space - unfree_space;
 	granularity[i] = bb_state.bb_config.granularity;
 	pool_name[i] = bb_state.bb_config.default_pool;
 	total_space[i] = bb_state.total_space;
@@ -2153,11 +2152,13 @@ static int _test_size_limit(struct job_record *job_ptr, bb_job_t *bb_job)
 					my_pool =
 						bb_state.bb_config.default_pool;
 				}
+				unfree_space = MAX(pool_ptr->used_space,
+						   pool_ptr->unfree_space);
 				for (k = 0; k < ds_len; k++) {
 					if (xstrcmp(my_pool, pool_name[k]))
 						continue;
 					resv_space[k] += bb_granularity(
-							pool_ptr->used_space,
+							unfree_space,
 							granularity[k]);
 					break;
 				}
@@ -2791,21 +2792,40 @@ extern int fini(void)
 }
 
 /* Identify and purge any vestigial buffers (i.e. we have a job buffer, but
- * the matching job is either gone or completed) */
+ * the matching job is either gone or completed OR we have a job buffer and a
+ * pending job, but don't know the status of stage-in) */
 static void _purge_vestigial_bufs(void)
 {
 	bb_alloc_t *bb_alloc = NULL;
+	time_t defer_time = time(NULL) + 60;
 	int i;
 
 	for (i = 0; i < BB_HASH_SIZE; i++) {
 		bb_alloc = bb_state.bb_ahash[i];
 		while (bb_alloc) {
-			if (bb_alloc->job_id &&
-			    !find_job_record(bb_alloc->job_id)) {
+			struct job_record *job_ptr = NULL;
+			if (bb_alloc->job_id)
+				job_ptr = find_job_record(bb_alloc->job_id);
+			if (bb_alloc->job_id == 0) {
+				/* Persistent buffer, do not purge */
+			} else if (!job_ptr) {
 				info("%s: Purging vestigial buffer for job %u",
 				     plugin_type, bb_alloc->job_id);
 				_queue_teardown(bb_alloc->job_id,
 						bb_alloc->user_id, false);
+			} else if (!IS_JOB_STARTED(job_ptr)) {
+				/* We do not know the state of file staging,
+				 * so teardown the buffer and defer the job
+				 * for at least 60 seconds (for the teardown) */
+				debug("%s: Purging buffer for pending job %u",
+				      plugin_type, bb_alloc->job_id);
+				_queue_teardown(bb_alloc->job_id,
+						bb_alloc->user_id, true);
+				if (job_ptr->details &&
+				    (job_ptr->details->begin_time <defer_time)){
+					job_ptr->details->begin_time =
+						defer_time;
+				}
 			}
 			bb_alloc = bb_alloc->next;
 		}
@@ -3116,6 +3136,13 @@ extern int bb_p_job_validate2(struct job_record *job_ptr, char **err_msg)
 
 	/* Initialization */
 	slurm_mutex_lock(&bb_state.bb_mutex);
+	if (bb_state.last_load_time == 0) {
+		/* Assume request is valid for now, can't test it anyway */
+		info("%s: %s: Burst buffer down, skip tests for job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return rc;
+	}
 	bb_job = _get_bb_job(job_ptr);
 	if (bb_job == NULL) {
 		slurm_mutex_unlock(&bb_state.bb_mutex);
@@ -3313,6 +3340,12 @@ extern time_t bb_p_job_get_est_start(struct job_record *job_ptr)
 	}
 
 	slurm_mutex_lock(&bb_state.bb_mutex);
+	if (bb_state.last_load_time == 0) {
+		est_start += 3600;	/* 1 hour, guess... */
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return est_start;	/* Can't operate on job array struct */
+	}
+
 	if ((bb_job = _get_bb_job(job_ptr)) == NULL) {
 		slurm_mutex_unlock(&bb_state.bb_mutex);
 		return est_start;
@@ -3361,6 +3394,11 @@ extern int bb_p_job_try_stage_in(List job_queue)
 	slurm_mutex_lock(&bb_state.bb_mutex);
 	if (bb_state.bb_config.debug_flag)
 		info("%s: %s", plugin_type,  __func__);
+
+	if (bb_state.last_load_time == 0) {
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return SLURM_SUCCESS;
+	}
 
 	/* Identify candidates to be allocated burst buffers */
 	job_candidates = list_create(_job_queue_del);
@@ -3426,7 +3464,7 @@ extern int bb_p_job_try_stage_in(List job_queue)
  */
 extern int bb_p_job_test_stage_in(struct job_record *job_ptr, bool test_only)
 {
-	bb_job_t *bb_job;
+	bb_job_t *bb_job = NULL;
 	int rc = 1;
 	char jobid_buf[32];
 
@@ -3446,7 +3484,8 @@ extern int bb_p_job_test_stage_in(struct job_record *job_ptr, bool test_only)
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)),
 		     (int) test_only);
 	}
-	bb_job = _get_bb_job(job_ptr);
+	if (bb_state.last_load_time != 0)
+		bb_job = _get_bb_job(job_ptr);
 	if (bb_job && (bb_job->state == BB_STATE_COMPLETE))
 		bb_job->state = BB_STATE_PENDING;	/* job requeued */
 	if (bb_job == NULL) {
@@ -3507,6 +3546,12 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 		info("%s: %s: %s",
 		     plugin_type, __func__,
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)));
+	}
+	if (bb_state.last_load_time == 0) {
+		info("%s: %s: Burst buffer down, can not start job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return SLURM_ERROR;
 	}
 	bb_job = _get_bb_job(job_ptr);
 	if (!bb_job) {
@@ -3740,6 +3785,12 @@ extern int bb_p_job_start_stage_out(struct job_record *job_ptr)
 		info("%s: %s: %s", plugin_type, __func__,
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)));
 	}
+	if (bb_state.last_load_time == 0) {
+		info("%s: %s: Burst buffer down, can not stage out job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return SLURM_ERROR;
+	}
 	bb_job = _get_bb_job(job_ptr);
 	if (!bb_job) {
 		/* No job buffers. Assuming use of persistent buffers only */
@@ -3775,6 +3826,12 @@ extern int bb_p_job_test_post_run(struct job_record *job_ptr)
 	if (bb_state.bb_config.debug_flag) {
 		info("%s: %s: %s", plugin_type, __func__,
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)));
+	}
+	if (bb_state.last_load_time == 0) {
+		info("%s: %s: Burst buffer down, can not post_run job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return -1;
 	}
 	bb_job = bb_job_find(&bb_state, job_ptr->job_id);
 	if (!bb_job) {
@@ -3818,6 +3875,12 @@ extern int bb_p_job_test_stage_out(struct job_record *job_ptr)
 		info("%s: %s: %s", plugin_type, __func__,
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)));
 	}
+	if (bb_state.last_load_time == 0) {
+		info("%s: %s: Burst buffer down, can not stage-out job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return -1;
+	}
 	bb_job = bb_job_find(&bb_state, job_ptr->job_id);
 	if (!bb_job) {
 		/* No job buffers. Assuming use of persistent buffers only */
@@ -3853,6 +3916,12 @@ extern int bb_p_job_cancel(struct job_record *job_ptr)
 	if (bb_state.bb_config.debug_flag) {
 		info("%s: %s: %s", plugin_type, __func__,
 		     jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)));
+	}
+	if (bb_state.last_load_time == 0) {
+		info("%s: %s: Burst buffer down, can not cancel job %u",
+		      plugin_type, __func__, job_ptr->job_id);
+		slurm_mutex_unlock(&bb_state.bb_mutex);
+		return SLURM_ERROR;
 	}
 
 	bb_job = _get_bb_job(job_ptr);
@@ -3939,7 +4008,7 @@ static int _create_bufs(struct job_record *job_ptr, bb_job_t *bb_job,
 					xstrdup(bb_state.bb_config.default_pool);
 			}
 			bb_limit_add(job_ptr->user_id, buf_ptr->size,
-				     buf_ptr->pool, &bb_state);
+				     buf_ptr->pool, &bb_state, true);
 			bb_job->state = BB_STATE_ALLOCATING;
 			buf_ptr->state = BB_STATE_ALLOCATING;
 			create_args = xmalloc(sizeof(create_buf_data_t));
@@ -4453,6 +4522,10 @@ _bb_get_configs(int *num_ent, bb_state_t *state_ptr, uint32_t timeout)
 	xfree(resp_msg);
 
 	json_object_object_foreachC(j, iter) {
+		if (ents) {
+			error("%s: Multiple configuration objects", __func__);
+			break;
+		}
 		ents = _json_parse_configs_array(j, iter.key, num_ent);
 	}
 	json_object_put(j);	/* Frees json memory */
@@ -4516,6 +4589,10 @@ _bb_get_instances(int *num_ent, bb_state_t *state_ptr, uint32_t timeout)
 	xfree(resp_msg);
 
 	json_object_object_foreachC(j, iter) {
+		if (ents) {
+			error("%s: Multiple instance objects", __func__);
+			break;
+		}
 		ents = _json_parse_instances_array(j, iter.key, num_ent);
 	}
 	json_object_put(j);	/* Frees json memory */
@@ -4581,6 +4658,10 @@ _bb_get_pools(int *num_ent, bb_state_t *state_ptr, uint32_t timeout)
 	xfree(resp_msg);
 
 	json_object_object_foreachC(j, iter) {
+		if (ents) {
+			error("%s: Multiple pool objects", __func__);
+			break;
+		}
 		ents = _json_parse_pools_array(j, iter.key, num_ent);
 	}
 	json_object_put(j);	/* Frees json memory */
@@ -4641,6 +4722,10 @@ _bb_get_sessions(int *num_ent, bb_state_t *state_ptr, uint32_t timeout)
 	xfree(resp_msg);
 
 	json_object_object_foreachC(j, iter) {
+		if (ents) {
+			error("%s: Multiple session objects", __func__);
+			break;
+		}
 		ents = _json_parse_sessions_array(j, iter.key, num_ent);
 	}
 	json_object_put(j);	/* Frees json memory */
@@ -4661,12 +4746,6 @@ _bb_free_configs(bb_configs_t *ents, int num_ent)
 static void
 _bb_free_instances(bb_instances_t *ents, int num_ent)
 {
-	int i;
-
-	for (i = 0; i < num_ent; i++) {
-		xfree(ents[i].label);
-	}
-
 	xfree(ents);
 }
 
@@ -4867,8 +4946,7 @@ _parse_instance_capacity(json_object *instance, bb_instances_t *ent)
 	}
 }
 
-
-/* Parse "links" object in the "session" object */
+/* Parse "links" object in the "instance" object */
 static void
 _parse_instance_links(json_object *instance, bb_instances_t *ent)
 {
@@ -4898,7 +4976,6 @@ _json_parse_instances_object(json_object *jobj, bb_instances_t *ent)
 	enum json_type type;
 	struct json_object_iter iter;
 	int64_t x;
-	const char *p;
 
 	json_object_object_foreachC(jobj, iter) {
 		type = json_object_get_type(iter.val);
@@ -4913,12 +4990,6 @@ _json_parse_instances_object(json_object *jobj, bb_instances_t *ent)
 			x = json_object_get_int64(iter.val);
 			if (xstrcmp(iter.key, "id") == 0) {
 				ent->id = x;
-			}
-			break;
-		case json_type_string:
-			p = json_object_get_string(iter.val);
-			if (xstrcmp(iter.key, "label") == 0) {
-				ent->label = xstrdup(p);
 			}
 			break;
 		default:
@@ -5032,6 +5103,7 @@ extern char *bb_p_xlate_bb_2_tres_str(char *burst_buffer)
 
 		tok = strtok_r(NULL, ",", &save_ptr);
 	}
+	xfree(tmp);
 
 	if (total)
 		xstrfmtcat(result, "%d=%"PRIu64, bb_state.tres_id, total);

@@ -107,6 +107,7 @@ static int    _get_return_code(void);
 static Buf    _load_dbd_rec(int fd);
 static void   _load_dbd_state(void);
 static void   _open_slurmdbd_conn(bool db_needed);
+static int    _purge_step_req(void);
 static int    _purge_job_start_req(void);
 static int    _save_dbd_rec(int fd, Buf buffer);
 static void   _save_dbd_state(void);
@@ -353,6 +354,8 @@ extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 		if (slurmdbd_conn->trigger_callbacks.dbd_fail)
 			(slurmdbd_conn->trigger_callbacks.dbd_fail)();
 	}
+	if (cnt == (max_agent_queue - 1))
+		cnt -= _purge_step_req();
 	if (cnt == (max_agent_queue - 1))
 		cnt -= _purge_job_start_req();
 	if (cnt < max_agent_queue) {
@@ -2316,7 +2319,36 @@ static void _sig_handler(int signal)
 {
 }
 
-/* Purge queued job/step start records from the agent queue
+/* Purge queued step records from the agent queue
+ * RET number of records purged */
+static int _purge_step_req(void)
+{
+	int purged = 0;
+	ListIterator iter;
+	uint16_t msg_type;
+	uint32_t offset;
+	Buf buffer;
+
+	iter = list_iterator_create(agent_list);
+	while ((buffer = list_next(iter))) {
+		offset = get_buf_offset(buffer);
+		if (offset < 2)
+			continue;
+		set_buf_offset(buffer, 0);
+		unpack16(&msg_type, buffer);
+		set_buf_offset(buffer, offset);
+		if ((msg_type == DBD_STEP_START) ||
+		    (msg_type == DBD_STEP_COMPLETE)) {
+			list_remove(iter);
+			purged++;
+		}
+	}
+	list_iterator_destroy(iter);
+	info("slurmdbd: purge %d step records", purged);
+	return purged;
+}
+
+/* Purge queued job start records from the agent queue
  * RET number of records purged */
 static int _purge_job_start_req(void)
 {
@@ -2334,15 +2366,13 @@ static int _purge_job_start_req(void)
 		set_buf_offset(buffer, 0);
 		unpack16(&msg_type, buffer);
 		set_buf_offset(buffer, offset);
-		if ((msg_type == DBD_JOB_START) ||
-		    (msg_type == DBD_STEP_START) ||
-		    (msg_type == DBD_STEP_COMPLETE)) {
+		if (msg_type == DBD_JOB_START) {
 			list_remove(iter);
 			purged++;
 		}
 	}
 	list_iterator_destroy(iter);
-	info("slurmdbd: purge %d job/step start records", purged);
+	info("slurmdbd: purge %d job start records", purged);
 	return purged;
 }
 
@@ -2614,6 +2644,7 @@ extern void slurmdbd_free_fini_msg(dbd_fini_msg_t *msg)
 extern void slurmdbd_free_job_complete_msg(dbd_job_comp_msg_t *msg)
 {
 	if (msg) {
+		xfree(msg->admin_comment);
 		xfree(msg->comment);
 		xfree(msg->nodes);
 		xfree(msg);
@@ -3163,6 +3194,7 @@ slurmdbd_pack_job_complete_msg(dbd_job_comp_msg_t *msg,
 			       uint16_t rpc_version, Buf buffer)
 {
 	if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		packstr(msg->admin_comment, buffer);
 		pack32(msg->assoc_id, buffer);
 		packstr(msg->comment, buffer);
 		pack64(msg->db_index, buffer);
@@ -3200,6 +3232,8 @@ slurmdbd_unpack_job_complete_msg(dbd_job_comp_msg_t **msg,
 	*msg = msg_ptr;
 
 	if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->admin_comment,
+				       &uint32_tmp, buffer);
 		safe_unpack32(&msg_ptr->assoc_id, buffer);
 		safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
 		safe_unpack64(&msg_ptr->db_index, buffer);
@@ -4085,6 +4119,8 @@ slurmdbd_pack_step_start_msg(dbd_step_start_msg_t *msg, uint16_t rpc_version,
 		pack32(msg->node_cnt, buffer);
 		pack_time(msg->start_time, buffer);
 		pack_time(msg->job_submit_time, buffer);
+		pack32(msg->packjobid, buffer);
+		pack32(msg->packstepid, buffer);
 		pack32(msg->req_cpufreq_min, buffer);
 		pack32(msg->req_cpufreq_max, buffer);
 		pack32(msg->req_cpufreq_gov, buffer);
@@ -4116,7 +4152,7 @@ extern int
 slurmdbd_unpack_step_start_msg(dbd_step_start_msg_t **msg,
 			       uint16_t rpc_version, Buf buffer)
 {
-	uint32_t uint32_tmp;
+	uint32_t uint32_tmp = 0;
 	dbd_step_start_msg_t *msg_ptr = xmalloc(sizeof(dbd_step_start_msg_t));
 	*msg = msg_ptr;
 
@@ -4130,6 +4166,8 @@ slurmdbd_unpack_step_start_msg(dbd_step_start_msg_t **msg,
 		safe_unpack32(&msg_ptr->node_cnt, buffer);
 		safe_unpack_time(&msg_ptr->start_time, buffer);
 		safe_unpack_time(&msg_ptr->job_submit_time, buffer);
+		safe_unpack32(&msg_ptr->packjobid, buffer);
+		safe_unpack32(&msg_ptr->packstepid, buffer);
 		safe_unpack32(&msg_ptr->req_cpufreq_min, buffer);
 		safe_unpack32(&msg_ptr->req_cpufreq_max, buffer);
 		safe_unpack32(&msg_ptr->req_cpufreq_gov, buffer);

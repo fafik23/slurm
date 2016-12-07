@@ -230,6 +230,7 @@ typedef struct dbd_fini_msg {
 } dbd_fini_msg_t;
 
 typedef struct dbd_job_comp_msg {
+	char *	 admin_comment;	/* job admin comment field */
 	uint32_t assoc_id;	/* accounting association id needed to
 				 * find job record in db */
 	char *	 comment;	/* job comment field */
@@ -370,6 +371,8 @@ typedef struct dbd_step_start_msg {
 	time_t   start_time;	/* step start time */
 	time_t   job_submit_time;/* job submit time needed to find job record
 				  * in db */
+	uint32_t packjobid;	/* jobid of srun first step of the jobpack */
+	uint32_t packstepid;	/* stepid of jobpack member */
 	uint32_t req_cpufreq_min; /* requested minimum CPU frequency  */
 	uint32_t req_cpufreq_max; /* requested maximum CPU frequency  */
 	uint32_t req_cpufreq_gov; /* requested CPU frequency governor */

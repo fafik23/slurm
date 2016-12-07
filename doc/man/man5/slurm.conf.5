@@ -966,6 +966,10 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
 on all nodes to minimize its impact upon parallel programs.
 This program is will be killed if it does not terminate normally within
 60 seconds.
+When slurmd is first started, this program will be run repeatedly until
+it returns an exit code of 0, and will block slurmd from registering with
+slurmctld until this has been satisfied.
+The return code is otherwise ignored.
 By default, no program will be executed.
 
 .TP
@@ -1254,6 +1258,10 @@ Identifies options to the job launch plugin.
 Acceptable values include:
 .RS
 .TP 24
+\fBmem_sort\fR
+Sort NUMA memory at step start. User can override this default with
+SLURM_MEM_BIND environment variable or \-\-mem_bind=nosort command line option.
+.TP 24
 \fBslurmstepd_memlock\fR
 Lock the slurmstepd process's current memory in RAM.
 .TP
@@ -1417,7 +1425,7 @@ MCS Plugin Parameters.
 The supported parameters are specific to the \fBMCSPlugin\fR.
 Changes to this value take effect when the Slurm daemons are reconfigured.
 More information about MCS is available here
-<http://slurm.schedmd.com/mcs_Plugins.html>.
+<https://slurm.schedmd.com/mcs_Plugins.html>.
 
 .TP
 \fBMCSPlugin\fR
@@ -1430,6 +1438,9 @@ Acceptable values include:
 is the default value.
 No security label associated with jobs,
 no particular security restriction when sharing nodes among jobs.
+.TP
+\fBmcs/account\fR
+only users with the same account can share the nodes (requires enabling of accounting).
 .TP
 \fBmcs/group\fR
 only users with the same group can share the nodes.
@@ -1479,7 +1490,7 @@ Currently supported versions include:
 \fBopenmpi\fR.
 \fBpmi2\fR,
 More information about MPI use is available here
-<http://slurm.schedmd.com/mpi_guide.html>.
+<https://slurm.schedmd.com/mpi_guide.html>.
 
 .TP
 \fBMpiParams\fR
@@ -1576,7 +1587,7 @@ System power management parameters.
 The supported parameters are specific to the \fBPowerPlugin\fR.
 Changes to this value take effect when the Slurm daemons are reconfigured.
 More information about system power management is available here
-<http://slurm.schedmd.com/power_mgmt.html>.
+<https://slurm.schedmd.com/power_mgmt.html>.
 Options current supported by any plugins are listed below.
 .RS
 .TP
@@ -1678,7 +1689,7 @@ Currently supported plugins include:
 \fBnone\fR.
 Changes to this value require restarting Slurm daemons to take effect.
 More information about system power management is available here
-<http://slurm.schedmd.com/power_mgmt.html>.
+<https://slurm.schedmd.com/power_mgmt.html>.
 By default, no power plugin is loaded.
 
 .TP
@@ -1797,15 +1808,19 @@ or holds.
 If set, priorities will be recalculated not only for pending jobs, but also
 running and suspended jobs.
 .TP
+\fBDEPTH_OBLIVIOUS\fR
+If set, priority will be calculated based similar to the normal multifactor
+calculation, but depth of the associations in the tree do not adversely effect
+their priority.
+.TP
 \fBFAIR_TREE\fR
 If set, priority will be calculated in such a way that if accounts A and B are
 siblings and A has a higher fairshare factor than B, all children of A will have
 higher fairshare factors than all children of B.
 .TP
-\fBDEPTH_OBLIVIOUS\fR
-If set, priority will be calculated based similar to the normal multifactor
-calculation, but depth of the associations in the tree do not adversely effect
-their priority.
+\fBINCR_ONLY\fR
+If set, priority values will only increase in value. Job priority will never
+decrease in value.
 .TP
 \fBMAX_TRES\fR
 If set, the weighted TRES value (e.g. TRESBillingWeights) is calculated as the
@@ -2153,7 +2168,7 @@ The user limits can not exceed hard limits under which the slurmd daemon
 operates. If the user limits are not propagated, the limits from the slurmd
 daemon will be propagated to the user's job. The limits used for the Slurm
 daemons can be set in the /etc/sysconf/slurm file. For more information, see:
-http://slurm.schedmd.com/faq.html#memlock
+https://slurm.schedmd.com/faq.html#memlock
 The following limit names are supported by Slurm (although some
 options may not be supported on some systems):
 .RS
@@ -2281,7 +2296,7 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeRate\fR,
 \fBSuspendRate\fR, \fBSuspendTime\fR, \fBSuspendTimeout\fR, \fBSuspendProgram\fR,
 \fBSuspendExcNodes\fR, and \fBSuspendExcParts\fR.
 More information is available at the Slurm web site
-( http://slurm.schedmd.com/power_save.html ).
+( https://slurm.schedmd.com/power_save.html ).
 
 .TP
 \fBResumeRate\fR
@@ -2307,7 +2322,7 @@ Related configuration options include \fBResumeProgram\fR, \fBResumeRate\fR,
 \fBSuspendRate\fR, \fBSuspendTime\fR, \fBSuspendTimeout\fR, \fBSuspendProgram\fR,
 \fBSuspendExcNodes\fR and \fBSuspendExcParts\fR.
 More information is available at the Slurm web site
-( http://slurm.schedmd.com/power_save.html ).
+( https://slurm.schedmd.com/power_save.html ).
 
 .TP
 \fBResvEpilog\fR
@@ -2419,6 +2434,24 @@ allocated to the job on that node, otherwise the shell may be limited to a
 single cpu or core.
 
 .TP
+\fBSbcastParameters\fR
+Controls sbcast command behavior. Multiple options can be specified in a comma
+separated list.
+Supported values include:
+.RS
+.TP 15
+\fBDestDir=\fR
+Destination directory for file being broadcast to allocated compute nodes.
+Default value is current working directory.
+.TP
+\fBCompression=\fR
+Specify default file compression library to be used.
+Supported values are "lz4", "none" and "zlib".
+The default value with the sbcast \-\-compress option is "lz4" and "none" otherwise.
+Some compression libraries may be unavailable on some systems.
+.RE
+
+.TP
 \fBSchedulerParameters\fR
 The interpretation of this parameter varies by \fBSchedulerType\fR.
 Multiple options may be comma separated.
@@ -2474,6 +2507,20 @@ The backfill scheduler will start over after reaching this time limit
 been reached.
 This option applies only to \fBSchedulerType=sched/backfill\fR.
 The default value is 30 seconds.
+
+.TP
+\fBbf_job_part_count_reserve=#\fR
+The backfill scheduling logic will reserve resources for the specified count
+of highest priority jobs in each partition.
+For example, bf_job_part_count_reserve=10 will cause the backfill scheduler to
+reserve resources for the ten highest priority jobs in each partition.
+Any lower priority job that can be started using currently available resources
+and not adversely impact the expected start time of these higher priority jobs
+will be started by the backfill scheduler
+The default value is zero, which will reserve resources for any pending job
+and delay initiation of lower priority jobs.
+Also see bf_min_age_reserve and bf_min_prio_reserve.
+
 .TP
 \fBbf_max_job_array_resv=#\fR
 The maximum number of tasks from a job array for which to reserve resources in
@@ -2533,7 +2580,7 @@ This can be valuable if jobs lack time limits or all time limits have the same
 value.
 The default value is zero, which will reserve resources for any pending job
 and delay initiation of lower priority jobs.
-Also see bf_min_prio_reserve.
+Also see bf_job_part_count_reserve and bf_min_prio_reserve.
 .TP
 \fBbf_min_prio_reserve=#\fR
 The backfill and main scheduling logic will not reserve resources for pending
@@ -2544,7 +2591,7 @@ This can be valuable if one wished to maximum system utilization without regard
 for job priority below a certain threshold.
 The default value is zero, which will reserve resources for any pending job
 and delay initiation of lower priority jobs.
-Also see bf_min_age_reserve.
+Also see bf_job_part_count_reserve and bf_min_age_reserve.
 .TP
 \fBbf_resolution=#\fR
 The number of seconds in the resolution of data maintained about when jobs
@@ -2615,7 +2662,7 @@ The argument is in units of minutes.
 Individual jobs may override this default value with the \fB\-\-delay\-boot\fR
 option.
 .TP
-\fBdisable_user_top\fB
+\fBdisable_user_top\fR
 Disable use of the "scontrol top" command by non-privileged users.
 .TP
 \fBIgnore_NUMA\fR
@@ -2640,6 +2687,13 @@ must and we advise around 10 seconds.
 If a job has an invalid dependency and it can never run terminate it
 and set its state to be JOB_CANCELLED. By default the job stays pending
 with reason DependencyNeverSatisfied.
+.TP
+\fBmax_array_tasks\fR
+Specify the maximum number of tasks that be included in a job array.
+The default limit is MaxArraySize, but this option can be used to set a lower
+limit. For example, max_array_tasks=1000 and MaxArraySize=100001 would permit
+a maximum task ID of 100000, but limit the number of tasks in any single job
+array to 1000.
 .TP
 \fBmax_depend_depth=#\fR
 Maximum number of jobs to test for a circular job dependency. Stop testing
@@ -2863,9 +2917,14 @@ for a Cray system.
 The default value is "select/cray" for all Cray systems.
 .TP
 \fBselect/linear\fR
-for allocation of entire nodes assuming a
-one\-dimensional array of nodes in which sequentially ordered
-nodes are preferable.
+for allocation of entire nodes assuming a one\-dimensional array of nodes in
+which sequentially ordered nodes are preferable.
+For a heterogeneous cluster (e.g. different CPU counts on the various nodes),
+resource allocations will favor nodes with high CPU counts as needed based upon
+the job's node and CPU specification if \fBTopologyPlugin=topology/none\fR is
+configured. Use of other topology plugins with select/linear and heterogeneous
+nodes is not recommended and may result in valid job allocation requests being
+rejected.
 This is the default value for non\-BlueGene systems.
 .TP
 \fBselect/serial\fR
@@ -2972,6 +3031,8 @@ Schedule resources to jobs on the least loaded nodes (based upon the number
 of idle CPUs). This is generally only recommended for an environment with
 serial jobs as idle resources will tend to be highly fragmented, resulting
 in parallel jobs being distributed across many nodes.
+Note that node \fBWeight\fR takes precedence over how many idle resources are
+on each node.
 Also see the partition configuration parameter \fBLLN\fR
 use the least loaded nodes in selected partitions.
 .TP
@@ -3361,7 +3422,7 @@ Related configuration options include \fBResumeProgram\fR, \fBResumeRate\fR,
 \fBResumeTimeout\fR, \fBSuspendRate\fR, \fBSuspendTime\fR, \fBSuspendProgram\fR,
 \fBSuspendExcNodes\fR and \fBSuspendExcParts\fR.
 More information is available at the Slurm web site
-( http://slurm.schedmd.com/power_save.html ).
+( https://slurm.schedmd.com/power_save.html ).
 
 .TP
 \fBSwitchType\fR
@@ -3825,7 +3886,7 @@ Isolation of the Slurm daemons from user jobs may improve
 performance.  If this option and \fBCPUSpecList\fR are both designated for a
 node, an error is generated.  For information on the algorithm used by Slurm
 to select the cores refer to the core specialization documentation
-( http://slurm.schedmd.com/core_spec.html ). This option has no effect
+( https://slurm.schedmd.com/core_spec.html ). This option has no effect
 unless cgroup job confinement is also configured (\fBTaskPlugin=task/cgroup\fR
 with \fBConstrainCores=yes\fR in cgroup.conf).
 
@@ -4408,6 +4469,8 @@ Schedule resources to jobs on the least loaded nodes (based upon the number
 of idle CPUs). This is generally only recommended for an environment with
 serial jobs as idle resources will tend to be highly fragmented, resulting
 in parallel jobs being distributed across many nodes.
+Note that node \fBWeight\fR takes precedence over how many idle resources are
+on each node.
 Also see the \fBSelectParameters\fR configuration parameter \fBCR_LLN\fR to
 use the least loaded nodes in every partition.
 
@@ -4503,13 +4566,13 @@ The default value is "NO".
 For more information see the following web pages:
 .br
 .na
-\fIhttp://slurm.schedmd.com/cons_res.html\fR,
+\fIhttps://slurm.schedmd.com/cons_res.html\fR,
 .br
-\fIhttp://slurm.schedmd.com/cons_res_share.html\fR,
+\fIhttps://slurm.schedmd.com/cons_res_share.html\fR,
 .br
-\fIhttp://slurm.schedmd.com/gang_scheduling.html\fR, and
+\fIhttps://slurm.schedmd.com/gang_scheduling.html\fR, and
 .br
-\fIhttp://slurm.schedmd.com/preempt.html\fR.
+\fIhttps://slurm.schedmd.com/preempt.html\fR.
 .ad
 
 .RS
@@ -4855,7 +4918,7 @@ Slurm is able to optimize job allocations to minimize network contention.
 Special Slurm logic is used to optimize allocations on systems with a
 three\-dimensional interconnect (BlueGene, etc.)
 and information about configuring those systems are available on
-web pages available here: <http://slurm.schedmd.com/>.
+web pages available here: <https://slurm.schedmd.com/>.
 For a hierarchical network, Slurm needs to have detailed information
 about how nodes are configured on the network switches.
 .LP
@@ -4964,9 +5027,9 @@ SlurmctldPort=7002
 .br
 SlurmdPort=7003
 .br
-SlurmdSpoolDir=/usr/local/slurm/slurmd.spool
+SlurmdSpoolDir=/var/spool/slurmd.spool
 .br
-StateSaveLocation=/usr/local/slurm/slurm.state
+StateSaveLocation=/var/spool/slurm.state
 .br
 SwitchType=switch/none
 .br
@@ -5228,7 +5291,7 @@ Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 Copyright (C) 2010-2016 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+For details, see <https://slurm.schedmd.com/>.
 .LP
 Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free

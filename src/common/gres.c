@@ -821,8 +821,8 @@ static int _parse_gres_config(void **dest, slurm_parser_enum_t type,
 	if (s_p_get_string(&tmp_str, "Count", tbl)) {
 		tmp_uint64 = strtoll(tmp_str, &last, 10);
 		if ((tmp_uint64 == LONG_MIN) || (tmp_uint64 == LONG_MAX)) {
-			fatal("Invalid gres data for %s, Count=%s", p->name,
-			      tmp_str);
+			fatal("Invalid gres record for %s, invalid count %s",
+			      p->name, tmp_str);
 		}
 		if ((last[0] == 'k') || (last[0] == 'K'))
 			tmp_uint64 *= 1024;
@@ -836,12 +836,12 @@ static int _parse_gres_config(void **dest, slurm_parser_enum_t type,
 			tmp_uint64 *= ((uint64_t)1024 * 1024 * 1024 * 1024 *
 				       1024);
 		else if (last[0] != '\0') {
-			fatal("Invalid gres data for %s, Count=%s", p->name,
-			      tmp_str);
+			fatal("Invalid gres record for %s, invalid count %s",
+			      p->name, tmp_str);
 		}
 		if (p->count && (p->count != tmp_uint64)) {
-			fatal("Invalid gres data for %s, Count does not match "
-			      "File value", p->name);
+			fatal("Invalid gres record for %s, count does not match File value",
+			      p->name);
 		}
 		if (tmp_uint64 >= NO_VAL64) {
 			fatal("Gres %s has invalid count value %"PRIu64,
@@ -859,7 +859,7 @@ static int _parse_gres_config(void **dest, slurm_parser_enum_t type,
 			break;
 	}
 	if (i >= gres_context_cnt) {
-		error("Ignoring gres.conf Name=%s", p->name);
+		error("Ignoring gres.conf record, invalid name: %s", p->name);
 		_destroy_gres_slurmd_conf(p);
 		return 0;
 	}
@@ -2502,18 +2502,77 @@ static char *_node_gres_used(void *gres_data, char *gres_name)
 {
 	gres_node_state_t *gres_node_ptr;
 	char *sep = "";
-	int i;
+	int i, j;
 
 	xassert(gres_data);
 	gres_node_ptr = (gres_node_state_t *) gres_data;
 
-	if (gres_node_ptr->gres_used) {
+	if ((gres_node_ptr->topo_cnt != 0) &&
+	    (gres_node_ptr->no_consume == false)) {
+		bitstr_t *topo_printed = bit_alloc(gres_node_ptr->topo_cnt);
+		xfree(gres_node_ptr->gres_used);    /* Free any cached value */
+		for (i = 0; i < gres_node_ptr->topo_cnt; i++) {
+			bitstr_t *topo_gres_bitmap = NULL;
+			uint64_t gres_alloc_cnt = 0;
+			char *gres_alloc_idx, tmp_str[64];
+			if (bit_test(topo_printed, i))
+				continue;
+			bit_set(topo_printed, i);
+			if (gres_node_ptr->topo_gres_bitmap[i]) {
+				topo_gres_bitmap =
+					bit_copy(gres_node_ptr->
+						 topo_gres_bitmap[i]);
+			}
+			for (j = i + 1; j < gres_node_ptr->topo_cnt; j++) {
+				if (bit_test(topo_printed, j))
+					continue;
+				if (xstrcmp(gres_node_ptr->topo_model[i],
+					    gres_node_ptr->topo_model[j]))
+					continue;
+				bit_set(topo_printed, j);
+				if (gres_node_ptr->topo_gres_bitmap[j]) {
+					if (!topo_gres_bitmap) {
+						topo_gres_bitmap =
+							bit_copy(gres_node_ptr->
+								 topo_gres_bitmap[j]);
+					} else if (bit_size(topo_gres_bitmap) ==
+						   bit_size(gres_node_ptr->
+							    topo_gres_bitmap[j])){
+						bit_or(topo_gres_bitmap,
+						       gres_node_ptr->
+						       topo_gres_bitmap[j]);
+					}
+				}		
+			}
+			if (gres_node_ptr->gres_bit_alloc && topo_gres_bitmap &&
+			    (bit_size(topo_gres_bitmap) ==
+			     bit_size(gres_node_ptr->gres_bit_alloc))) {
+				bit_and(topo_gres_bitmap,
+					gres_node_ptr->gres_bit_alloc);
+				gres_alloc_cnt = bit_set_count(topo_gres_bitmap);
+			}
+			if (gres_alloc_cnt > 0) {
+				bit_fmt(tmp_str, sizeof(tmp_str),
+					topo_gres_bitmap);
+				gres_alloc_idx = tmp_str;
+			} else {
+				gres_alloc_idx = "N/A";
+			}
+			xstrfmtcat(gres_node_ptr->gres_used,
+				   "%s%s:%s:%"PRIu64"(IDX:%s)", sep, gres_name,
+				   gres_node_ptr->topo_model[i], gres_alloc_cnt,
+				   gres_alloc_idx);
+			sep = ",";
+			FREE_NULL_BITMAP(topo_gres_bitmap);
+		}
+		FREE_NULL_BITMAP(topo_printed);
+	} else if (gres_node_ptr->gres_used) {
 		;	/* Used cached value */
 	} else if (gres_node_ptr->type_cnt == 0) {
 		if (gres_node_ptr->no_consume) {
 			xstrfmtcat(gres_node_ptr->gres_used, "%s:0", gres_name);
 		} else {
-			xstrfmtcat(gres_node_ptr->gres_used, "%s:%"PRIu64"",
+			xstrfmtcat(gres_node_ptr->gres_used, "%s:%"PRIu64,
 				   gres_name, gres_node_ptr->gres_cnt_alloc);
 		}
 	} else {
@@ -2524,7 +2583,7 @@ static char *_node_gres_used(void *gres_data, char *gres_name)
 					   gres_node_ptr->type_model[i]);
 			} else {
 				xstrfmtcat(gres_node_ptr->gres_used,
-					   "%s%s:%s:%"PRIu64"", sep, gres_name,
+					   "%s%s:%s:%"PRIu64, sep, gres_name,
 					   gres_node_ptr->type_model[i],
 					   gres_node_ptr->type_cnt_alloc[i]);
 			}
@@ -2553,7 +2612,7 @@ static void _node_state_log(void *gres_data, char *node_name, char *gres_name)
 	}
 
 	if (gres_node_ptr->no_consume) {
-		info("  gres_cnt found:%s configured:%"PRIu64" "
+		info("  gres_cnt found:%s configured:%"PRIu64" "	
 		     "avail:%"PRIu64" no_consume",
 		     tmp_str, gres_node_ptr->gres_cnt_config,
 		     gres_node_ptr->gres_cnt_avail);
@@ -3165,8 +3224,8 @@ extern int gres_plugin_job_state_pack(List gres_list, Buf buffer,
 			}
 			rec_cnt++;
 		} else {
-			error("gres_plugin_node_state_pack: protocol_version"
-			      " %hu not supported", protocol_version);
+			error("%s: protocol_version %hu not supported",
+			      __func__, protocol_version);
 			break;
 		}
 	}
@@ -3900,13 +3959,20 @@ static int _job_alloc(void *job_gres_data, void *node_gres_data,
 		}
 		job_gres_ptr->gres_bit_alloc = xmalloc(sizeof(bitstr_t *) *
 						       node_cnt);
-	} else if (job_gres_ptr->node_cnt < node_cnt) {
-		error("gres/%s: job %u node_cnt increase from %u to %d",
+	}
+	/* These next 2 checks were added long before job resizing was allowed.
+	 * They are not errors as we need to keep the original size around for
+	 * any steps that might still be out there with the larger size.  If the
+	 * job was sized up the gres_plugin_job_merge() function handles the
+	 * resize so we are set there.
+	 */
+	else if (job_gres_ptr->node_cnt < node_cnt) {
+		debug2("gres/%s: job %u node_cnt is now larger than it was when allocated from %u to %d",
 		      gres_name, job_id, job_gres_ptr->node_cnt, node_cnt);
 		if (node_offset >= job_gres_ptr->node_cnt)
 			return SLURM_ERROR;
 	} else if (job_gres_ptr->node_cnt > node_cnt) {
-		error("gres/%s: job %u node_cnt decrease from %u to %d",
+		debug2("gres/%s: job %u node_cnt is now smaller than it was when allocated %u to %d",
 		      gres_name, job_id, job_gres_ptr->node_cnt, node_cnt);
 	}
 
@@ -6333,6 +6399,73 @@ extern int gres_get_job_info(List job_gres_list, char *gres_name,
 	slurm_mutex_unlock(&gres_context_lock);
 
 	return rc;
+}
+
+/* Given a job's GRES data structure, return the indecies for selected elements
+ * IN job_gres_list  - job's GRES data structure
+ * OUT gres_detail_cnt - Number of elements (nodes) in gres_detail_str
+ * OUT gres_detail_str - Description of GRES on each node
+ */
+extern void gres_build_job_details(List job_gres_list,
+				   uint32_t *gres_detail_cnt,
+				   char ***gres_detail_str)
+{
+	int i, j;
+	ListIterator job_gres_iter;
+	gres_state_t *job_gres_ptr;
+	gres_job_state_t *job_gres_data;
+	char *sep1, *sep2, tmp_str[128], *type, **my_gres_details = NULL;
+	uint32_t my_gres_cnt = 0;
+
+	if (job_gres_list == NULL) {	/* No GRES allocated */
+		*gres_detail_cnt = 0;
+		*gres_detail_str = NULL;
+		return;
+	}
+
+	(void) gres_plugin_init();
+
+	slurm_mutex_lock(&gres_context_lock);
+	job_gres_iter = list_iterator_create(job_gres_list);
+	while ((job_gres_ptr = (gres_state_t *) list_next(job_gres_iter))) {
+		job_gres_data = (gres_job_state_t *) job_gres_ptr->gres_data;
+		if (job_gres_data->gres_bit_alloc == NULL)
+			continue;
+		if (my_gres_details == NULL) {
+			my_gres_cnt = job_gres_data->node_cnt;
+			my_gres_details = xmalloc(sizeof(char *) * my_gres_cnt);
+		}
+		for (i = 0; i < gres_context_cnt; i++) {
+			if (job_gres_ptr->plugin_id !=
+			    gres_context[i].plugin_id)
+				continue;
+			for (j = 0; j < my_gres_cnt; j++) {
+				if (j >= job_gres_data->node_cnt)
+					break;	/* node count mismatch */
+				if (my_gres_details[j])
+					sep1 = ",";
+				else
+					sep1 = "";
+				if (job_gres_data->type_model) {
+					sep2 = ":";
+					type = job_gres_data->type_model;
+				} else {
+					sep2 = "";
+					type = "";
+				}
+				bit_fmt(tmp_str, sizeof(tmp_str),
+                                        job_gres_data->gres_bit_alloc[j]);
+				xstrfmtcat(my_gres_details[j], "%s%s%s%s(IDX:%s)",
+					   sep1, gres_context[i].gres_name,
+					   sep2, type, tmp_str);
+			}
+			break;
+		}
+	}
+	list_iterator_destroy(job_gres_iter);
+	slurm_mutex_unlock(&gres_context_lock);
+	*gres_detail_cnt = my_gres_cnt;
+	*gres_detail_str = my_gres_details;
 }
 
 /* Get generic GRES data types here. Call the plugin for others */

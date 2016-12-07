@@ -2573,7 +2573,7 @@ extern void slurmdb_pack_tres_cond(void *in, uint16_t protocol_version,
 		list_iterator_destroy(itr);
 	}
 
-	safe_pack16(object->with_deleted, buffer);
+	pack16(object->with_deleted, buffer);
 }
 
 extern int slurmdb_unpack_tres_cond(void **object, uint16_t protocol_version,
@@ -4249,6 +4249,7 @@ extern void slurmdb_pack_job_rec(void *object, uint16_t protocol_version,
 
 	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		packstr(job->account, buffer);
+		packstr(job->admin_comment, buffer);
 		packstr(job->alloc_gres, buffer);
 		pack32(job->alloc_nodes, buffer);
 		pack32(job->array_job_id, buffer);
@@ -4412,6 +4413,8 @@ extern int slurmdb_unpack_job_rec(void **job, uint16_t protocol_version,
 	job_ptr->array_task_id = NO_VAL;
 	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&job_ptr->account, &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&job_ptr->admin_comment, &uint32_tmp,
+				       buffer);
 		safe_unpackstr_xmalloc(&job_ptr->alloc_gres, &uint32_tmp,
 				       buffer);
 		safe_unpack32(&job_ptr->alloc_nodes, buffer);
@@ -4857,7 +4860,34 @@ unpack_error:
 extern void slurmdb_pack_step_rec(slurmdb_step_rec_t *step,
 				  uint16_t protocol_version, Buf buffer)
 {
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		pack32(step->elapsed, buffer);
+		pack_time(step->end, buffer);
+		pack32((uint32_t)step->exitcode, buffer);
+		pack32(step->nnodes, buffer);
+		packstr(step->nodes, buffer);
+		pack32(step->ntasks, buffer);
+		pack32(step->packjobid, buffer);
+		pack32(step->packstepid, buffer);
+		pack32(step->req_cpufreq_min, buffer);
+		pack32(step->req_cpufreq_max, buffer);
+		pack32(step->req_cpufreq_gov, buffer);
+		pack32(step->requid, buffer);
+		_pack_slurmdb_stats(&step->stats, protocol_version, buffer);
+		pack_time(step->start, buffer);
+		pack16(step->state, buffer);
+		pack32(step->stepid, buffer);   /* job's step number */
+		packstr(step->stepname, buffer);
+		pack32(step->suspended, buffer);
+		pack32(step->sys_cpu_sec, buffer);
+		pack32(step->sys_cpu_usec, buffer);
+		pack32(step->task_dist, buffer);
+		pack32(step->tot_cpu_sec, buffer);
+		pack32(step->tot_cpu_usec, buffer);
+		packstr(step->tres_alloc_str, buffer);
+		pack32(step->user_cpu_sec, buffer);
+		pack32(step->user_cpu_usec, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		pack32(step->elapsed, buffer);
 		pack_time(step->end, buffer);
 		pack32((uint32_t)step->exitcode, buffer);
@@ -4897,7 +4927,41 @@ extern int slurmdb_unpack_step_rec(slurmdb_step_rec_t **step,
 
 	*step = step_ptr;
 
-	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		safe_unpack32(&step_ptr->elapsed, buffer);
+		safe_unpack_time(&step_ptr->end, buffer);
+		safe_unpack32(&uint32_tmp, buffer);
+		step_ptr->exitcode = (int32_t)uint32_tmp;
+		safe_unpack32(&step_ptr->nnodes, buffer);
+		safe_unpackstr_xmalloc(&step_ptr->nodes, &uint32_tmp, buffer);
+		safe_unpack32(&step_ptr->ntasks, buffer);
+		safe_unpack32(&step_ptr->packjobid, buffer);
+		safe_unpack32(&step_ptr->packstepid, buffer);
+		safe_unpack32(&step_ptr->req_cpufreq_min, buffer);
+		safe_unpack32(&step_ptr->req_cpufreq_max, buffer);
+		safe_unpack32(&step_ptr->req_cpufreq_gov, buffer);
+		safe_unpack32(&step_ptr->requid, buffer);
+		if (_unpack_slurmdb_stats(&step_ptr->stats, protocol_version,
+					  buffer)
+		    != SLURM_SUCCESS)
+			goto unpack_error;
+		safe_unpack_time(&step_ptr->start, buffer);
+		safe_unpack16(&uint16_tmp, buffer);
+		step_ptr->state = uint16_tmp;
+		safe_unpack32(&step_ptr->stepid, buffer);
+		safe_unpackstr_xmalloc(&step_ptr->stepname,
+				       &uint32_tmp, buffer);
+		safe_unpack32(&step_ptr->suspended, buffer);
+		safe_unpack32(&step_ptr->sys_cpu_sec, buffer);
+		safe_unpack32(&step_ptr->sys_cpu_usec, buffer);
+		safe_unpack32(&step_ptr->task_dist, buffer);
+		safe_unpack32(&step_ptr->tot_cpu_sec, buffer);
+		safe_unpack32(&step_ptr->tot_cpu_usec, buffer);
+		safe_unpackstr_xmalloc(&step_ptr->tres_alloc_str,
+				       &uint32_tmp, buffer);
+		safe_unpack32(&step_ptr->user_cpu_sec, buffer);
+		safe_unpack32(&step_ptr->user_cpu_usec, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&step_ptr->elapsed, buffer);
 		safe_unpack_time(&step_ptr->end, buffer);
 		safe_unpack32(&uint32_tmp, buffer);

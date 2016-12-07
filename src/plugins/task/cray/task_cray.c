@@ -160,6 +160,16 @@ extern int init (void)
 {
 	debug("%s loaded.", plugin_name);
 
+	char *task_plugin = slurm_get_task_plugin();
+	char *task_cgroup = strstr(task_plugin, "cgroup");
+	char *task_cray = strstr(task_plugin, "cray");
+
+	if (!task_cgroup || !task_cray || task_cgroup < task_cray)
+		fatal("task/cgroup must be used with, and listed after, "
+		      "task/cray in TaskPlugin");
+
+	xfree(task_plugin);
+
 #ifdef HAVE_NATIVE_CRAY
 	int rc;
 	struct stat st;
@@ -314,8 +324,8 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 
 	START_TIMER;
 	apid = SLURM_ID_HASH(job->jobid, job->stepid);
-	debug("task_p_pre_launch: %u.%u, apid %"PRIu64", task %d",
-	      job->jobid, job->stepid, apid, job->envtp->procid);
+	debug2("task_p_pre_launch: %u.%u, apid %"PRIu64", task %d",
+	       job->jobid, job->stepid, apid, job->envtp->procid);
 
 	/*
 	 * Send the rank to the application's PMI layer via an environment
@@ -1049,6 +1059,7 @@ static int _step_epilogue(void)
 	}
 	return SLURM_SUCCESS;
 }
+#endif
 
 /*
  * Keep track a of a pid.
@@ -1057,5 +1068,3 @@ extern int task_p_add_pid (pid_t pid)
 {
 	return SLURM_SUCCESS;
 }
-
-#endif

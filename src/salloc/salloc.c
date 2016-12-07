@@ -59,6 +59,7 @@
 #include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
 #include "src/common/plugstack.h"
+#include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
@@ -303,6 +304,16 @@ int main(int argc, char *argv[])
 			error("setgid: %m");
 			exit(error_exit);
 		}
+	}
+
+	/* If can run on multiple clusters find the earliest run time
+	 * and run it there */
+	desc.clusters = xstrdup(opt.clusters);
+	if (opt.clusters &&
+	    slurmdb_get_first_avail_cluster(&desc, opt.clusters,
+			&working_cluster_rec) != SLURM_SUCCESS) {
+		print_db_notok(opt.clusters, 0);
+		exit(error_exit);
 	}
 
 	callbacks.ping = _ping_handler;
@@ -560,6 +571,8 @@ relinquish:
 			}
 		}
 	}
+
+	xfree(desc.clusters);
 	return rc;
 }
 
@@ -663,8 +676,12 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->exc_nodes = opt.exc_nodes;
 	desc->partition = opt.partition;
 	desc->min_nodes = opt.min_nodes;
-	if (opt.nodes_set)
+
+	if (opt.max_nodes)
 		desc->max_nodes = opt.max_nodes;
+	else if (opt.nodes_set)
+		desc->max_nodes = opt.min_nodes;
+
 	desc->user_id = opt.uid;
 	desc->group_id = opt.gid;
 	if (opt.dependency)

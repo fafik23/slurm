@@ -650,7 +650,35 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 	bb_config_t *config_ptr = &state_ptr->bb_config;
 	int i;
 
-	if (protocol_version >= SLURM_16_05_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
+		packstr(config_ptr->allow_users_str, buffer);
+		packstr(config_ptr->create_buffer,   buffer);
+		packstr(config_ptr->default_pool,    buffer);
+		packstr(config_ptr->deny_users_str,  buffer);
+		packstr(config_ptr->destroy_buffer,  buffer);
+		pack32(config_ptr->flags,            buffer);
+		packstr(config_ptr->get_sys_state,   buffer);
+		pack64(config_ptr->granularity,      buffer);
+		pack32(config_ptr->pool_cnt,         buffer);
+		for (i = 0; i < config_ptr->pool_cnt; i++) {
+			packstr(config_ptr->pool_ptr[i].name, buffer);
+			pack64(config_ptr->pool_ptr[i].total_space, buffer);
+			pack64(config_ptr->pool_ptr[i].granularity, buffer);
+			pack64(config_ptr->pool_ptr[i].unfree_space, buffer);
+			pack64(config_ptr->pool_ptr[i].used_space, buffer);
+		}
+		pack32(config_ptr->other_timeout,    buffer);
+		packstr(config_ptr->start_stage_in,  buffer);
+		packstr(config_ptr->start_stage_out, buffer);
+		packstr(config_ptr->stop_stage_in,   buffer);
+		packstr(config_ptr->stop_stage_out,  buffer);
+		pack32(config_ptr->stage_in_timeout, buffer);
+		pack32(config_ptr->stage_out_timeout,buffer);
+		pack64(state_ptr->total_space,       buffer);
+		pack64(state_ptr->unfree_space,      buffer);
+		pack64(state_ptr->used_space,        buffer);
+		pack32(config_ptr->validate_timeout, buffer);
+	} else if (protocol_version >= SLURM_16_05_PROTOCOL_VERSION) {
 		packstr(config_ptr->allow_users_str, buffer);
 		packstr(config_ptr->create_buffer,   buffer);
 		packstr(config_ptr->default_pool,    buffer);
@@ -945,6 +973,7 @@ extern bb_alloc_t *bb_alloc_name_rec(bb_state_t *state_ptr, char *name,
 	xassert((bb_alloc->magic = BB_ALLOC_MAGIC));	/* Sets value */
 	bb_alloc->next = state_ptr->bb_ahash[i];
 	state_ptr->bb_ahash[i] = bb_alloc;
+	bb_alloc->array_task_id = NO_VAL;
 	bb_alloc->name = xstrdup(name);
 	bb_alloc->state = BB_STATE_ALLOCATED;
 	bb_alloc->state_time = now;
@@ -1344,28 +1373,39 @@ extern void bb_job_log(bb_state_t *state_ptr, bb_job_t *bb_job)
 	}
 }
 
-/* Make claim against resource limit for a user */
+/* Make claim against resource limit for a user
+ * user_id IN - Owner of burst buffer
+ * bb_size IN - Size of burst buffer
+ * pool IN - Pool containing the burst buffer
+ * state_ptr IN - Global state to update
+ * update_pool_unfree IN - If true, update the pool's unfree space */
 extern void bb_limit_add(uint32_t user_id, uint64_t bb_size, char *pool,
-			 bb_state_t *state_ptr)
+			 bb_state_t *state_ptr, bool update_pool_unfree)
 {
 	burst_buffer_pool_t *pool_ptr;
 	bb_user_t *bb_user;
 	int i;
 
+	/* Update the pool's used_space, plus unfree_space if needed */
 	if (!pool || !xstrcmp(pool, state_ptr->bb_config.default_pool)) {
 		state_ptr->used_space += bb_size;
+		if (update_pool_unfree)
+			state_ptr->unfree_space += bb_size;
 	} else {
 		pool_ptr = state_ptr->bb_config.pool_ptr;
 		for (i = 0; i < state_ptr->bb_config.pool_cnt; i++, pool_ptr++){
 			if (xstrcmp(pool, pool_ptr->name))
 				continue;
 			pool_ptr->used_space += bb_size;
+			if (update_pool_unfree)
+				pool_ptr->unfree_space += bb_size;
 			break;
 		}
 		if (i >= state_ptr->bb_config.pool_cnt)
 			error("%s: Unable to located pool %s", __func__, pool);
 	}
 
+	/* Update user space used */
 	bb_user = bb_find_user_rec(user_id, state_ptr);
 	xassert(bb_user);
 	bb_user->size += bb_size;
@@ -1387,6 +1427,16 @@ extern void bb_limit_rem(uint32_t user_id, uint64_t bb_size, char *pool,
 			error("%s: used_space underflow", __func__);
 			state_ptr->used_space = 0;
 		}
+		if (state_ptr->unfree_space >= bb_size) {
+			state_ptr->unfree_space -= bb_size;
+		} else {
+			/* This will happen if we reload burst buffer state
+			 * after making a claim against resources, but before
+			 * the buffer actually gets created */
+			debug2("%s: unfree_space underflow (%"PRIu64" < %"PRIu64")",
+			        __func__, state_ptr->unfree_space, bb_size);
+			state_ptr->unfree_space = 0;
+		}
 	} else {
 		pool_ptr = state_ptr->bb_config.pool_ptr;
 		for (i = 0; i < state_ptr->bb_config.pool_cnt; i++, pool_ptr++){
@@ -1398,6 +1448,13 @@ extern void bb_limit_rem(uint32_t user_id, uint64_t bb_size, char *pool,
 				error("%s: used_space underflow for pool %s",
 				      __func__, pool);
 				pool_ptr->used_space = 0;
+			}
+			if (pool_ptr->unfree_space >= bb_size) {
+				pool_ptr->unfree_space -= bb_size;
+			} else {
+				error("%s: unfree_space underflow for pool %s",
+				      __func__, pool);
+				pool_ptr->unfree_space = 0;
 			}
 			break;
 		}

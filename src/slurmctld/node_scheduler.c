@@ -606,11 +606,7 @@ extern void deallocate_nodes(struct job_record *job_ptr, bool timeout,
 	if ((agent_args->node_count - down_node_cnt) == 0) {
 		/* Can not wait for epilog completet to release licenses and
 		 * update gang scheduling table */
-		delete_step_records(job_ptr);
-		job_ptr->job_state &= (~JOB_COMPLETING);
-		(void) gs_job_fini(job_ptr);
-		license_job_return(job_ptr);
-		slurm_sched_g_schedule();
+		cleanup_completing(job_ptr);
 	}
 
 	if (agent_args->node_count == 0) {
@@ -840,8 +836,10 @@ extern void build_active_feature_bitmap(struct job_record *job_ptr,
  *	1		= share=yes
  *
  * job_ptr->details->whole_node:
- *	0		= default
- *	1		= exclusive
+ *				  0	= default
+ *	WHOLE_NODE_REQUIRED	= 1	= exclusive
+ *	WHOLE_NODE_USER		= 2	= user
+ *	WHOLE_NODE_MCS		= 3	= mcs
  *
  * Return values:
  *	0 = requires idle nodes
@@ -872,13 +870,13 @@ _resolve_shared_status(struct job_record *job_ptr, uint16_t part_max_share,
 
 	if (cons_res_flag) {
 		if ((job_ptr->details->share_res  == 0) ||
-		    (job_ptr->details->whole_node == 1)) {
+		    (job_ptr->details->whole_node == WHOLE_NODE_REQUIRED)) {
 			job_ptr->details->share_res = 0;
 			return 0;
 		}
 		return 1;
 	} else {
-		job_ptr->details->whole_node = 1;
+		job_ptr->details->whole_node = WHOLE_NODE_REQUIRED;
 		if (part_max_share == 1) { /* partition configured Shared=NO */
 			job_ptr->details->share_res = 0;
 			return 0;
@@ -906,9 +904,9 @@ extern void filter_by_node_owner(struct job_record *job_ptr,
 
 	if ((job_ptr->details->whole_node == 0) &&
 	    (job_ptr->part_ptr->flags & PART_FLAG_EXCLUSIVE_USER))
-		job_ptr->details->whole_node = 2;
+		job_ptr->details->whole_node = WHOLE_NODE_USER;
 
-	if (job_ptr->details->whole_node == 2) {
+	if (job_ptr->details->whole_node == WHOLE_NODE_USER) {
 		/* Need to remove all nodes allocated to any active job from
 		 * any other user */
 		job_iterator = list_iterator_create(job_list);
@@ -1075,6 +1073,9 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
 
 	if (!save_avail_node_bitmap)
 		save_avail_node_bitmap = bit_copy(avail_node_bitmap);
+	bit_not(booting_node_bitmap);
+	bit_and(avail_node_bitmap, booting_node_bitmap);
+	bit_not(booting_node_bitmap);
 	filter_by_node_owner(job_ptr, avail_node_bitmap);
 	if (can_reboot && !test_only)
 		_filter_by_node_feature(job_ptr, node_set_ptr, node_set_size);
@@ -2095,8 +2096,7 @@ static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
 			job_cnt++;
 			if (!kill_pending)
 				continue;
-			rc = job_requeue(0, job_ptr->job_id, -1,
-					 (uint16_t)NO_VAL, true, 0);
+			rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
 			if (rc == SLURM_SUCCESS) {
 				info("preempted job %u has been requeued",
 				     job_ptr->job_id);
@@ -2372,7 +2372,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		selected_node_cnt = bit_set_count(select_bitmap);
 #endif
 		job_ptr->node_cnt_wag = selected_node_cnt;
-	}
+	} else
+		selected_node_cnt = req_nodes;
 
 	memcpy(tres_req_cnt, job_ptr->tres_req_cnt, sizeof(tres_req_cnt));
 	tres_req_cnt[TRES_ARRAY_CPU] =
@@ -2389,9 +2390,17 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 			      tres_req_cnt,
 			      false);
 
-	if (!test_only && (error_code == SLURM_SUCCESS)
-	    && (selected_node_cnt != NO_VAL)
-	    && !acct_policy_job_runnable_post_select(job_ptr, tres_req_cnt)) {
+	if (!test_only && (selected_node_cnt != NO_VAL) &&
+	    !acct_policy_job_runnable_post_select(job_ptr, tres_req_cnt)) {
+		/* If there was an reason we couldn't schedule before hand we
+		 * want to check if an accounting limit was also breached.  If
+		 * it was we want to override the other reason so if we are
+		 * backfilling we don't reserve resources if we don't have to.
+		 */
+		if (error_code != SLURM_SUCCESS)
+			debug2("Replacing scheduling error code for job %u from '%s' to 'Accounting policy'",
+			       job_ptr->job_id,
+			       slurm_strerror(error_code));
 		error_code = ESLURM_ACCOUNTING_POLICY;
 		goto cleanup;
 	}
@@ -3774,9 +3783,7 @@ extern void re_kill_job(struct job_record *job_ptr)
 				if ((job_ptr->node_cnt > 0) &&
 				    ((--job_ptr->node_cnt) == 0)) {
 					last_node_update = time(NULL);
-					delete_step_records(job_ptr);
-					job_ptr->job_state &= (~JOB_COMPLETING);
-					slurm_sched_g_schedule();
+					cleanup_completing(job_ptr);
 					batch_requeue_fini(job_ptr);
 					last_node_update = time(NULL);
 				}
@@ -3803,9 +3810,7 @@ extern void re_kill_job(struct job_record *job_ptr)
 				(node_ptr->comp_job_cnt)--;
 			if ((job_ptr->node_cnt > 0) &&
 			    ((--job_ptr->node_cnt) == 0)) {
-				delete_step_records(job_ptr);
-				job_ptr->job_state &= (~JOB_COMPLETING);
-				slurm_sched_g_schedule();
+				cleanup_completing(job_ptr);
 				batch_requeue_fini(job_ptr);
 				last_node_update = time(NULL);
 			}

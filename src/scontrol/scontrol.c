@@ -633,7 +633,7 @@ _print_aliases (char* node_hostname)
  * _reboot_nodes - issue RPC to have computing nodes reboot when idle
  * RET 0 or a slurm error code
  */
-static int _reboot_nodes(char *node_list)
+static int _reboot_nodes(char *node_list, bool asap)
 {
 	slurm_ctl_conf_t *conf;
 	int rc;
@@ -653,6 +653,8 @@ static int _reboot_nodes(char *node_list)
 
 	bzero(&req, sizeof(reboot_msg_t));
 	req.node_list = node_list;
+	if (asap)
+		req.flags |= REBOOT_FLAGS_ASAP;
 	msg.msg_type = REQUEST_REBOOT_NODES;
 	msg.data = &req;
 
@@ -884,15 +886,21 @@ _process_command (int argc, char *argv[])
 		exit_flag = 1;
 	}
 	else if (strncasecmp (tag, "reboot_nodes", MAX(tag_len, 3)) == 0) {
-		if (argc > 2) {
+		bool asap = false;
+		int argc_offset = 1;
+		if ((argc > 1) && !strcasecmp(argv[1], "ASAP")) {
+			asap = true;
+			argc_offset++;
+		}
+		if ((argc - argc_offset) > 1) {
 			exit_code = 1;
 			fprintf (stderr,
 				 "too many arguments for keyword:%s\n",
 				 tag);
-		} else if (argc < 2) {
-			error_code = _reboot_nodes("ALL");
+		} else if ((argc - argc_offset) < 1) {
+			error_code = _reboot_nodes("ALL", asap);
 		} else
-			error_code = _reboot_nodes(argv[1]);
+			error_code = _reboot_nodes(argv[argc_offset], asap);
 		if (error_code) {
 			exit_code = 1;
 			if (quiet_flag != 1)
@@ -1917,6 +1925,7 @@ scontrol [<OPTION>] [<COMMAND>]                                            \n\
      -h or --help: equivalent to \"help\" command                          \n\
      --hide: equivalent to \"hide\" command                                \n\
      -M or --cluster: equivalent to \"cluster\" command                    \n\
+             NOTE: SlurmDBD must be up.                                    \n\
      -o or --oneliner: equivalent to \"oneliner\" command                  \n\
      -Q or --quiet: equivalent to \"quiet\" command                        \n\
      -v or --verbose: equivalent to \"verbose\" command                    \n\
@@ -1934,6 +1943,7 @@ scontrol [<OPTION>] [<COMMAND>]                                            \n\
      cluster                  cluster to issue commands to.  Default is    \n\
 			      current cluster.  cluster with no name will  \n\
 			      reset to default.                            \n\
+                              NOTE: SlurmDBD must be up.                   \n\
      checkpoint <CH_OP><ID>   perform a checkpoint operation on identified \n\
 			      job or job step \n\
      completing               display jobs in completing state along with  \n\
@@ -1966,7 +1976,7 @@ scontrol [<OPTION>] [<COMMAND>]                                            \n\
      ping                     print status of slurmctld daemons.           \n\
      quiet                    print no messages other than error messages. \n\
      quit                     terminate this command.                      \n\
-     reboot_nodes [<nodelist>]  reboot the nodes when they become idle.    \n\
+     reboot [ASAP] [<nodelist>]  reboot the nodes when they become idle.   \n\
                               By default all nodes are rebooted.           \n\
      reconfigure              re-read configuration files.                 \n\
      release <job_list>       permit specified job to start (see hold)     \n\

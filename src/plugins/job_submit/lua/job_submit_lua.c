@@ -293,6 +293,11 @@ static int _job_rec_field(const struct job_record *job_ptr,
 		lua_pushnumber (L, job_ptr->delay_boot);
 	} else if (!xstrcmp(name, "direct_set_prio")) {
 		lua_pushnumber (L, job_ptr->direct_set_prio);
+	} else if (!xstrcmp(name, "features")) {
+		if (job_ptr->details)
+			lua_pushstring (L, job_ptr->details->features);
+		else
+			lua_pushnil (L);
 	} else if (!xstrcmp(name, "gres")) {
 		lua_pushstring (L, job_ptr->gres);
 	} else if (!xstrcmp(name, "job_id")) {
@@ -1250,6 +1255,14 @@ static void _register_lua_slurm_output_functions (void)
 	lua_setfield (L, -2, "MEM_PER_CPU");
 	lua_pushnumber (L, NICE_OFFSET);
 	lua_setfield (L, -2, "NICE_OFFSET");
+	lua_pushnumber (L, JOB_SHARED_NONE);
+	lua_setfield (L, -2, "JOB_SHARED_NONE");
+	lua_pushnumber (L, JOB_SHARED_OK);
+	lua_setfield (L, -2, "JOB_SHARED_OK");
+	lua_pushnumber (L, JOB_SHARED_USER);
+	lua_setfield (L, -2, "JOB_SHARED_USER");
+	lua_pushnumber (L, JOB_SHARED_MCS);
+	lua_setfield (L, -2, "JOB_SHARED_MCS");
 	lua_pushnumber (L, NO_VAL64);
 	lua_setfield (L, -2, "NO_VAL64");
 	lua_pushnumber (L, NO_VAL);

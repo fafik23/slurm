@@ -399,7 +399,7 @@ static uint16_t _allocate_sc(struct job_record *job_ptr, bitstr_t *core_map,
 	 */
 	avail_cpus = 0;
 	num_tasks = 0;
-	threads_per_core = MIN(threads_per_core, ncpus_per_core);
+	threads_per_core = cr_cpus_per_core(job_ptr->details, node_i);
 
 	for (i = 0; i < sockets; i++) {
 		uint16_t tmp = free_cores[i] * threads_per_core;
@@ -1196,22 +1196,20 @@ static void _cpus_to_use(int *avail_cpus, int rem_cpus, int rem_nodes,
 			 int node_inx, uint16_t cr_type)
 {
 	int resv_cpus;	/* CPUs to be allocated on other nodes */
-	int vpus;
 
 	if (details_ptr->whole_node == 1)	/* Use all CPUs on this node */
 		return;
 
 	resv_cpus = MAX((rem_nodes - 1), 0);
-	resv_cpus *= details_ptr->pn_min_cpus;	/* At least 1 */
+	resv_cpus *= cr_cpus_per_core(details_ptr, node_inx);
+	if (cr_type & CR_SOCKET)
+		resv_cpus *= select_node_record[node_inx].cores;
 	rem_cpus -= resv_cpus;
 
 	if (*avail_cpus > rem_cpus) {
-		vpus = select_node_record[node_inx].vpus;
-		if (cr_type & CR_SOCKET)
-			vpus *= select_node_record[node_inx].cores;
 		*avail_cpus = MAX(rem_cpus, (int)details_ptr->pn_min_cpus);
 		/* Round up CPU count to CPU in allocation unit (e.g. core) */
-		*cpu_cnt = ((int)(*avail_cpus + vpus - 1) / vpus) * vpus;
+		*cpu_cnt = *avail_cpus;
 	}
 }
 
@@ -3459,6 +3457,10 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *node_bitmap,
 			bit_and(free_cores, tmpcore);
 		}
 	}
+
+	if (job_ptr->details->whole_node == 1)
+		_block_whole_nodes(node_bitmap, avail_cores, free_cores);
+
 	cpu_count = _select_nodes(job_ptr, min_nodes, max_nodes, req_nodes,
 				  node_bitmap, cr_node_cnt, free_cores,
 				  node_usage, cr_type, test_only,
@@ -3525,6 +3527,11 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *node_bitmap,
 		bit_copybits(tmpcore, jp_ptr->row[i].row_bitmap);
 		bit_not(tmpcore);
 		bit_and(free_cores, tmpcore);
+
+		if (job_ptr->details->whole_node == 1)
+			_block_whole_nodes(node_bitmap, avail_cores,
+					   free_cores);
+
 		cpu_count = _select_nodes(job_ptr, min_nodes, max_nodes,
 					  req_nodes, node_bitmap, cr_node_cnt,
 					  free_cores, node_usage, cr_type,

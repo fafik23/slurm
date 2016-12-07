@@ -41,8 +41,13 @@
 
 #include "config.h"
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <grp.h>
+#ifdef HAVE_NUMA
+#undef NUMA_VERSION1_COMPATIBILITY
+#include <numa.h>
+#endif
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
@@ -69,6 +74,7 @@
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/msg_aggr.h"
+#include "src/common/node_features.h"
 #include "src/common/node_select.h"
 #include "src/common/plugstack.h"
 #include "src/common/read_config.h"
@@ -108,6 +114,9 @@
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN	64
 #endif
+
+#define MAX_CPU_CNT 1024
+#define MAX_NUMA_CNT 128
 
 typedef struct {
 	int ngids;
@@ -150,8 +159,6 @@ static int  _abort_step(uint32_t job_id, uint32_t step_id);
 static char **_build_env(job_env_t *job_env);
 static void _delay_rpc(int host_inx, int host_cnt, int usec_per_rpc);
 static void _destroy_env(char **env);
-static int  _get_grouplist(char **user_name, uid_t my_uid, gid_t my_gid,
-			   int *ngroups, gid_t **groups);
 static bool _is_batch_job_finished(uint32_t job_id);
 static void _job_limits_free(void *x);
 static int  _job_limits_match(void *x, void *key);
@@ -465,9 +472,11 @@ static int _send_slurmd_conf_lite (int fd, slurmd_conf_t *cf)
 	len = get_buf_offset(buffer);
 	safe_write(fd, &len, sizeof(int));
 	safe_write(fd, get_buf_data(buffer), len);
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 	return (0);
+
  rwfail:
+	FREE_NULL_BUFFER(buffer);
 	return (-1);
 }
 
@@ -1206,6 +1215,174 @@ _check_job_credential(launch_tasks_request_msg_t *req, uid_t uid,
 	slurm_seterrno_ret(ESLURMD_INVALID_JOB_CREDENTIAL);
 }
 
+static inline int _char_to_val(int c)
+{
+	int cl;
+
+	cl = tolower(c);
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	else if (cl >= 'a' && cl <= 'f')
+		return cl + (10 - 'a');
+	else
+		return -1;
+}
+
+static int _str_to_memset(bitstr_t *mask, char *str)
+{
+	int len = strlen(str);
+	const char *ptr = str + len - 1;
+	int base = 0;
+
+	while (ptr >= str) {
+		char val = _char_to_val(*ptr);
+		if (val == (char) -1)
+			return -1;
+		if ((val & 1) && (base < MAX_NUMA_CNT))
+			bit_set(mask, base);
+		base++;
+		if ((val & 2) && (base < MAX_NUMA_CNT))
+			bit_set(mask, base);
+		base++;
+		if ((val & 4) && (base < MAX_NUMA_CNT))
+			bit_set(mask, base);
+		base++;
+		if ((val & 8) && (base < MAX_NUMA_CNT))
+			bit_set(mask, base);
+		base++;
+		len--;
+		ptr--;
+	}
+
+	return 0;
+}
+
+static bitstr_t *_build_cpu_bitmap(uint16_t cpu_bind_type, char *cpu_bind,
+				   int task_cnt_on_node)
+{
+	bitstr_t *cpu_bitmap = NULL;
+	char *tmp_str, *tok, *save_ptr = NULL;
+	int cpu_id;
+
+	if (cpu_bind_type & CPU_BIND_NONE) {
+		/* Return NULL bitmap, sort all NUMA */
+	} else if ((cpu_bind_type & CPU_BIND_RANK) &&
+		   (task_cnt_on_node > 0)) {
+		cpu_bitmap = bit_alloc(MAX_CPU_CNT);
+		if (task_cnt_on_node >= MAX_CPU_CNT)
+			task_cnt_on_node = MAX_CPU_CNT;
+		for (cpu_id = 0; cpu_id < task_cnt_on_node; cpu_id++) {
+			bit_set(cpu_bitmap, cpu_id);
+		}
+	} else if (cpu_bind_type & CPU_BIND_MAP) {
+		cpu_bitmap = bit_alloc(MAX_CPU_CNT);
+		tmp_str = xstrdup(cpu_bind);
+		tok = strtok_r(tmp_str, ",", &save_ptr);
+		while (tok) {
+			if (!xstrncmp(tok, "0x", 2))
+				cpu_id = strtoul(tok + 2, NULL, 16);
+			else
+				cpu_id = strtoul(tok, NULL, 10);
+			if (cpu_id < MAX_CPU_CNT)
+				bit_set(cpu_bitmap, cpu_id);
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp_str);
+	} else if (cpu_bind_type & CPU_BIND_MASK) {
+		cpu_bitmap = bit_alloc(MAX_CPU_CNT);
+		tmp_str = xstrdup(cpu_bind);
+		tok = strtok_r(tmp_str, ",", &save_ptr);
+		while (tok) {
+			if (!xstrncmp(tok, "0x", 2))
+				tok += 2;	/* Skip "0x", always hex */
+			(void) _str_to_memset(cpu_bitmap, tok);
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp_str);
+	}
+	return cpu_bitmap;
+}
+
+static bitstr_t *_xlate_cpu_to_numa_bitmap(bitstr_t *cpu_bitmap)
+{
+	bitstr_t *numa_bitmap = NULL;
+#ifdef HAVE_NUMA
+	struct bitmask *numa_bitmask = NULL;
+	char cpu_str[10240];
+	int i, max_numa;
+
+	if (numa_available() != -1) {
+		bit_fmt(cpu_str, sizeof(cpu_str), cpu_bitmap);
+		numa_bitmask = numa_parse_cpustring(cpu_str);
+		if (numa_bitmask) {
+			max_numa = numa_max_node();
+			numa_bitmap = bit_alloc(MAX_NUMA_CNT);
+			for (i = 0; i <= max_numa; i++) {
+				if (numa_bitmask_isbitset(numa_bitmask, i))
+					bit_set(numa_bitmap, i);
+			}
+			numa_bitmask_free(numa_bitmask);
+		}
+	}
+#endif
+	return numa_bitmap;
+
+}
+
+static bitstr_t *_build_numa_bitmap(uint16_t mem_bind_type, char *mem_bind,
+				    uint16_t cpu_bind_type, char *cpu_bind,
+				    int task_cnt_on_node)
+{
+	bitstr_t *cpu_bitmap = NULL, *numa_bitmap = NULL;
+	char *tmp_str, *tok, *save_ptr = NULL;
+	int numa_id;
+
+	if (mem_bind_type & MEM_BIND_NONE) {
+		/* Return NULL bitmap, sort all NUMA */
+	} else if ((mem_bind_type & MEM_BIND_RANK) &&
+		   (task_cnt_on_node > 0)) {
+		numa_bitmap = bit_alloc(MAX_NUMA_CNT);
+		if (task_cnt_on_node >= MAX_NUMA_CNT)
+			task_cnt_on_node = MAX_NUMA_CNT;
+		for (numa_id = 0; numa_id < task_cnt_on_node; numa_id++) {
+			bit_set(numa_bitmap, numa_id);
+		}
+	} else if (mem_bind_type & MEM_BIND_MAP) {
+		numa_bitmap = bit_alloc(MAX_NUMA_CNT);
+		tmp_str = xstrdup(mem_bind);
+		tok = strtok_r(tmp_str, ",", &save_ptr);
+		while (tok) {
+			if (!xstrncmp(tok, "0x", 2))
+				numa_id = strtoul(tok + 2, NULL, 16);
+			else
+				numa_id = strtoul(tok, NULL, 10);
+			if (numa_id < MAX_NUMA_CNT)
+				bit_set(numa_bitmap, numa_id);
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp_str);
+	} else if (mem_bind_type & MEM_BIND_MASK) {
+		numa_bitmap = bit_alloc(MAX_NUMA_CNT);
+		tmp_str = xstrdup(mem_bind);
+		tok = strtok_r(tmp_str, ",", &save_ptr);
+		while (tok) {
+			if (!xstrncmp(tok, "0x", 2))
+				tok += 2;	/* Skip "0x", always hex */
+			(void) _str_to_memset(numa_bitmap, tok);
+			tok = strtok_r(NULL, ",", &save_ptr);
+		}
+		xfree(tmp_str);
+	} else if (mem_bind_type & MEM_BIND_LOCAL) {
+		cpu_bitmap = _build_cpu_bitmap(cpu_bind_type, cpu_bind,
+					       task_cnt_on_node);
+		if (cpu_bitmap) {
+			numa_bitmap = _xlate_cpu_to_numa_bitmap(cpu_bitmap);
+			FREE_NULL_BITMAP(cpu_bitmap);
+		}
+	}
+
+	return numa_bitmap;
+}
 
 static void
 _rpc_launch_tasks(slurm_msg_t *msg)
@@ -1216,6 +1393,7 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 	uid_t    req_uid;
 	launch_tasks_request_msg_t *req = msg->data;
 	bool     super_user = false;
+	bool     mem_sort = false;
 #ifndef HAVE_FRONT_END
 	bool     first_job_run;
 #endif
@@ -1224,6 +1402,8 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 	hostset_t step_hset = NULL;
 	job_mem_limits_t *job_limits_ptr;
 	int nodeid = 0;
+	bitstr_t *numa_bitmap = NULL;
+
 #ifndef HAVE_FRONT_END
 	/* It is always 0 for front end systems */
 	nodeid = nodelist_find(req->complete_nodelist, conf->node_name);
@@ -1318,6 +1498,19 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 		_wait_for_job_running_prolog(req->job_id);
 	}
 #endif
+
+	if (req->mem_bind_type & MEM_BIND_SORT) {
+		int task_cnt = -1;
+		if (req->tasks_to_launch)
+			task_cnt = (int) req->tasks_to_launch[nodeid];
+		mem_sort = true;
+		numa_bitmap = _build_numa_bitmap(req->mem_bind_type,
+						 req->mem_bind,
+						 req->cpu_bind_type,
+						 req->cpu_bind, task_cnt);
+	}
+	node_features_g_step_config(mem_sort, numa_bitmap);
+	FREE_NULL_BITMAP(numa_bitmap);
 
 	if (req->job_mem_lim || req->step_mem_lim) {
 		step_loc_t step_info;
@@ -2286,10 +2479,20 @@ _rpc_reboot(slurm_msg_t *msg)
 				sp = xstrdup(reboot_program);
 			reboot_msg = (reboot_msg_t *) msg->data;
 			if (reboot_msg && reboot_msg->features) {
-				xstrfmtcat(cmd, "%s %s",
-					   sp, reboot_msg->features);
-			} else
+				info("Node reboot request with features %s being processed",
+				     reboot_msg->features);
+				(void) node_features_g_node_set(
+						reboot_msg->features);
+				if (reboot_msg->features[0]) {
+					xstrfmtcat(cmd, "%s %s",
+						   sp, reboot_msg->features);
+				} else {
+					cmd = xstrdup(sp);
+				}
+			} else {
 				cmd = xstrdup(sp);
+				info("Node reboot request being processed");
+			}
 			if (access(sp, R_OK | X_OK) < 0)
 				error("Cannot run RebootProgram [%s]: %m", sp);
 			else if ((exit_code = system(cmd)))
@@ -3489,33 +3692,6 @@ static void  _rpc_pid2jid(slurm_msg_t *msg)
 	}
 }
 
-/* Creates an array of group ids and stores in it the list of groups
- * that user my_uid belongs to. The pointer to the list is returned
- * in groups and the count of gids in ngroups. The caller must free
- * the group list array pointed to by groups */
-static int
-_get_grouplist(char **user_name, uid_t my_uid, gid_t my_gid,
-	       int *ngroups, gid_t **groups)
-{
-	if (!*user_name)
-		*user_name = uid_to_string(my_uid);
-
-	if (!*user_name) {
-		error("sbcast: Could not find uid %ld", (long)my_uid);
-		return -1;
-	}
-
-	*groups = (gid_t *) xmalloc(*ngroups * sizeof(gid_t));
-
-	if (getgrouplist(*user_name, my_gid, *groups, ngroups) < 0) {
-		*groups = xrealloc(*groups, *ngroups * sizeof(gid_t));
-		getgrouplist(*user_name, my_gid, *groups, ngroups);
-	}
-
-	return 0;
-
-}
-
 /* Validate sbcast credential.
  * NOTE: We can only perform the full credential validation once with
  * Munge without generating a credential replay error
@@ -3817,27 +3993,24 @@ static int _receive_fd(int socket)
 	return fd;
 }
 
-
 static int _file_bcast_register_file(slurm_msg_t *msg,
 				     file_bcast_info_t *key)
 {
 	file_bcast_msg_t *req = msg->data;
 	int fd, flags, rc;
 	int pipe[2];
-	int ngroups = 16;
-	gid_t *groups;
+	gids_t *gids;
 	pid_t child;
 	file_bcast_info_t *file_info;
 
-	if ((rc = _get_grouplist(&req->user_name, key->uid,
-				 key->gid, &ngroups, &groups)) < 0) {
-		error("sbcast: getgrouplist(%u): %m", key->uid);
-		return rc;
+	if (!(gids = _gids_cache_lookup(req->user_name, key->gid))) {
+		error("sbcast: gids_cache_lookup for %s failed", req->user_name);
+		return SLURM_ERROR;
 	}
 
 	if ((rc = container_g_create(key->job_id))) {
 		error("sbcast: container_g_create(%u): %m", key->job_id);
-		xfree(groups);
+		_dealloc_gids(gids);
 		return rc;
 	}
 
@@ -3846,7 +4019,7 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 
 	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pipe) != 0) {
 		error("%s: Failed to open pipe: %m", __func__);
-		xfree(groups);
+		_dealloc_gids(gids);
 		return SLURM_ERROR;
 	}
 
@@ -3858,7 +4031,7 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 		/* get fd back from pipe */
 		close(pipe[0]);
 		waitpid(child, &rc, 0);
-		xfree(groups);
+		_dealloc_gids(gids);
 		if (rc)
 			return WEXITSTATUS(rc);
 
@@ -3879,6 +4052,8 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 
 		return SLURM_SUCCESS;
 	}
+
+	/* child process below here */
 
 	close(pipe[1]);
 
@@ -3907,10 +4082,11 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 	 * Change the code below with caution.
 	\*********************************************************************/
 
-	if (setgroups(ngroups, groups) < 0) {
-		error("sbcast: uid: %u setgroups: %m", key->uid);
+	if (setgroups(gids->ngids, gids->gids) < 0) {
+		error("sbcast: uid: %u setgroups failed: %m", key->uid);
 		exit(errno);
 	}
+	_dealloc_gids(gids);
 
 	if (setgid(key->gid) < 0) {
 		error("sbcast: uid:%u setgid(%u): %m", key->uid, key->gid);

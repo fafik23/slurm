@@ -514,9 +514,9 @@ SlurmUser=slurm
 SlurmctldPort=7002
 SlurmctldTimeout=300
 SlurmdPort=7003
-SlurmdSpoolDir=/var/tmp/slurmd.spool
+SlurmdSpoolDir=/var/spool/slurmd.spool
 SlurmdTimeout=300
-StateSaveLocation=/tmp/slurm.state
+StateSaveLocation=/var/spool/slurm.state
 SwitchType=switch/none
 TreeWidth=50
 #
@@ -703,10 +703,6 @@ Slurmctld(primary/backup) at adevi/adevj are UP/UP
 <pre>
 adev0: scontrol shutdown
 </pre> <p class="footer"><a href="#top">top</a></p>
-
-<h2>OS X, Darwin</h2>
-<p>Build using the following execute line:<br>
-sh configure && MACOSX_DEPLOYMENT_TARGET=10.5 make all</p>
 
 <h2>Testing</h2>
 <p>An extensive test suite is available within the Slurm distribution
