@@ -1,0 +1,29 @@
+sudo: required
+language: c
+addons:
+  mariadb: '10.1'
+  apt:
+    packages:
+    - cmake
+    - libmunge-dev 
+    - liblua5.2-dev
+    - munge
+    - expect
+    - libhwloc-dev
+    - libnuma1
+    - libpam-dev
+    - libhwloc-dev
+    - gdb
+    - heirloom-mailx
+    - valgrind
+compiler:
+  - clang
+  - gcc
+cache: ccache
+before_script:
+  - export PATH=/usr/lib/ccache:$PATH
+script:
+  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
+  - make -j > /dev/null
+  - make -j install > /dev/null
+  - sudo testsuite/test-reg.sh
