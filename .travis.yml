@@ -11,13 +11,13 @@ addons:
     - expect
     - libhwloc-dev
     - libnuma1
-    - libnuma1-dev
+    - libnuma-dev
     - libpam-dev
     - libhwloc-dev
     - gdb
     - valgrind
-    - liblz4-dev
     - liblz4-1
+    - liblz4-dev
     - libfreeipmi-dev
     - man2html
 compiler:
