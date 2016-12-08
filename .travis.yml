@@ -16,8 +16,6 @@ addons:
     - libhwloc-dev
     - gdb
     - valgrind
-    - liblz4-1
-    - liblz4-dev
     - libfreeipmi-dev
     - man2html
 compiler:
