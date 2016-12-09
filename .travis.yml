@@ -21,6 +21,10 @@ addons:
 compiler:
   - clang
   - gcc
+env:
+  - TEST_SET="1"
+  - TEST_SET="2"
+  - TEST_SET="3"
 cache: ccache
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
