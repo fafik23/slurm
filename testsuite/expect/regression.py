@@ -279,7 +279,8 @@ class RepeatingTimer(threading._Timer):
 
 
 def status():
-    print ".",
+    sys.stdout.write('.')
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     sys.exit(main())
