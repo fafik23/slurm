@@ -127,6 +127,9 @@ for {set inx 0} {$inx < $cycle_count} {incr inx} {
 		set exit_code 1
 		break
 	} else {
+		if {(inx % 10) == 0 } {
+			send_user "Iterration $inx pass\n"
+		}
 		incr success_cnt
 	}
 }

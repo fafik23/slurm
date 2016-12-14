@@ -128,8 +128,12 @@ def main(argv=None):
                         % (testlog_name, e)
         else:
             failed_tests.append(test)
-            os.rename(testlog_name, testlog_name+'.failed')
             sys.stdout.write('FAILED!\n')
+            testlog = file(testlog_name, 'r')
+            errlog = testlog.read()
+            print "Log  : \n", errlog
+            testlog.close()
+            os.rename(testlog_name, testlog_name+'.failed')
         sys.stdout.flush()
 
     end_time = time.time()
