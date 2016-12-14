@@ -30,6 +30,7 @@ import os
 import re
 import sys
 import time
+import threading
 from optparse import OptionParser
 from optparse import OptionValueError
 
@@ -106,8 +107,12 @@ def main(argv=None):
 
         if options.time_individual:
             t1 = time.time()
+        timer = RepeatingTimer(10.0, status)
+        timer.daemon = True # Allows program to exit if only the thread is alive
+        timer.start()
         retcode = Popen(('expect', test[2]), shell=False,
                         stdout=testlog, stderr=testlog).wait()
+        timer.cancel()
         if options.time_individual:
             t2 = time.time()
             minutes = int(t2-t1)/60
@@ -262,6 +267,19 @@ class poor_Popen_substitute:
     def wait(self):
         (pid, rc) = os.waitpid(self.pid, 0)
         return rc
+
+class RepeatingTimer(threading._Timer):
+    def run(self):
+        while True:
+            self.finished.wait(self.interval)
+            if self.finished.is_set():
+                return
+            else:
+                self.function(*self.args, **self.kwargs)
+
+
+def status():
+    print ".",
 
 if __name__ == "__main__":
     sys.exit(main())
