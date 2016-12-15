@@ -100,11 +100,11 @@ MpiParams=ports=12000-12999
 ReturnToService=1
 DefMemPerCPU=100
 
-NodeName=test[01-03] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30003]
-NodeName=test[11-13] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30013]
+NodeName=test[01-09] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30009]
+NodeName=test[11-19] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30019]
 
-PartitionName=test      Nodes=test0[1-3],test[11-13] Default=YES MaxTime=168:00:00 State=up  DefMemPerCPU=100
-PartitionName=test2             Nodes=test0[1-3],test[11-13]    MaxTime=168:00:00 State=up DefMemPerCPU=100
+PartitionName=test      Nodes=test0[1-9],test[11-19] Default=YES MaxTime=168:00:00 State=up  DefMemPerCPU=100
+PartitionName=test2             Nodes=test0[1-9],test[11-19]    MaxTime=168:00:00 State=up DefMemPerCPU=100
 
 EOL
 
@@ -126,7 +126,7 @@ sleep 1
 /tmp/slurm/bin/sacctmgr -i add cluster test
 /tmp/slurm/sbin/slurmctld
 sleep 1
-scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
+scontrol show hostname test[01-09,11-19]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
 sinfo -vvvv
 #valgrind --leak-check=yes sinfo
