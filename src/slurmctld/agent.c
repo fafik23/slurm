@@ -1003,6 +1003,21 @@ static void *_thread_per_group_rpc(void *args)
 			rc = SLURM_SUCCESS;
 		}
 
+		if ((msg_type == RESPONSE_RESOURCE_ALLOCATION) &&
+		    (rc == SLURM_COMMUNICATIONS_CONNECTION_ERROR)) {
+			resource_allocation_response_msg_t *msg_ptr =
+				task_ptr->msg_args_ptr;
+			uint32_t job_id = msg_ptr->job_id;
+			info("Killing interactive job %u: %s",
+			     job_id, slurm_strerror(rc));
+			thread_state = DSH_FAILED;
+			lock_slurmctld(job_write_lock);
+			job_complete(job_id, 0, false, false,
+				     _wif_status());
+			unlock_slurmctld(job_write_lock);
+			continue;
+		}
+
 		switch (rc) {
 		case SLURM_SUCCESS:
 			/* debug("agent processed RPC to node %s", */
