@@ -76,7 +76,6 @@ AccountingStorageHost=localhost
 SchedulerType=sched/backfill
 SelectType=select/cons_res
 SelectTypeParameters=CR_CPU_Memory
-SchedulerParameters = default_queue_depth=2000,partition_job_depth=0,sched_interval=20,defer,bf_window=10080,bf_max_job_test=1000,bf_interval=45,bf_resolution=300,no_backup_scheduling,defer
 
 PriorityType=priority/multifactor
 
