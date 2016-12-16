@@ -127,7 +127,7 @@ sleep 1
 sleep 1
 scontrol show hostname test[01-09,11-19]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
 
-sinfo -vvvv
+#sinfo -vvvv
 #valgrind --leak-check=yes sinfo
 
 cat > ./testsuite/expect/globals.local <<EOL
@@ -137,10 +137,11 @@ EOL
 
 cd ./testsuite/expect/
 ./regression.py -t -i $TEST_SET -e '1.26' -k
+rc=$?
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
 
 done
 
-
+exit $rc
