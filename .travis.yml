@@ -30,7 +30,7 @@ env:
 cache: ccache
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
-  - mount -t tmpfs -o size=1024m tmpfs /tmp
+  - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
