@@ -99,8 +99,8 @@ MpiParams=ports=12000-12999
 ReturnToService=1
 DefMemPerCPU=100
 
-NodeName=test[01-09] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30009]
-NodeName=test[11-19] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30019]
+NodeName=test[01-09] NodeHostName=localhost CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30009]
+NodeName=test[11-19] NodeHostName=localhost CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30019]
 
 PartitionName=test      Nodes=test0[1-9],test[11-19] Default=YES MaxTime=168:00:00 State=up  DefMemPerCPU=100
 PartitionName=test2             Nodes=test0[1-9],test[11-19]    MaxTime=168:00:00 State=up DefMemPerCPU=100
@@ -136,7 +136,7 @@ set max_job_delay 100
 EOL
 
 cd ./testsuite/expect/
-./regression.py -t -i $TEST_SET -e '1.26' -k
+./regression.py -t -i $TEST_SET -k
 rc=$?
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
