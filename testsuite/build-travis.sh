@@ -45,7 +45,7 @@ if [[ "$SLURMDB_VER" != "$TRAVIS_BRANCH" ]] && [ $MIGRATION -eq 1 ] ; then
 	./configure --enable-multiple-slurmd --prefix=/tmp/slurm_db/ > /dev/null
 	make -j > /dev/null
 	make -j install > /dev/null
-	ln -s /tmp/slurm/etc /tmp/slurm_d/etc
+	ln -s /tmp/slurm/etc /tmp/slurm_db/etc
 else
 	ln -s /tmp/slurm /tmp/slurm_db
 fi
