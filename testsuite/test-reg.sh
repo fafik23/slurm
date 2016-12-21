@@ -76,7 +76,6 @@ AccountingStorageHost=localhost
 SchedulerType=sched/backfill
 SelectType=select/cons_res
 SelectTypeParameters=CR_CPU_Memory
-SchedulerParameters = default_queue_depth=2000,partition_job_depth=0,sched_interval=20,defer,bf_window=10080,bf_max_job_test=1000,bf_interval=45,bf_resolution=300,no_backup_scheduling,defer
 
 PriorityType=priority/multifactor
 
@@ -96,22 +95,16 @@ UsePAM=0
 SwitchType=switch/none
 MpiDefault=none
 MpiParams=ports=12000-12999
-PropagateResourceLimitsExcept=MEMLOCK,STACK
-EnforcePartLimits=ANY
 
 ReturnToService=1
 DefMemPerCPU=100
 
-NodeName=test[01-03] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30003]
-NodeName=test[11-13] NodeHostName=localhost Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30013]
+NodeName=test[01-09] NodeHostName=localhost CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30001-30009]
+NodeName=test[11-19] NodeHostName=localhost CPUs=2 Sockets=1 CoresPerSocket=2 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN Weight=120 Port=[30011-30019]
 
-PartitionName=test      Nodes=test0[1-3],test[11-13] Default=YES MaxTime=168:00:00      State=up  Priority=30 Shared=FORCE:1 DefMemPerCPU=100
-PartitionName=test2             Nodes=test0[1-3],test[11-13]    MaxTime=168:00:00       MaxNodes=3 State=up  Priority=30 Shared=FORCE:1 DefMemPerCPU=100
+PartitionName=test      Nodes=test0[1-9],test[11-19] Default=YES MaxTime=168:00:00 State=up  DefMemPerCPU=100
+PartitionName=test2             Nodes=test0[1-9],test[11-19]    MaxTime=168:00:00 State=up DefMemPerCPU=100
 
-EOL
-
-cat > ~/.mailrc <<EOL
-set smtp=smtp://mail.schedmd.com:25
 EOL
 
 sudo mysql -uroot <<EOL  
@@ -123,29 +116,29 @@ EOL
 /usr/sbin/create-munge-key
 service munge start
 
-/tmp/slurm/sbin/slurmdbd
+/tmp/slurm_db/sbin/slurmdbd
 sleep 1
-/tmp/slurm/bin/sacctmgr -i add cluster test
-/tmp/slurm/sbin/slurmctld
+/tmp/slurm_db/bin/sacctmgr -i add cluster test
+
+/tmp/slurm_ctl/sbin/slurmctld
 sleep 1
-scontrol show hostname test[01-03,11-13]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
+/tmp/slurm_cli/bin/scontrol show hostname test[01-09,11-19]|xargs -n1 -IXXX  /tmp/slurm_d/sbin/slurmd -N XXX
 
-sinfo -vvvv
-valgrind --leak-check=yes sinfo
+#sinfo -vvvv
+#valgrind --leak-check=yes sinfo
 
-#cat > ./testsuite/expect/globals.local <<EOL
-#set slurm_dir     "/tmp/slurm/"
-#set max_job_delay 100
-#EOL
+cat > ./testsuite/expect/globals.local <<EOL
+set slurm_dir     "/tmp/slurm_cli/"
+set max_job_delay 100
+EOL
 
-#cd ./testsuite/expect/
-#./regression.py -t -i '1.*' -e '1.26'
+cd ./testsuite/expect/
+./regression.py -t -i $TEST_SET -k
+rc=$?
 for f in $(ls /tmp/core.* 2>/dev/null) ; do
     ff=$(basename $f |awk -F"." '{print $2}')
     gdb $ff $f -ex "thread apply all bt" -ex "set pagination 0" -batch
-#    echo "Send $f via email"
-#    echo "CoreDump $f" |  mailx -s "CoreDump $TRAVIS_JOB_NUMBER" -a $f bart@schedmd.com 
 
 done
 
-
+exit $rc
