@@ -2,6 +2,10 @@
 
 MIGRATION=${MIGRATION-0}
 
+
+if [ $MIGRATION -eq 1 ] ; then
+	git fetch
+fi
 if [[ "$SLURMD_VER" != "$TRAVIS_BRANCH" ]] && [ $MIGRATION -eq 1 ] ; then
 	git checkout $SLURMD_VER
 	echo "Compile $SLURM for Slurmd"
@@ -41,7 +45,7 @@ if [[ "$SLURMDB_VER" != "$TRAVIS_BRANCH" ]] && [ $MIGRATION -eq 1 ] ; then
 	./configure --enable-multiple-slurmd --prefix=/tmp/slurm_db/ > /dev/null
 	make -j > /dev/null
 	make -j install > /dev/null
-	ln -s /tmp/slurm/etc /tmp/slurm_d/etc
+	ln -s /tmp/slurm/etc /tmp/slurm_db/etc
 else
 	ln -s /tmp/slurm /tmp/slurm_db
 fi
