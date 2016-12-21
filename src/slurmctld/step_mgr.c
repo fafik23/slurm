@@ -516,6 +516,12 @@ int job_step_signal(uint32_t job_id, uint32_t step_id,
 		return ESLURM_INVALID_JOB_ID;
 	}
 
+	if ((job_ptr->user_id != uid) && !validate_slurm_user(uid)) {
+		error("Security violation, JOB_CANCEL RPC from uid %d",
+		      uid);
+		return ESLURM_USER_ID_MISSING;
+	}
+
 	if (IS_JOB_FINISHED(job_ptr)) {
 		rc = ESLURM_ALREADY_DONE;
 		if (signal != SIG_NODE_FAIL)
@@ -526,12 +532,6 @@ int job_step_signal(uint32_t job_id, uint32_t step_id,
 			job_state_string(job_ptr->job_state));
 		if (signal != SIG_NODE_FAIL)
 			return ESLURM_TRANSITION_STATE_NO_UPDATE;
-	}
-
-	if ((job_ptr->user_id != uid) && (uid != 0) && (uid != getuid())) {
-		error("Security violation, JOB_CANCEL RPC from uid %d",
-		      uid);
-		return ESLURM_USER_ID_MISSING;
 	}
 
 	step_ptr = find_step_record(job_ptr, step_id);
@@ -782,7 +782,7 @@ int job_step_complete(uint32_t job_id, uint32_t step_id, uid_t uid,
 		return ESLURM_INVALID_JOB_ID;
 	}
 
-	if ((job_ptr->user_id != uid) && (uid != 0) && (uid != getuid())) {
+	if ((job_ptr->user_id != uid) && !validate_slurm_user(uid)) {
 		error("Security violation, JOB_COMPLETE RPC from uid %d",
 		      uid);
 		return ESLURM_USER_ID_MISSING;
@@ -2533,7 +2533,8 @@ step_create(job_step_create_request_msg_t *step_specs,
 			info("_step_create: step time greater than partition's "
 			     "(%u > %u)", step_specs->time_limit,
 			     job_ptr->part_ptr->max_time);
-			delete_step_record (job_ptr, step_ptr->step_id);
+			delete_step_record(job_ptr, step_ptr->step_id);
+			xfree(step_node_list);
 			return ESLURM_INVALID_TIME_LIMIT;
 		}
 		step_ptr->time_limit = step_specs->time_limit;
@@ -3764,13 +3765,19 @@ resume_job_step(struct job_record *job_ptr)
 /*
  * dump_job_step_state - dump the state of a specific job step to a buffer,
  *	load with load_step_state
- * IN job_ptr - pointer to job for which information is to be dumpped
- * IN step_ptr - pointer to job step for which information is to be dumpped
+ * IN step_ptr - pointer to job step for which information is to be dumped
  * IN/OUT buffer - location to store data, pointers automatically advanced
  */
-extern void dump_job_step_state(struct job_record *job_ptr,
-				struct step_record *step_ptr, Buf buffer)
+extern int dump_job_step_state(void *x, void *arg)
 {
+	struct step_record *step_ptr = (struct step_record *) x;
+	Buf buffer = (Buf) arg;
+
+	if (step_ptr->state < JOB_RUNNING)
+		return 0;
+
+	pack16((uint16_t) STEP_FLAG, buffer);
+
 	pack32(step_ptr->step_id, buffer);
 	pack16(step_ptr->cyclic_alloc, buffer);
 	pack32(step_ptr->srun_pid, buffer);
@@ -3817,7 +3824,8 @@ extern void dump_job_step_state(struct job_record *job_ptr,
 
 	packstr(step_ptr->gres, buffer);
 	(void) gres_plugin_step_state_pack(step_ptr->gres_list, buffer,
-					   job_ptr->job_id, step_ptr->step_id,
+					   step_ptr->job_ptr->job_id,
+					   step_ptr->step_id,
 					   SLURM_PROTOCOL_VERSION);
 
 	pack16(step_ptr->batch_step, buffer);
@@ -3833,6 +3841,8 @@ extern void dump_job_step_state(struct job_record *job_ptr,
 				     SLURM_PROTOCOL_VERSION);
 	packstr(step_ptr->tres_alloc_str, buffer);
 	packstr(step_ptr->tres_fmt_alloc_str, buffer);
+
+	return 0;
 }
 
 /*
@@ -4181,8 +4191,8 @@ extern void step_checkpoint(void)
 			ckpt_req.job_id = job_ptr->job_id;
 			ckpt_req.step_id = SLURM_BATCH_SCRIPT;
 			ckpt_req.image_dir = NULL;
-			job_checkpoint(&ckpt_req, getuid(), -1,
-				       (uint16_t)NO_VAL);
+			job_checkpoint(&ckpt_req, slurmctld_conf.slurm_user_id,
+				       -1, (uint16_t)NO_VAL);
 			job_ptr->ckpt_time = now;
 			last_job_update = now;
 			continue; /* ignore periodic step ckpt */
@@ -4367,6 +4377,7 @@ extern int update_step(step_update_request_msg_t *req, uid_t uid)
 {
 	struct job_record *job_ptr;
 	struct step_record *step_ptr = NULL;
+	struct step_record *step2_ptr = NULL;
 	ListIterator step_iterator;
 	int mod_cnt = 0;
 	bool new_step = 0;
@@ -4427,14 +4438,14 @@ extern int update_step(step_update_request_msg_t *req, uid_t uid)
 	 * any steps with any time limit */
 	if (req->step_id == NO_VAL) {
 		step_iterator = list_iterator_create(job_ptr->step_list);
-		while ((step_ptr = (struct step_record *)
+		while ((step2_ptr = (struct step_record *)
 				   list_next (step_iterator))) {
-			if (step_ptr->state != JOB_RUNNING)
+			if (step2_ptr->state != JOB_RUNNING)
 				continue;
-			step_ptr->time_limit = req->time_limit;
+			step2_ptr->time_limit = req->time_limit;
 			mod_cnt++;
 			info("Updating step %u.%u time limit to %u",
-			     req->job_id, step_ptr->step_id, req->time_limit);
+			     req->job_id, step2_ptr->step_id, req->time_limit);
 		}
 		list_iterator_destroy (step_iterator);
 	} else {

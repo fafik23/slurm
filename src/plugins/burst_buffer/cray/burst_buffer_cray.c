@@ -698,7 +698,7 @@ static bb_job_t *_get_bb_job(struct job_record *job_ptr)
 }
 
 /* At slurmctld start up time, for every currently active burst buffer,
- * update that user's limit */
+ * update that user's limit. Also log every recovered buffer */
 static void _apply_limits(void)
 {
 	bool emulate_cray = false;
@@ -711,6 +711,9 @@ static void _apply_limits(void)
 	for (i = 0; i < BB_HASH_SIZE; i++) {
 		bb_alloc = bb_state.bb_ahash[i];
 		while (bb_alloc) {
+			info("Recovered buffer Name:%s User:%u Pool:%s Size:%"PRIu64,
+			     bb_alloc->name, bb_alloc->user_id,
+			     bb_alloc->pool, bb_alloc->size);
 			_set_assoc_mgr_ptrs(bb_alloc);
 			bb_limit_add(bb_alloc->user_id, bb_alloc->size,
 				     bb_alloc->pool, &bb_state, emulate_cray);
@@ -859,6 +862,23 @@ static int _open_part_state_file(char **state_file)
 	return state_fd;
 }
 
+/* Return true if the burst buffer name is that of a job (i.e. numeric) and
+ * and that job is complete. Otherwise return false. */
+static bool _is_complete_job(char *name)
+{
+	char *end_ptr = NULL;
+	uint32_t job_id = 0;
+	struct job_record *job_ptr;
+
+	if (name && (name[0] >='0') && (name[0] <='9')) {
+		job_id = strtol(name, &end_ptr, 10);
+		job_ptr = find_job_record(job_id);
+		if (!job_ptr || IS_JOB_COMPLETED(job_ptr))
+			return true;
+	}
+	return false;
+}
+
 /* Recover saved burst buffer state and use it to preserve account, partition,
  * and QOS information for persistent burst buffers. */
 static void _recover_bb_state(void)
@@ -939,7 +959,12 @@ static void _recover_bb_state(void)
 			pool = xstrdup(bb_state.bb_config.default_pool);
 		}
 
-		if (bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY) {
+		if ((bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY) &&
+		    _is_complete_job(name)) {
+			info("%s, Ignoring burst buffer state for completed job %s",
+			     __func__, name);
+			bb_alloc = NULL;
+		} else if (bb_state.bb_config.flags & BB_FLAG_EMULATE_CRAY) {
 			bb_alloc = bb_alloc_name_rec(&bb_state, name, user_id);
 			bb_alloc->id = id;
 			last_persistent_id = MAX(last_persistent_id, id);
@@ -1276,14 +1301,16 @@ static void _load_state(bool init_config)
 static int _write_nid_file(char *file_name, char *node_list, uint32_t job_id)
 {
 #if defined(HAVE_NATIVE_CRAY)
-	char *tmp, *sep, *tok, *save_ptr = NULL, *buf = NULL;
-	int i, rc;
+	char *tmp, *sep, *buf = NULL;
+	int i, j, rc;
 
 	xassert(file_name);
 	tmp = xstrdup(node_list);
+	/* Remove any trailing "]" */
 	sep = strrchr(tmp, ']');
 	if (sep)
 		sep[0] = '\0';
+	/* Skip over "nid[" or "nid" */
 	sep = strchr(tmp, '[');
 	if (sep) {
 		sep++;
@@ -1292,21 +1319,32 @@ static int _write_nid_file(char *file_name, char *node_list, uint32_t job_id)
 		for (i = 0; !isdigit(sep[0]) && sep[0]; i++)
 			sep++;
 	}
-	tok = strtok_r(sep, ",", &save_ptr);
-	while (tok) {
-		xstrfmtcat(buf, "%s\n", tok);
-		tok = strtok_r(NULL, ",", &save_ptr);
+	/* Copy numeric portion */
+	buf = xmalloc(strlen(sep) + 1);
+	for (i = 0, j = 0; sep[i]; i++) {
+		/* Skip leading zeros */
+		if ((sep[i] == '0') && isdigit(sep[i+1]))
+			continue;
+		/* Copy significant digits and separator */
+		while (sep[i]) {
+			buf[j++] = sep[i];
+			if ((sep[i] == '-') || (sep[i] == ','))
+				break;
+			i++;
+		}
+		if (!sep[i])
+			break;
 	}
 	xfree(tmp);
 
-	if (buf) {
+	if (buf[0]) {
 		rc = _write_file(file_name, buf);
-		xfree(buf);
 	} else {
 		error("%s: job %u has node list without numeric component (%s)",
 		      __func__, job_id, node_list);
 		rc = EINVAL;
 	}
+	xfree(buf);
 	return rc;
 #else
 	char *tok, *buf = NULL;

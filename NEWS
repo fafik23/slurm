@@ -32,6 +32,18 @@ documents those changes that are of interest to users and administrators.
  -- Add support for SALLOC_CONSTRAINT, SBATCH_CONSTRAINT and SLURM_CONSTRAINT
     environment variables to set default constraints for salloc, sbatch and
     srun commands respectively.
+ -- Provide limited support for the MemSpecLimit configuration parameter without
+    the task/cgroup plugin.
+ -- node_features/knl_generic - Add capability to detected Uncorrectable Memory
+    Errors (UME) and if detected then log the event in all job and step stderr
+    with a message of the form:
+    error: *** STEP 1.2 ON tux1 UNCORRECTABLE MEMORY ERROR AT 2016-12-14T09:09:37 ***
+ -- Add SLURM_JOB_GID to TaskProlog environment.
+ -- burst_buffer/cray - Remove leading zeros from node ID lists passed to
+    dw_wlm_cli program.
+ -- Add "Partitions" field to "scontrol show node" output.
+ -- Remove sched/wiki and sched/wiki2 plugins and associated code.
+ -- Remove SchedulerRootFilter option and slurm_get_root_filter() API call.
 
 * Changes in Slurm 17.02.0pre3
 ==============================
@@ -162,6 +174,26 @@ documents those changes that are of interest to users and administrators.
  -- Added infrastructure for setting up federations in database and establishing
     connections between federation clusters.
 
+* Changes in Slurm 16.05.8
+==========================
+ -- Remove StoragePass from being printed out in the slurmdbd log at debug2
+    level.
+ -- Defer PATH search for task program until launch in slurmstepd.
+ -- Modify regression test1.89 to avoid leaving vestigial job. Also reduce
+    logging to reduce likelyhood of Expect buffer overflow.
+ -- Do not PATH search for mult-prog launches if LaunchParamters=test_exec is
+    enabled.
+ -- Fix for possible infinite loop in select/cons_res plugin when trying to
+    satisfy a job's ntasks_per_core or socket specification.
+ -- If job is held for bad constraints make it so once updated the job doesn't
+    go into JobAdminHeld.
+ -- sched/backfill - Fix logic to reserve resources for jobs that require a
+    node reboot (i.e. to change KNL mode) in order to start.
+ -- When unpacking a node or front_end record from state and the protocol
+    version is lower than the min version, set it to the min.
+ -- Remove redundant lookup for part_ptr when updating a reservation's nodes.
+ -- Fix memory and file descriptor leaks in slurmd daemon's sbcast logic.
+
 * Changes in Slurm 16.05.7
 ==========================
  -- Fix issue in the priority/multifactor plugin where on a slurmctld restart,
@@ -234,9 +266,16 @@ documents those changes that are of interest to users and administrators.
  -- Fix parsing in regression test1.92 for some prompts.
  -- sbcast - use slurmd's gid cache rather than a separate lookup.
  -- slurmd - return error if setgroups() call fails in _drop_privileges().
- -- Fix possible memory corruption if a job is using GRES and changing size.
  -- Remove error messages about gres counts changing when a job is resized on
     a slurmctld restart or reconfig, as they aren't really error messages.
+ -- Fix possible memory corruption if a job is using GRES and changing size.
+ -- jobcomp/elasticsearch - fix printf format for a value on 32-bit builds.
+ -- task/cgroup - Change error message if CPU binding can not take place to
+    better identify the root cause of the problem.
+ -- Fix issue where task/cgroup would not always honor --cpu_bind=threads.
+ -- Fix race condition in with getgrouplist() in slurmd that can lead to
+    user accounts being granted access to incorrect group memberships during
+    job launch.
 
 * Changes in Slurm 16.05.6
 ==========================

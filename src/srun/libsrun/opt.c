@@ -1985,8 +1985,10 @@ static void _opt_args(int argc, char **argv)
 		}
 	}
 #else
+	/* may exit() if an error with the multi_prog script */
 	(void) launch_g_handle_multi_prog_verify(command_pos);
-	if (test_exec || opt.bcast_flag) {
+
+	if (!opt.multi_prog && (test_exec || opt.bcast_flag)) {
 		if ((fullpath = search_path(opt.cwd, opt.argv[command_pos],
 					    false, X_OK, true))) {
 			xfree(opt.argv[command_pos]);
@@ -2935,12 +2937,17 @@ static void _help(void)
 "      --ntasks-per-socket=n   number of tasks to invoke on each socket\n");
 	conf = slurm_conf_lock();
 	if (conf->task_plugin != NULL
-	    && xstrcasecmp(conf->task_plugin, "task/affinity") == 0) {
+	    && ((strstr(conf->task_plugin, "affinity"))
+		|| (strstr(conf->task_plugin, "cgroup")))) {
 		printf(
 "      --cpu_bind=             Bind tasks to CPUs\n"
 "                              (see \"--cpu_bind=help\" for options)\n"
 "      --hint=                 Bind tasks according to application hints\n"
-"                              (see \"--hint=help\" for options)\n"
+"                              (see \"--hint=help\" for options)\n");
+	}
+	if (conf->task_plugin != NULL
+	    && (strstr(conf->task_plugin, "affinity"))) {
+		printf(
 "      --mem_bind=             Bind memory to locality domains (ldom)\n"
 "                              (see \"--mem_bind=help\" for options)\n");
 	}

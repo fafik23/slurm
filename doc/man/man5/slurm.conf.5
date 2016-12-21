@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "June 2016" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "December 2016" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -655,9 +655,6 @@ including state, job ids and allocated nodes counter.
 .TP
 \fBTriggers\fR
 Slurmctld triggers
-.TP
-\fBWiki\fR
-Sched/wiki and wiki2 communications
 .RE
 
 .TP
@@ -1711,9 +1708,6 @@ scheduling be enabled (i.e, "PreemptMode=SUSPEND,GANG").
 .TP 12
 \fBOFF\fR
 is the default value and disables job preemption and gang scheduling.
-This is the only option compatible with \fBSchedulerType=sched/wiki\fR
-or \fBSchedulerType=sched/wiki2\fR (used by Maui and Moab respectively,
-which provide their own job preemption functionality).
 .TP
 \fBCANCEL\fR
 always cancel the job.
@@ -1884,9 +1878,8 @@ Cleared on the first day of each year at time 00:00.
 \fBPriorityType\fR
 This specifies the plugin to be used in establishing a job's scheduling
 priority. Supported values are "priority/basic" (jobs are prioritized
-by order of arrival, also suitable for sched/wiki and sched/wiki2),
-"priority/multifactor" (jobs are prioritized based upon size, age,
-fair\-share of allocation, etc).
+by order of arrival), "priority/multifactor" (jobs are prioritized based
+upon size, age, fair\-share of allocation, etc).
 Also see \fBPriorityFlags\fR for configuration options.
 The default value is "priority/basic".
 
@@ -2829,21 +2822,6 @@ The default value is 60 seconds.
 .RE
 
 .TP
-\fBSchedulerPort\fR
-The port number on which slurmctld should listen for connection requests.
-This value is only used by the Maui Scheduler (see \fBSchedulerType\fR).
-The default value is 7321.
-
-.TP
-\fBSchedulerRootFilter\fR
-Identifies whether or not \fBRootOnly\fR partitions should be filtered from
-any external scheduling activities. If set to 0, then \fBRootOnly\fR partitions
-are treated like any other partition. If set to 1, then \fBRootOnly\fR
-partitions are exempt from any external scheduling activities. The
-default value is 1. Currently only used by the built\-in backfill
-scheduling module "sched/backfill" (see \fBSchedulerType\fR).
-
-.TP
 \fBSchedulerTimeSlice\fR
 Number of seconds in each time slice when gang scheduling is enabled
 (\fBPreemptMode=SUSPEND,GANG\fR).
@@ -2884,12 +2862,6 @@ priority job.
 \fBsched/hold\fR
 To hold all newly arriving jobs if a file "/etc/slurm.hold"
 exists otherwise use the built\-in FIFO scheduler
-.TP
-\fBsched/wiki\fR
-For the Wiki interface to the Maui Scheduler
-.TP
-\fBsched/wiki2\fR
-For the Wiki interface to the Moab Cluster Suite
 .RE
 
 .TP
@@ -3951,12 +3923,16 @@ Also see \fBFeature\fR.
 
 .TP
 \fBMemSpecLimit\fR
-Limit on combined real memory allocation for compute node daemons
-(slurmd, slurmstepd), in megabytes. This memory is not available to job
-allocations. The daemons won't be killed when they exhaust the memory allocation
-(ie. the OOM Killer is disabled for the daemon's memory cgroup). This option has
-no effect unless cgroup job confinement is also configured
-(\fBTaskPlugin=task/cgroup\fR with \fBConstrainRAMSpace=yes\fR in cgroup.conf).
+Amount of memory, in megabytes, reserved for system use and not available
+for user allocations.
+If the task/cgroup plugin is configured and that plugin constrains memory
+allocations (i.e. \fBTaskPlugin=task/cgroup\fR in slurm.conf, plus
+\fBConstrainRAMSpace=yes\fR in cgroup.conf), then Slurm compute node daemons
+(slurmd plus slurmstepd) will be allocated the specified memory limit.
+The daemons will not be killed if they exhaust the memory allocation
+(ie. the Out-Of-Memory Killer is disabled for the daemon's memory cgroup).
+If the task/cgroup plugin is not configured, the specified memory will only be
+unavailable for user allocations.
 
 .TP
 \fBPort\fR
@@ -4877,7 +4853,7 @@ Available in \fBEpilogSlurmctld\fR only.
 .TP
 \fBSLURM_JOB_GID\fR
 Group ID of the job's owner.
-Available in \fBPrologSlurmctld\fR and \fBEpilogSlurmctld\fR only.
+Available in \fBPrologSlurmctld\fR, \fBEpilogSlurmctld\fR and \fBTaskProlog\fR only.
 .TP
 \fBSLURM_JOB_GPUS\fR
 GPU IDs allocated to the job (if any).
@@ -5312,4 +5288,4 @@ details.
 \fBgetrlimit\fR (2), \fBgres.conf\fR(5), \fBgroup\fR (5), \fBhostname\fR (1),
 \fBscontrol\fR(1), \fBslurmctld\fR(8), \fBslurmd\fR(8),
 \fBslurmdbd\fR(8), \fBslurmdbd.conf\fR(5), \fBsrun(1)\fR,
-\fBspank(8)\fR, \fBsyslog\fR (2), \fBtopology.conf\fR(5), \fBwiki.conf\fR(5)
+\fBspank(8)\fR, \fBsyslog\fR (2), \fBtopology.conf\fR(5)

@@ -158,17 +158,12 @@ strong_alias(bit_get_pos_num,	slurm_bit_get_pos_num);
  *   nbits (IN)		valid bits in new bitstring, initialized to all clear
  *   RETURN		new bitstring
  */
-bitstr_t *
-bit_alloc(bitoff_t nbits)
+bitstr_t *bit_alloc(bitoff_t nbits)
 {
 	bitstr_t *new;
 
 	_assert_valid_size(nbits);
-	new = (bitstr_t *)xmalloc(_bitstr_words(nbits) * sizeof(bitstr_t));
-	if (!new) {
-		log_oom(__FILE__, __LINE__, __func__);
-		abort();
-	}
+	new = xmalloc(_bitstr_words(nbits) * sizeof(bitstr_t));
 
 	_bitstr_magic(new) = BITSTR_MAGIC;
 	_bitstr_bits(new) = nbits;
@@ -181,18 +176,13 @@ bit_alloc(bitoff_t nbits)
  *   nbits (IN)		valid bits in new bitstr
  *   RETURN		new bitstring
  */
-bitstr_t *
-bit_realloc(bitstr_t *b, bitoff_t nbits)
+bitstr_t *bit_realloc(bitstr_t *b, bitoff_t nbits)
 {
 	bitstr_t *new = NULL;
 
 	_assert_bitstr_valid(b);
 	_assert_valid_size(nbits);
 	new = xrealloc(b, _bitstr_words(nbits) * sizeof(bitstr_t));
-	if (!new) {
-		log_oom(__FILE__, __LINE__, __func__);
-		abort();
-	}
 
 	_assert_bitstr_valid(new);
 	_bitstr_bits(new) = nbits;
@@ -1007,22 +997,9 @@ bit_pick_cnt(bitstr_t *b, bitoff_t nbits)
 }
 
 /*
- * XXX the relationship between stdint types and "unsigned [long] long"
- * types is architecture/compiler dependent, so this may have to be tweaked.
- */
-#ifdef	USE_64BIT_BITSTR
-#define BITSTR_RANGE_FMT	"%"PRIu64"-%"PRIu64","
-#define BITSTR_SINGLE_FMT	"%"PRIu64","
-#else
-#define BITSTR_RANGE_FMT	"%u-%u,"
-#define BITSTR_SINGLE_FMT	"%u,"
-#endif
-
-/*
  * Convert to range string format, e.g. 0-5,42
  */
-char *
-bit_fmt(char *str, int32_t len, bitstr_t *b)
+char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 {
 	int32_t count = 0, ret, word;
 	bitoff_t start, bit;
@@ -1047,11 +1024,12 @@ bit_fmt(char *str, int32_t len, bitstr_t *b)
 			if (bit == start)	/* add single bit position */
 				ret = snprintf(str+strlen(str),
 				               len-strlen(str),
-				               BITSTR_SINGLE_FMT, start);
+				               "%"BITSTR_FMT",", start);
 			else 			/* add bit position range */
 				ret = snprintf(str+strlen(str),
 				               len-strlen(str),
-				               BITSTR_RANGE_FMT, start, bit);
+				               "%"BITSTR_FMT"-%"BITSTR_FMT",",
+					       start, bit);
 			assert(ret != -1);
 		}
 		bit++;
@@ -1413,11 +1391,7 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 	assert(pos <= bit_cnt);
 
 	if (!bit_test(b, pos)) {
-#ifdef	USE_64BIT_BITSTR
-		error("bit %"PRIu64" not set", pos);
-#else
-		error("bit %d not set", pos);
-#endif
+		error("bit %"BITSTR_FMT" not set", pos);
 		return cnt;
 	}
 	for (bit = 0; bit <= pos; bit++) {
@@ -1428,4 +1402,3 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 
 	return cnt;
 }
-

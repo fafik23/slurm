@@ -486,8 +486,7 @@ struct job_details {
 	char *dependency;		/* wait for other jobs */
 	char *orig_dependency;		/* original value (for archiving) */
 	uint16_t env_cnt;		/* size of env_sup (see below) */
-	char **env_sup;			/* supplemental environment variables
-					 * as set by Moab */
+	char **env_sup;			/* supplemental environment variables */
 	bitstr_t *exc_node_bitmap;	/* bitmap of excluded nodes */
 	char *exc_nodes;		/* excluded nodes */
 	uint32_t expanding_jobid;	/* ID of job to be expanded */
@@ -521,7 +520,6 @@ struct job_details {
 	uint32_t reserved_resources;	/* CPU minutes of resources reserved
 					 * for this job while it was pending */
 	bitstr_t *req_node_bitmap;	/* bitmap of required nodes */
-	uint16_t *req_node_layout;	/* task layout for required nodes */
 	time_t preempt_start_time;	/* time that preeption began to start
 					 * this job */
 	char *req_nodes;		/* required nodes */
@@ -599,7 +597,7 @@ struct job_record {
 					 * billing weight. Recalculated upon job
 					 * resize.  Cannot be calculated until
 					 * the job is alloocated resources. */
-	uint32_t bit_flags;             /* various job flags */			// GRES_ENFORCE_BIND
+	uint32_t bit_flags;             /* various job flags */
 	char *burst_buffer;		/* burst buffer specification */
 	char *burst_buffer_state;	/* burst buffer state */
 	check_jobinfo_t check_job;      /* checkpoint context, opaque */
@@ -812,6 +810,8 @@ struct	depend_spec {
 	uint32_t	job_id;		/* SLURM job_id */
 	struct job_record *job_ptr;	/* pointer to this job */
 };
+
+#define STEP_FLAG 0xbbbb
 
 struct 	step_record {
 	uint16_t batch_step;		/* 1 if batch job step, 0 otherwise */
@@ -1040,12 +1040,10 @@ extern void dump_job_desc(job_desc_msg_t * job_specs);
 /*
  * dump_job_step_state - dump the state of a specific job step to a buffer,
  *	load with load_step_state
- * IN job_ptr - pointer to job for which information is to be dumpped
- * IN step_ptr - pointer to job step for which information is to be dumpped
+ * IN step_ptr - pointer to job step for which information is to be dumped
  * IN/OUT buffer - location to store data, pointers automatically advanced
  */
-extern void dump_job_step_state(struct job_record *job_ptr,
-				struct step_record *step_ptr, Buf buffer);
+extern int dump_job_step_state(void *x, void *arg);
 
 /*
  * dump_step_desc - dump the incoming step initiate request message

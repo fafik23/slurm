@@ -886,7 +886,6 @@ static bool _job_runnable_now(struct job_record *job_ptr)
 static int _attempt_backfill(void)
 {
 	DEF_TIMERS;
-	bool filter_root = false;
 	List job_queue;
 	job_queue_rec_t *job_queue_rec;
 	slurmdb_qos_rec_t *qos_ptr = NULL;
@@ -950,9 +949,6 @@ static int _attempt_backfill(void)
 		debug("backfill: beginning");
 	sched_start = orig_sched_start = now = time(NULL);
 	gettimeofday(&start_tv, NULL);
-
-	if (slurm_get_root_filter())
-		filter_root = true;
 
 	job_queue = build_job_queue(true, true);
 	job_test_count = list_count(job_queue);
@@ -1270,8 +1266,7 @@ next_task:
 		}
 
 		if (((part_ptr->state_up & PARTITION_SCHED) == 0) ||
-		    (part_ptr->node_bitmap == NULL) ||
-		    ((part_ptr->flags & PART_FLAG_ROOT_ONLY) && filter_root)) {
+		    (part_ptr->node_bitmap == NULL)) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
 				info("backfill: partition %s not usable",
 				     job_ptr->part_ptr->name);
@@ -1515,7 +1510,7 @@ next_task:
 		if (active_bitmap) {
 			j = _try_sched(job_ptr, &active_bitmap, min_nodes,
 				       max_nodes, req_nodes, exc_core_bitmap);
-			if (j != SLURM_SUCCESS) {
+			if (j == SLURM_SUCCESS) {
 				FREE_NULL_BITMAP(avail_bitmap);
 				avail_bitmap = active_bitmap;
 				active_bitmap = NULL;

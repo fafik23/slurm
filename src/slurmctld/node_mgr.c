@@ -684,6 +684,14 @@ extern int load_all_node_state ( bool state_only )
 			else
 				node_ptr->protocol_version = protocol_version;
 
+			/* Sanity check to make sure we can take a version we
+			 * actually understand.
+			 */
+			if (node_ptr->protocol_version <
+			    SLURM_MIN_PROTOCOL_VERSION)
+				node_ptr->protocol_version =
+					SLURM_MIN_PROTOCOL_VERSION;
+
 			if (!IS_NODE_POWER_SAVE(node_ptr))
 				node_ptr->last_idle = now;
 			select_g_update_node_state(node_ptr);
@@ -1253,7 +1261,7 @@ void set_slurmd_addr (void)
 		xfree(node_ptr->reason);
 		node_ptr->reason = xstrdup("NO NETWORK ADDRESS FOUND");
 		node_ptr->reason_time = time(NULL);
-		node_ptr->reason_uid = getuid();
+		node_ptr->reason_uid = slurmctld_conf.slurm_user_id;
 	}
 
 	END_TIMER2("set_slurmd_addr");
@@ -2962,7 +2970,8 @@ extern int validate_nodes_via_front_end(
 			continue;
 #endif
 		info("Killing orphan batch job %u", job_ptr->job_id);
-		job_complete(job_ptr->job_id, 0, false, false, 0);
+		job_complete(job_ptr->job_id, slurmctld_conf.slurm_user_id,
+			     false, false, 0);
 	}
 	list_iterator_destroy(job_iterator);
 

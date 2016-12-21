@@ -1580,50 +1580,51 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 static void
 _prolog_error(batch_job_launch_msg_t *req, int rc)
 {
-	char *err_name_ptr, err_name[256], path_name[MAXPATHLEN];
+	char *err_name = NULL, *path_name = NULL;
 	char *fmt_char;
 	int fd;
 
 	if (req->std_err || req->std_out) {
 		if (req->std_err)
-			strncpy(err_name, req->std_err, sizeof(err_name));
+			err_name = xstrdup(req->std_err);
 		else
-			strncpy(err_name, req->std_out, sizeof(err_name));
+			err_name = xstrdup(req->std_out);
 		if ((fmt_char = strchr(err_name, (int) '%')) &&
 		    (fmt_char[1] == 'j') && !strchr(fmt_char+1, (int) '%')) {
-			char tmp_name[256];
+			char *tmp_name = NULL;
 			fmt_char[1] = 'u';
-			snprintf(tmp_name, sizeof(tmp_name), err_name,
-				 req->job_id);
-			strncpy(err_name, tmp_name, sizeof(err_name));
+			xstrfmtcat(tmp_name, err_name, req->job_id);
+			xfree(err_name);
+			err_name = tmp_name;
+			//tmp_name = NULL;
 		}
 	} else {
-		snprintf(err_name, sizeof(err_name), "slurm-%u.out",
-			 req->job_id);
+		xstrfmtcat(err_name, "slurm-%u.out", req->job_id);
 	}
-	err_name_ptr = err_name;
-	if (err_name_ptr[0] == '/')
-		snprintf(path_name, MAXPATHLEN, "%s", err_name_ptr);
+	if (err_name[0] == '/')
+		xstrfmtcat(path_name, "%s", err_name);
 	else if (req->work_dir)
-		snprintf(path_name, MAXPATHLEN, "%s/%s",
-			req->work_dir, err_name_ptr);
+		xstrfmtcat(path_name, "%s/%s", req->work_dir, err_name);
 	else
-		snprintf(path_name, MAXPATHLEN, "/%s", err_name_ptr);
+		xstrfmtcat(path_name, "/%s", err_name);
+	xfree(err_name);
 
 	if ((fd = open(path_name, (O_CREAT|O_APPEND|O_WRONLY), 0644)) == -1) {
 		error("Unable to open %s: %s", path_name,
 		      slurm_strerror(errno));
+		xfree(path_name);
 		return;
 	}
-	snprintf(err_name, sizeof(err_name),
-		 "Error running slurm prolog: %d\n", WEXITSTATUS(rc));
+	xfree(path_name);
+	xstrfmtcat(err_name, "Error running slurm prolog: %d\n",
+		   WEXITSTATUS(rc));
 	safe_write(fd, err_name, strlen(err_name));
 	if (fchown(fd, (uid_t) req->uid, (gid_t) req->gid) == -1) {
-		snprintf(err_name, sizeof(err_name),
-			 "Couldn't change fd owner to %u:%u: %m\n",
-			 req->uid, req->gid);
+		error("%s: Couldn't change fd owner to %u:%u: %m",
+		      __func__, req->uid, req->gid);
 	}
 rwfail:
+	xfree(err_name);
 	close(fd);
 }
 
@@ -4026,16 +4027,22 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 	child = fork();
 	if (child == -1) {
 		error("sbcast: fork failure");
+		_dealloc_gids(gids);
+		close(pipe[0]);
+		close(pipe[1]);
 		return errno;
 	} else if (child > 0) {
 		/* get fd back from pipe */
 		close(pipe[0]);
 		waitpid(child, &rc, 0);
 		_dealloc_gids(gids);
-		if (rc)
+		if (rc) {
+			close(pipe[1]);
 			return WEXITSTATUS(rc);
+		}
 
 		fd = _receive_fd(pipe[1]);
+		close(pipe[1]);
 
 		file_info = xmalloc(sizeof(file_bcast_info_t));
 		file_info->fd = fd;
@@ -4307,10 +4314,10 @@ _kill_all_active_steps(uint32_t jobid, int sig, bool batch)
 		}
 
 		debug2("container signal %d to job %u.%u",
-		       sig, jobid, stepd->stepid);
+		       sig, stepd->jobid, stepd->stepid);
 		if (stepd_signal_container(
 			    fd, stepd->protocol_version, sig) < 0)
-			debug("kill jobid=%u failed: %m", jobid);
+			debug("kill jobid=%u failed: %m", stepd->jobid);
 		close(fd);
 	}
 	list_iterator_destroy(i);
@@ -4320,6 +4327,48 @@ _kill_all_active_steps(uint32_t jobid, int sig, bool batch)
 	return step_cnt;
 }
 
+/*
+ * ume_notify - Notify all jobs and steps on this node that a Uncorrectable
+ *	Memory Error (UME) has occured by sending SIG_UME (to log event in
+ *	stderr)
+ * RET count of signaled job steps
+ */
+extern int ume_notify(void)
+{
+	List steps;
+	ListIterator i;
+	step_loc_t *stepd;
+	int step_cnt  = 0;
+	int fd;
+
+	steps = stepd_available(conf->spooldir, conf->node_name);
+	i = list_iterator_create(steps);
+	while ((stepd = list_next(i))) {
+		step_cnt++;
+
+		fd = stepd_connect(stepd->directory, stepd->nodename,
+				   stepd->jobid, stepd->stepid,
+				   &stepd->protocol_version);
+		if (fd == -1) {
+			debug3("Unable to connect to step %u.%u",
+			       stepd->jobid, stepd->stepid);
+			continue;
+		}
+
+		debug2("container SIG_UME to job %u.%u",
+		       stepd->jobid, stepd->stepid);
+		if (stepd_signal_container(
+			    fd, stepd->protocol_version, SIG_UME) < 0)
+			debug("kill jobid=%u failed: %m", stepd->jobid);
+		close(fd);
+	}
+	list_iterator_destroy(i);
+	FREE_NULL_LIST(steps);
+
+	if (step_cnt == 0)
+		debug2("No steps to send SIG_UME");
+	return step_cnt;
+}
 /*
  * _terminate_all_steps - signals the container of all steps of a job
  * jobid IN - id of job to signal
@@ -6064,14 +6113,16 @@ _gids_cache_register(char *user, gid_t gid, gids_t *gids)
 	debug2("Cached group access list for %s/%d", user, gid);
 }
 
-static gids_t *
-_gids_cache_lookup(char *user, gid_t gid)
+/* how many groups to use by default to avoid repeated calls to getgrouplist */
+#define NGROUPS_START 64
+
+static gids_t *_gids_cache_lookup(char *user, gid_t gid)
 {
 	size_t idx;
 	gids_cache_t *p;
 	bool found_but_old = false;
 	time_t now = 0;
-	int ngroups = 0;
+	int ngroups = NGROUPS_START;
 	gid_t *groups;
 	gids_t *ret_gids = NULL;
 
@@ -6100,10 +6151,11 @@ _gids_cache_lookup(char *user, gid_t gid)
 	}
 	/* Cache lookup failed or cached value was too old, fetch new
 	 * value and insert it into cache.  */
-	getgrouplist(user, gid, NULL, &ngroups);
 	groups = xmalloc(ngroups * sizeof(gid_t));
-	if (getgrouplist(user, gid, groups, &ngroups) == -1)
-		error("getgrouplist failed");
+	while (getgrouplist(user, gid, groups, &ngroups) == -1) {
+		/* group list larger than array, resize array to fit */
+		groups = xrealloc(groups, ngroups * sizeof(gid_t));
+	}
 	if (found_but_old) {
 		xfree(p->gids->gids);
 		p->gids->gids = groups;

@@ -206,8 +206,6 @@ static int agent_thread_cnt = 0;
 static uint16_t message_timeout = (uint16_t) NO_VAL;
 
 static bool run_scheduler    = false;
-static bool wiki2_sched      = false;
-static bool wiki2_sched_test = false;
 
 /*
  * agent - party responsible for transmitting an common RPC in parallel
@@ -242,13 +240,6 @@ void *agent(void *args)
 	     list_count(retry_list));
 #endif
 	slurm_mutex_lock(&agent_cnt_mutex);
-	if (!wiki2_sched_test) {
-		char *sched_type = slurm_get_sched_type();
-		if (xstrcmp(sched_type, "sched/wiki2") == 0)
-			wiki2_sched = true;
-		xfree(sched_type);
-		wiki2_sched_test = true;
-	}
 
 	rpc_thread_cnt = 2 + MIN(agent_arg_ptr->node_count, AGENT_THREAD_COUNT);
 	while (1) {
@@ -689,7 +680,8 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 			batch_job_launch_msg_t *launch_msg_ptr =
 					*agent_ptr->msg_args_pptr;
 			uint32_t job_id = launch_msg_ptr->job_id;
-			job_complete(job_id, 0, true, false, 0);
+			job_complete(job_id, slurmctld_conf.slurm_user_id,
+				     true, false, 0);
 		}
 		unlock_slurmctld(node_write_lock);
 	}
@@ -730,7 +722,8 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 				down_msg = "";
 #else
 				drain_nodes(node_names,
-					    "Prolog/Epilog failure", getuid());
+					    "Prolog/Epilog failure",
+					    slurmctld_conf.slurm_user_id);
 				down_msg = ", set to state DRAIN";
 #endif
 				error("Prolog/Epilog failure on nodes %s%s",
@@ -741,7 +734,8 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 				down_msg = "";
 #else
 				drain_nodes(node_names,
-					    "Duplicate jobid", getuid());
+					    "Duplicate jobid",
+					    slurmctld_conf.slurm_user_id);
 				down_msg = ", set to state DRAIN";
 #endif
 				error("Duplicate jobid on nodes %s%s",
@@ -984,8 +978,8 @@ static void *_thread_per_group_rpc(void *args)
 			thread_state = DSH_DONE;
 			ret_data_info->err = thread_state;
 			lock_slurmctld(job_write_lock);
-			job_complete(job_id, getuid(), false, false,
-				     _wif_status());
+			job_complete(job_id, slurmctld_conf.slurm_user_id,
+				     false, false, _wif_status());
 			unlock_slurmctld(job_write_lock);
 			continue;
 		}
@@ -1577,14 +1571,15 @@ static void *_mail_proc(void *arg)
 	if (pid < 0) {		/* error */
 		error("fork(): %m");
 	} else if (pid == 0) {	/* child */
-		int fd, i;
+		int fd_0, fd_1, fd_2, i;
 		for (i = 0; i < 1024; i++)
 			(void) close(i);
-		fd = open("/dev/null", O_RDWR); // fd = 0
-		if (dup(fd) == -1)		// fd = 1
-			error("Couldn't do a dup for 1: %m");
-		if (dup(fd) == -1)		// fd = 2
-			error("Couldn't do a dup for 2 %m");
+		if ((fd_0 = open("/dev/null", O_RDWR)) == -1)	// fd = 0
+			error("Couldn't open /dev/null: %m");
+		if ((fd_1 = dup(fd_0)) == -1)			// fd = 1
+			error("Couldn't do a dup on fd 1: %m");
+		if ((fd_2 = dup(fd_0)) == -1)			// fd = 2
+			error("Couldn't do a dup on fd 2 %m");
 		execle(slurmctld_conf.mail_prog, "mail",
 			"-s", mi->message, mi->user_name,
 			NULL, NULL);

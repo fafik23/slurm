@@ -69,27 +69,14 @@ static void	_part_state_free(void);
 static void	_part_state_load(void);
 static int	_print_str(char *str, int width, bool right, bool cut_output);
 
+static int _print_job_from_format(void *x, void *arg);
+static int _print_step_from_format(void *x, void *arg);
+
 static partition_info_msg_t *part_info_msg = NULL;
 
 /*****************************************************************************
  * Global Print Functions
  *****************************************************************************/
-
-int print_steps(List steps, List format)
-{
-	print_step_from_format(NULL, format);
-
-	if (list_count(steps) > 0) {
-		job_step_info_t *step = NULL;
-		ListIterator i = list_iterator_create(steps);
-
-		while ((step = (job_step_info_t *) list_next(i)) != NULL) {
-			print_step_from_format(step, format);
-		}
-	}
-
-	return SLURM_SUCCESS;
-}
 
 int print_jobs_array(job_info_t * jobs, int size, List format)
 {
@@ -100,7 +87,7 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 
 	l = list_create(_job_list_del);
 	if (!params.no_header)
-		print_job_from_format(NULL, format);
+		_print_job_from_format(NULL, format);
 	_part_state_load();
 
 	/* Filter out the jobs of interest */
@@ -138,8 +125,8 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 	sort_job_list (l);
 
 	/* Print the jobs of interest */
-	list_for_each (l, (ListForF) print_job_from_format, (void *) format);
-	FREE_NULL_LIST (l);
+	list_for_each(l, _print_job_from_format, format);
+	FREE_NULL_LIST(l);
 
 	return SLURM_SUCCESS;
 }
@@ -147,13 +134,11 @@ int print_jobs_array(job_info_t * jobs, int size, List format)
 int print_steps_array(job_step_info_t * steps, int size, List format)
 {
 	if (!params.no_header)
-		print_step_from_format(NULL, format);
+		_print_step_from_format(NULL, format);
 
 	if (size > 0) {
 		int i;
 		List step_list;
-		ListIterator step_iterator;
-		job_step_info_t *step_ptr;
 
 		step_list = list_create(NULL);
 
@@ -167,11 +152,7 @@ int print_steps_array(job_step_info_t * steps, int size, List format)
 		sort_step_list(step_list);
 
 		/* Print the steps of interest */
-		step_iterator = list_iterator_create(step_list);
-		while ((step_ptr = list_next(step_iterator))) {
-			print_step_from_format(step_ptr, format);
-		}
-		list_iterator_destroy(step_iterator);
+		list_for_each(step_list, _print_step_from_format, format);
 		FREE_NULL_LIST(step_list);
 	}
 
@@ -421,11 +402,13 @@ static int _print_one_job_from_format(job_info_t * job, List list)
 	return SLURM_SUCCESS;
 }
 
-int print_job_from_format(squeue_job_rec_t *job_rec_ptr, List list)
+static int _print_job_from_format(void *x, void *arg)
 {
 	static int32_t max_array_size = -1;
 	int i, i_first, i_last;
 	bitstr_t *bitmap;
+	squeue_job_rec_t *job_rec_ptr = (squeue_job_rec_t *) x;
+	List list = (List) arg;
 
 	if (!job_rec_ptr) {
 		_print_one_job_from_format(NULL, list);
@@ -2079,8 +2062,10 @@ int _print_job_mcs_label(job_info_t * job, int width,
 /*****************************************************************************
  * Job Step Print Functions
  *****************************************************************************/
-int print_step_from_format(job_step_info_t * job_step, List list)
+static int _print_step_from_format(void *x, void *arg)
 {
+	job_step_info_t *job_step = (job_step_info_t *) x;
+	List list = (List) arg;
 	ListIterator i = list_iterator_create(list);
 	step_format_t *current;
 	int total_width = 0;
@@ -2098,15 +2083,7 @@ int print_step_from_format(job_step_info_t * job_step, List list)
 	}
 	list_iterator_destroy(i);
 	printf("\n");
-#if 0
-	if (job_step == NULL) {
-		int inx;
-		/* one-origin for no trailing space */
-		for (inx=1; inx<total_width; inx++)
-			printf("-");
-		printf("\n");
-	}
-#endif
+
 	return SLURM_SUCCESS;
 }
 
