@@ -107,10 +107,6 @@ PartitionName=test2             Nodes=test0[1-9],test[11-19]    MaxTime=168:00:0
 
 EOL
 
-cat > ~/.mailrc <<EOL
-set smtp=smtp://mail.schedmd.com:25
-EOL
-
 sudo mysql -uroot <<EOL  
 create database slurm_acct_db;
 create user 'slurm'@'localhost';
@@ -120,18 +116,19 @@ EOL
 /usr/sbin/create-munge-key
 service munge start
 
-/tmp/slurm/sbin/slurmdbd
+/tmp/slurm_db/sbin/slurmdbd
 sleep 1
-/tmp/slurm/bin/sacctmgr -i add cluster test
-/tmp/slurm/sbin/slurmctld
+/tmp/slurm_db/bin/sacctmgr -i add cluster test
+
+/tmp/slurm_ctl/sbin/slurmctld
 sleep 1
-scontrol show hostname test[01-09,11-19]|xargs -n1 -IXXX  /tmp/slurm/sbin/slurmd -N XXX
+/tmp/slurm_cli/bin/scontrol show hostname test[01-09,11-19]|xargs -n1 -IXXX  /tmp/slurm_d/sbin/slurmd -N XXX
 
 #sinfo -vvvv
 #valgrind --leak-check=yes sinfo
 
 cat > ./testsuite/expect/globals.local <<EOL
-set slurm_dir     "/tmp/slurm/"
+set slurm_dir     "/tmp/slurm_cli/"
 set max_job_delay 100
 EOL
 

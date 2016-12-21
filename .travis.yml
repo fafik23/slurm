@@ -27,16 +27,10 @@ env:
   - TEST_SET="9.*,12.*,14.*,15.*,16.*"
   - TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
   - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
-matrix:
-  include:
-    - env: SLURMD_VER=0
-      env: SLURMTCL_VER=0
-      env: SLURMDB_VER=0
-      env: SLURMD_VER=0
-    - env: SLURCLI_VER=1
-      env: SLURMTCL_VER=1
-      env: SLURMDB_VER=1
-      env: SLURMD_VER=1
+  - SLURMDB_VER="master"
+  - SLURMD_VER="slurm-16.05"
+  - SLURMCTL_VER="slurm-16.05"
+  - SLURMCLI_VER="slurm-16.05"
 
 cache: ccache
 before_script:
@@ -46,4 +40,5 @@ script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
   - make -j install > /dev/null
+  - testsuite/build-travis.sh
   - sudo testsuite/test-reg.sh
