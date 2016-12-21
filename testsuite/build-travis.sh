@@ -2,6 +2,10 @@
 
 MIGRATION=${MIGRATION-0}
 
+
+if [ $MIGRATION -eq 1 ] ; then
+	git fetch
+fi
 if [[ "$SLURMD_VER" != "$TRAVIS_BRANCH" ]] && [ $MIGRATION -eq 1 ] ; then
 	git checkout $SLURMD_VER
 	echo "Compile $SLURM for Slurmd"
