@@ -674,24 +674,19 @@ static int _task_layout_block(slurm_step_layout_t *step_layout, uint16_t *cpus,
 			}
 		}
 
-		/* Pass 2: Fill remaining CPUs on a node-by-node basis */
-		for (i = 0; ((i < step_layout->node_cnt) &&
-			     (task_id < step_layout->task_cnt)); i++) {
-			while (((step_layout->tasks[i] * cpus_per_task) <
-				cpus[i]) &&
-			       (task_id < step_layout->task_cnt)) {
-				step_layout->tasks[i]++;
-				task_id++;
-			}
-		}
-
-		/* Pass 3: Spread remaining tasks across all nodes */
+		/* Pass 2: Spread remaining tasks on a node-by-node basis*/
+		j=1;
 		while (task_id < step_layout->task_cnt) {
 			for (i = 0; ((i < step_layout->node_cnt) &&
-				     (task_id < step_layout->task_cnt)); i++) {
-				step_layout->tasks[i]++;
-				task_id++;
+			     (task_id < step_layout->task_cnt)); i++) {
+				while (((step_layout->tasks[i] * cpus_per_task ) <
+					cpus[i] * j ) &&
+				       (task_id < step_layout->task_cnt)) {
+					step_layout->tasks[i]++;
+					task_id++;
+				}
 			}
+			j++;
 		}
 	} else {
 		/* To effectively deal with heterogeneous nodes, we fake a
