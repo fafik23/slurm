@@ -22,11 +22,11 @@ compiler:
   - clang
   - gcc
 env:
-  - TEST_SET="1.*" SLURMDB_VER="master" - SLURMD_VER="slurm-16.05" - SLURMCTL_VER="slurm-16.05" - SLURMCLI_VER="slurm-16.05"
-  - TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*" SLURMDB_VER="master" - SLURMD_VER="slurm-16.05" - SLURMCTL_VER="slurm-16.05" - SLURMCLI_VER="slurm-16.05"
-  - TEST_SET="9.*,12.*,14.*,15.*,16.*" SLURMDB_VER="master" - SLURMD_VER="slurm-16.05" - SLURMCTL_VER="slurm-16.05" - SLURMCLI_VER="slurm-16.05"
-  - TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*" SLURMDB_VER="master" - SLURMD_VER="slurm-16.05" - SLURMCTL_VER="slurm-16.05" - SLURMCLI_VER="slurm-16.05"
-  - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*" SLURMDB_VER="master" - SLURMD_VER="slurm-16.05" - SLURMCTL_VER="slurm-16.05" - SLURMCLI_VER="slurm-16.05"
+  - TEST_SET="1.*"
+  - TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*"
+  - TEST_SET="9.*,12.*,14.*,15.*,16.*"
+  - TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
+  - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
 
 cache: ccache
 before_script:
