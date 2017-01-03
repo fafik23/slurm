@@ -935,10 +935,10 @@ clear_bit:	/* This node is not usable by this job */
 extern bitstr_t *make_core_bitmap(bitstr_t *node_map, uint16_t core_spec)
 {
 	uint32_t c, nodes, size;
-	int spec_cores, res_core, res_sock, res_off;
+	int res_core, res_sock, res_off;
 	int n, n_first, n_last;
 	uint32_t coff;
-	uint16_t i;
+	uint16_t spec_cores, i, use_spec_cores;
 	struct node_record *node_ptr;
 
 	nodes = bit_size(node_map);
@@ -964,37 +964,48 @@ extern bitstr_t *make_core_bitmap(bitstr_t *node_map, uint16_t core_spec)
 			bit_clear(node_map, n);
 			continue;
 		}
-		bit_nset(core_map, c, coff-1);
+		bit_nset(core_map, c, coff - 1);
 
-		if ((core_spec != 0) && (core_spec != (uint16_t) NO_VAL)) {
-			/* Remove specialized cores right now */
-			spec_cores = core_spec;
-			for (res_core = select_node_record[n].cores - 1;
-			     (spec_cores && (res_core >= 0)); res_core--) {
-				for (res_sock = select_node_record[n].sockets-1;
-				     (spec_cores && (res_sock >= 0));
-				     res_sock--) {
-					res_off =
-					  (res_sock*select_node_record[n].cores)
+		node_ptr = select_node_record[n].node_ptr;
+		use_spec_cores =  slurm_get_use_spec_resources();
+		if (use_spec_cores && (core_spec == 0))
+			continue;
+
+		/* remove node's specialized cores accounting toward the
+		 * requested limit if allowed by configuration */
+		spec_cores = core_spec;
+		if (node_ptr->node_spec_bitmap) {
+			for (i = 0; i < (coff - c); i++) {
+				if (!bit_test(node_ptr->node_spec_bitmap, i)) {
+		 			bit_clear(core_map, c + i);
+					if (!use_spec_cores)
+						continue;
+					if (--spec_cores == 0)
+						break;
+				}
+			}
+		}
+
+		/* if enough cores specialized or not necessary to
+		 * specialize some of them for the job, continue */
+		if (!use_spec_cores || (spec_cores == 0) ||
+		    (core_spec == (uint16_t) NO_VAL))
+			continue;
+
+		/* if more cores need to be specialized, look for
+		 * them in the non-specialized cores */
+		for (res_core = select_node_record[n].cores - 1;
+		     ((spec_cores > 0) && (res_core >= 0)); res_core--) {
+			for (res_sock = select_node_record[n].sockets - 1;
+			     ((spec_cores > 0) && (res_sock >= 0));
+			     res_sock--) {
+				res_off = (res_sock*select_node_record[n].cores)
 					  + res_core;
+				if (bit_test(core_map, c + res_off)) {
 					bit_clear(core_map, c + res_off);
 					spec_cores--;
 				}
 			}
-			continue;
-		}
-		node_ptr = select_node_record[n].node_ptr;
-		if ((core_spec == 0) || !node_ptr->cpu_spec_list)
-			continue;
-		if (!node_ptr->node_spec_bitmap) {
-			info("CPUSpecList not registered for node %s yet",
-			     node_ptr->name);
-			continue;
-		}
-		/* remove node's specialized CPUs now */
-		for (i = 0; i < (coff - c) ; i++) {
-			if (!bit_test(node_ptr->node_spec_bitmap, i))
-				bit_clear(core_map, c + i);
 		}
 	}
 	return core_map;
@@ -3517,11 +3528,11 @@ alloc_job:
 	 * distribute the job on the bits, and exit
 	 */
 	FREE_NULL_BITMAP(orig_map);
-	FREE_NULL_BITMAP(avail_cores);
 	FREE_NULL_BITMAP(tmpcore);
 	FREE_NULL_BITMAP(part_core_map);
 	if ((!cpu_count) || (!job_ptr->best_switch)) {
 		/* we were sent here to cleanup and exit */
+		FREE_NULL_BITMAP(avail_cores);
 		FREE_NULL_BITMAP(free_cores);
 		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("cons_res: exiting cr_job_test with no "
@@ -3545,6 +3556,7 @@ alloc_job:
 					  job_ptr->details->min_nodes);
 	}
 	if ((error_code != SLURM_SUCCESS) || (mode != SELECT_MODE_RUN_NOW)) {
+		FREE_NULL_BITMAP(avail_cores);
 		FREE_NULL_BITMAP(free_cores);
 		xfree(cpu_count);
 		return error_code;
@@ -3583,6 +3595,7 @@ alloc_job:
 					  select_fast_schedule);
 	if (error_code != SLURM_SUCCESS) {
 		free_job_resources(&job_res);
+		FREE_NULL_BITMAP(avail_cores);
 		FREE_NULL_BITMAP(free_cores);
 		return error_code;
 	}
@@ -3650,7 +3663,8 @@ alloc_job:
 
 	/* distribute the tasks and clear any unused cores */
 	job_ptr->job_resrcs = job_res;
-	error_code = cr_dist(job_ptr, cr_type, preempt_mode);
+	error_code = cr_dist(job_ptr, cr_type, preempt_mode, avail_cores);
+	FREE_NULL_BITMAP(avail_cores);
 	if (error_code != SLURM_SUCCESS) {
 		free_job_resources(&job_ptr->job_resrcs);
 		return error_code;

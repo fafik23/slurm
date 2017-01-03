@@ -1867,8 +1867,20 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	if (!(slurmctld_conf.prolog_flags & PROLOG_FLAG_NOHOLD))
 		_notify_slurmctld_prolog_fini(req->job_id, rc);
 
-	if (slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN)
-		_spawn_prolog_stepd(msg);
+	if (rc == SLURM_SUCCESS) {
+		if (slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN)
+			_spawn_prolog_stepd(msg);
+	} else {
+		_launch_job_fail(req->job_id, rc);
+		/*
+		 *  If job prolog failed or we could not reply,
+		 *  initiate message to slurmctld with current state
+		 */
+		if ((rc == ESLURMD_PROLOG_FAILED) ||
+		    (rc == SLURM_COMMUNICATIONS_SEND_ERROR) ||
+		    (rc == ESLURMD_SETUP_ENVIRONMENT_ERROR))
+			send_registration_msg(rc, false);
+	}
 }
 
 static void
@@ -2188,9 +2200,19 @@ _launch_job_fail(uint32_t job_id, uint32_t slurm_rc)
 
 	rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc);
 	if ((resp_msg.msg_type == REQUEST_JOB_REQUEUE) &&
-	    (rc == ESLURM_DISABLED)) {
+	    ((rc == ESLURM_DISABLED) || (rc == ESLURM_BATCH_ONLY))) {
 		info("Could not launch job %u and not able to requeue it, "
 		     "cancelling job", job_id);
+
+		if ((slurm_rc == ESLURMD_PROLOG_FAILED) &&
+		    (rc == ESLURM_BATCH_ONLY)) {
+			char *buf = NULL;
+			xstrfmtcat(buf, "Prolog failure on node %s",
+				   conf->node_name);
+			slurm_notify_job(job_id, buf);
+			xfree(buf);
+		}
+
 		comp_msg.job_id = job_id;
 		comp_msg.job_rc = INFINITE;
 		comp_msg.slurm_rc = slurm_rc;
@@ -3843,16 +3865,22 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 	child = fork();
 	if (child == -1) {
 		error("sbcast: fork failure");
+		_dealloc_gids(gids);
+		close(pipe[0]);
+		close(pipe[1]);
 		return errno;
 	} else if (child > 0) {
 		/* get fd back from pipe */
 		close(pipe[0]);
 		waitpid(child, &rc, 0);
 		_dealloc_gids(gids);
-		if (rc)
+		if (rc) {
+			close(pipe[1]);
 			return WEXITSTATUS(rc);
+		}
 
 		fd = _receive_fd(pipe[1]);
+		close(pipe[1]);
 
 		file_info = xmalloc(sizeof(file_bcast_info_t));
 		file_info->fd = fd;
