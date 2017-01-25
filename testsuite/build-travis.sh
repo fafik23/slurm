@@ -6,6 +6,7 @@ MIGRATION=${MIGRATION-0}
 if [ $MIGRATION -eq 1 ] ; then
 	git fetch origin
 	git remote add origin
+	cat .git/config
 fi
 if [[ "$SLURMD_VER" != "$TRAVIS_BRANCH" ]] && [ $MIGRATION -eq 1 ] ; then
 	git checkout -b $SLURMD_VER  origin/$SLURMD_VER
