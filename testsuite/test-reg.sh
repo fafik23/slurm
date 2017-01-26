@@ -116,6 +116,7 @@ EOL
 /usr/sbin/create-munge-key
 service munge start
 
+sleep 1
 /tmp/slurm_db/sbin/slurmdbd
 sleep 1
 /tmp/slurm_db/bin/sacctmgr -i add cluster test
