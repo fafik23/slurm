@@ -1478,8 +1478,7 @@ static int _job_test_hypercube(struct job_record *job_ptr, bitstr_t *bitmap,
 		// set avail_bitmap to all available nodes except the required nodes
 		// set bitmap to just the required nodes
 		avail_bitmap = bit_copy(req_nodes_bitmap);
-		bit_not(avail_bitmap);
-		bit_and(avail_bitmap, bitmap );
+		bit_and_not(avail_bitmap, bitmap );
 		bit_copybits(bitmap, req_nodes_bitmap);
 
 		i = bit_set_count(req_nodes_bitmap);
