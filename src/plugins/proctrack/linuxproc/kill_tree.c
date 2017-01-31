@@ -324,9 +324,10 @@ extern pid_t find_ancestor(pid_t process, char *process_name)
 {
 	char path[PATH_MAX], *rbuf;
 	ssize_t buf_used;
-	int fd;
+	int fd, len;
 	long pid, ppid;
 
+	len = strlen(process_name);
 	rbuf = xmalloc_nz(4097);
 	pid = ppid = (long)process;
 	while (1) {
@@ -370,7 +371,7 @@ extern pid_t find_ancestor(pid_t process, char *process_name)
 			continue;
 		}
 		close(fd);
-		if (strcmp(rbuf, process_name) == 0)
+		if (strncmp(rbuf, process_name, len) == 0)
 			break;
 	}
 	xfree(rbuf);
@@ -384,8 +385,7 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 	xppid_t **hashtbl;
 	xpid_t *list, *ptr;
 	pid_t *p;
-	int i;
-	int len = 32;
+	int i, len = 32, rc;
 
 	if ((hashtbl = _build_hashtbl()) == NULL)
 		return SLURM_ERROR;
@@ -403,7 +403,7 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 	i = 0;
 	while (ptr != NULL) {
 		if (ptr->is_usercmd) { /* don't include the slurmstepd */
-			if (i >= len-1) {
+			if (i >= len - 1) {
 				len *= 2;
 				xrealloc(p, (sizeof(pid_t) * len));
 			}
@@ -417,14 +417,13 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 		xfree(p);
 		*pids = NULL;
 		*npids = 0;
-		_destroy_hashtbl(hashtbl);
-		_destroy_list(list);
-		return SLURM_ERROR;
+		rc = SLURM_ERROR;
 	} else {
 		*pids = p;
 		*npids = i;
-		_destroy_hashtbl(hashtbl);
-		_destroy_list(list);
-		return SLURM_SUCCESS;
+		rc = SLURM_SUCCESS;
 	}
+	_destroy_hashtbl(hashtbl);
+	_destroy_list(list);
+	return rc;
 }

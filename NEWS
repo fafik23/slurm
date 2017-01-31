@@ -27,7 +27,6 @@ documents those changes that are of interest to users and administrators.
     scheduling with respect to node reboots.
  -- Avoid allocating resources to a job in the event that its run time plus boot
     time (if needed) extent into an advanced reservation.
- -- Fix srun I/O race condition on shutdown.
  -- Burst_buffer/cray - Avoid stage-out operation if job never started.
  -- node_features/knl_cray - Add capability to detected Uncorrectable Memory
     Errors (UME) and if detected then log the event in all job and step stderr
@@ -40,6 +39,9 @@ documents those changes that are of interest to users and administrators.
  -- Add support for requeue'ing of federated jobs (BETA).
  -- Add support for interactive federated jobs (BETA).
  -- Add the ability to purge rolled up usage from the database.
+ -- CRAY systems only: TaskPlugins must list task/cgroup before task/cray in
+    order for the cgroup files to be created before task/cray runs.
+ -- Properly set SLURM_JOB_GPUS environment variable for Prolog.
 
 * Changes in Slurm 17.02.0pre4
 ==============================
@@ -250,6 +252,15 @@ documents those changes that are of interest to users and administrators.
     using the multi-cluster options (e.g. squeue -M<clsuter>).
  -- slurmctld/agent race condition fix: Prevent job launch while PrologSlurmctld
     daemon is running or node boot in progress.
+ -- MYSQL - Fix a few other minor memory leaks when uncommon failures occur.
+ -- burst_buffer/cray - Fix race condition that could cause multiple batch job
+    launch requests resulting in drained nodes.
+ -- Correct logic to purge old reservations.
+ -- Fix DBD cache restore from previous versions.
+ -- Fix to logic for getting expected start time of existing job ID with
+    explicit begin time that is in the past.
+ -- Clear job's reason of "BeginTime" in a more timely fashion and/or prevents
+    them from being stuck in a PENDING state.
 
 * Changes in Slurm 16.05.8
 ==========================

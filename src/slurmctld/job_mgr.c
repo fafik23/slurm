@@ -529,23 +529,16 @@ static void _delete_job_desc_files(uint32_t job_id)
 {
 	char *dir_name = NULL, *file_name = NULL;
 	struct stat sbuf;
-	int hash = job_id % 10, stat_rc;
+	int hash = job_id % 10;
 	DIR *f_dir;
 	struct dirent *dir_ent;
 
-	dir_name = slurm_get_state_save_location();
-	xstrfmtcat(dir_name, "/hash.%d/job.%u", hash, job_id);
-	stat_rc = stat(dir_name, &sbuf);
-	if (stat_rc != 0) {
-		/* Read version 14.03 or earlier state format */
+	dir_name = xstrdup_printf("%s/hash.%d/job.%u",
+				  slurmctld_conf.state_save_location,
+				  hash, job_id);
+	if (stat(dir_name, &sbuf)) {
 		xfree(dir_name);
-		dir_name = slurm_get_state_save_location();
-		xstrfmtcat(dir_name, "/job.%u", job_id);
-		stat_rc = stat(dir_name, &sbuf);
-		if (stat_rc != 0) {
-			xfree(dir_name);
-			return;
-		}
+		return;
 	}
 
 	f_dir = opendir(dir_name);
@@ -786,8 +779,8 @@ static int _open_job_state_file(char **state_file)
 	int state_fd;
 	struct stat stat_buf;
 
-	*state_file = slurm_get_state_save_location();
-	xstrcat(*state_file, "/job_state");
+	*state_file = xstrdup_printf("%s/job_state",
+				     slurmctld_conf.state_save_location);
 	state_fd = open(*state_file, O_RDONLY);
 	if (state_fd < 0) {
 		error("Could not open job state file %s: %m", *state_file);
@@ -986,8 +979,8 @@ extern int load_last_job_id( void )
 	uint16_t protocol_version = (uint16_t)NO_VAL;
 
 	/* read the file */
-	state_file = slurm_get_state_save_location();
-	xstrcat(state_file, "/job_state");
+	state_file = xstrdup_printf("%s/job_state",
+				    slurmctld_conf.state_save_location);
 	lock_state_files();
 	state_fd = open(state_file, O_RDONLY);
 	if (state_fd < 0) {
@@ -4373,16 +4366,12 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 		return rc;
 	}
 
-	/* fed jobs need to go to the siblings first so don't attempt to
-	 * schedule the job now. */
-	test_only = will_run || job_ptr->deadline || (allocate == 0) ||
-		    job_ptr->fed_details;
+	test_only = will_run || job_ptr->deadline || (allocate == 0);
 
 	no_alloc = test_only || too_fragmented || _has_deadline(job_ptr) ||
 		   (!top_prio) || (!independent) || !avail_front_end(job_ptr);
 
 	no_alloc = no_alloc || (bb_g_job_test_stage_in(job_ptr, no_alloc) != 1);
-
 	error_code = _select_nodes_parts(job_ptr, no_alloc, NULL, err_msg);
 	if (!test_only) {
 		last_job_update = now;
@@ -6257,12 +6246,10 @@ static int _job_create(job_desc_msg_t *job_desc, int allocate, int will_run,
 	}
 
 	if (launch_type_poe == -1) {
-		char *launch_type = slurm_get_launch_type();
-		if (!xstrcmp(launch_type, "launch/poe"))
+		if (!xstrcmp(slurmctld_conf.launch_type, "launch/poe"))
 			launch_type_poe = 1;
 		else
 			launch_type_poe = 0;
-		xfree(launch_type);
 	}
 	if (launch_type_poe == 1)
 		job_ptr->next_step_id = 1;
@@ -6622,24 +6609,21 @@ static int
 _copy_job_desc_to_file(job_desc_msg_t * job_desc, uint32_t job_id)
 {
 	int error_code = 0, hash;
-	char *dir_name, job_dir[32], *file_name;
+	char *dir_name, *file_name;
 	DEF_TIMERS;
 
 	START_TIMER;
-	/* Create state_save_location directory */
-	dir_name = slurm_get_state_save_location();
 
 	/* Create directory based upon job ID due to limitations on the number
 	 * of files possible in a directory on some file system types (e.g.
 	 * up to 64k files on a FAT32 file system). */
 	hash = job_id % 10;
-	sprintf(job_dir, "/hash.%d", hash);
-	xstrcat(dir_name, job_dir);
+	dir_name = xstrdup_printf("%s/hash.%d",
+				  slurmctld_conf.state_save_location, hash);
 	(void) mkdir(dir_name, 0700);
 
 	/* Create job_id specific directory */
-	sprintf(job_dir, "/job.%u", job_id);
-	xstrcat(dir_name, job_dir);
+	xstrfmtcat(dir_name, "/job.%u", job_id);
 	if (mkdir(dir_name, 0700)) {
 		if (!slurmctld_primary && (errno == EEXIST)) {
 			error("Apparent duplicate job ID %u. Two primary "
@@ -6652,8 +6636,7 @@ _copy_job_desc_to_file(job_desc_msg_t * job_desc, uint32_t job_id)
 	}
 
 	/* Create environment file, and write data to it */
-	file_name = xstrdup(dir_name);
-	xstrcat(file_name, "/environment");
+	file_name = xstrdup_printf("%s/environment", dir_name);
 	error_code = _write_data_array_to_file(file_name,
 					       job_desc->environment,
 					       job_desc->env_size);
@@ -6661,8 +6644,7 @@ _copy_job_desc_to_file(job_desc_msg_t * job_desc, uint32_t job_id)
 
 	if (error_code == 0) {
 		/* Create script file */
-		file_name = xstrdup(dir_name);
-		xstrcat(file_name, "/script");
+		file_name = xstrdup_printf("%s/script", dir_name);
 		error_code = _write_data_to_file(file_name, job_desc->script);
 		xfree(file_name);
 	}
@@ -6677,16 +6659,13 @@ _copy_job_desc_to_file(job_desc_msg_t * job_desc, uint32_t job_id)
  * split-brain, where two slurmctld daemons are running as primary. */
 static bool _dup_job_file_test(uint32_t job_id)
 {
-	char *dir_name_src, job_dir[40];
+	char *dir_name_src;
 	struct stat buf;
-	int rc, hash;
+	int rc, hash = job_id % 10;
 
-	dir_name_src  = slurm_get_state_save_location();
-	hash = job_id % 10;
-	sprintf(job_dir, "/hash.%d", hash);
-	xstrcat(dir_name_src, job_dir);
-	sprintf(job_dir, "/job.%u", job_id);
-	xstrcat(dir_name_src, job_dir);
+	dir_name_src = xstrdup_printf("%s/hash.%d/job.%u",
+				      slurmctld_conf.state_save_location,
+				      hash, job_id);
 	rc = stat(dir_name_src, &buf);
 	xfree(dir_name_src);
 	if (rc == 0) {
@@ -6704,34 +6683,28 @@ static int
 _copy_job_desc_files(uint32_t job_id_src, uint32_t job_id_dest)
 {
 	int error_code = SLURM_SUCCESS, hash;
-	char *dir_name_src, *dir_name_dest, job_dir[40];
-
-	/* Create state_save_location directory */
-	dir_name_src  = slurm_get_state_save_location();
-	dir_name_dest = xstrdup(dir_name_src);
+	char *dir_name;
 
 	/* Create directory based upon job ID due to limitations on the number
 	 * of files possible in a directory on some file system types (e.g.
 	 * up to 64k files on a FAT32 file system). */
 	hash = job_id_dest % 10;
-	sprintf(job_dir, "/hash.%d", hash);
-	xstrcat(dir_name_dest, job_dir);
-	(void) mkdir(dir_name_dest, 0700);
+	dir_name = xstrdup_printf("%s/hash.%d",
+				  slurmctld_conf.state_save_location, hash);
+	(void) mkdir(dir_name, 0700);
 
 	/* Create job_id_dest specific directory */
-	sprintf(job_dir, "/job.%u", job_id_dest);
-	xstrcat(dir_name_dest, job_dir);
-	if (mkdir(dir_name_dest, 0700)) {
+	xstrfmtcat(dir_name, "/job.%u", job_id_dest);
+	if (mkdir(dir_name, 0700)) {
 		if (!slurmctld_primary && (errno == EEXIST)) {
 			error("Apparent duplicate job ID %u. Two primary "
 			      "slurmctld daemons might currently be active",
 			      job_id_dest);
 		}
-		error("mkdir(%s) error %m", dir_name_dest);
+		error("mkdir(%s) error %m", dir_name);
 		error_code = ESLURM_WRITING_TO_FILE;
 	}
-	xfree(dir_name_src);
-	xfree(dir_name_dest);
+	xfree(dir_name);
 
 	return error_code;
 }
@@ -6830,44 +6803,24 @@ static int _write_data_to_file(char *file_name, char *data)
  */
 char **get_job_env(struct job_record *job_ptr, uint32_t * env_size)
 {
-	char *file_name = NULL, job_dir[40], **environment = NULL;
+	char *file_name = NULL, **environment = NULL;
 	int cc, fd = -1, hash;
 
 	/* Standard file location for job arrays, version 16.05+ */
 	if (job_ptr->array_task_id != NO_VAL) {
 		hash = job_ptr->array_job_id % 10;
-		sprintf(job_dir, "/hash.%d/job.%u/environment",
-			hash, job_ptr->array_job_id);
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		xstrcat(file_name, job_dir);
+		file_name = xstrdup_printf("%s/hash.%d/job.%u/environment",
+					   slurmctld_conf.state_save_location,
+					   hash, job_ptr->array_job_id);
 		fd = open(file_name, 0);
 	}
 
 	/* Standard file location, versions 15.08 and 14.11 */
 	if (fd < 0) {
 		hash = job_ptr->job_id % 10;
-		sprintf(job_dir, "/hash.%d/job.%u/environment",
-			hash, job_ptr->job_id);
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		xstrcat(file_name, job_dir);
-		fd = open(file_name, 0);
-	}
-
-	/* Standard file location, version 14.3 and earlier
-	 * NOTE: Cannot remove this backwards compatibility as there is no
-	 * process to migrate jobs to the newer directory structure, and
-	 * sites may be jumping through multiple version to bring their
-	 * installation to current. E.g., going from v2.6 -> 14.03 -> 16.05
-	 * would update state files correctly, but leave pending jobs in
-	 * the old directory format.
-	 */
-	if (fd < 0) {
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		sprintf(job_dir, "/job.%u/environment", job_ptr->job_id);
-		xstrcat(file_name, job_dir);
+		file_name = xstrdup_printf("%s/hash.%d/job.%u/environment",
+					   slurmctld_conf.state_save_location,
+					   hash, job_ptr->job_id);
 		fd = open(file_name, 0);
 	}
 
@@ -6893,7 +6846,7 @@ char **get_job_env(struct job_record *job_ptr, uint32_t * env_size)
  */
 char *get_job_script(struct job_record *job_ptr)
 {
-	char *file_name = NULL, job_dir[40], *script = NULL;
+	char *file_name = NULL, *script = NULL;
 	int fd = -1, hash;
 
 	if (!job_ptr->batch_flag)
@@ -6902,38 +6855,19 @@ char *get_job_script(struct job_record *job_ptr)
 	/* Standard file location for job arrays, version 16.05+ */
 	if (job_ptr->array_task_id != NO_VAL) {
 		hash = job_ptr->array_job_id % 10;
-		sprintf(job_dir, "/hash.%d/job.%u/script",
-			hash, job_ptr->array_job_id);
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		xstrcat(file_name, job_dir);
+		file_name = xstrdup_printf("%s/hash.%d/job.%u/script",
+					   slurmctld_conf.state_save_location,
+					   hash, job_ptr->array_job_id);
 		fd = open(file_name, 0);
 	}
 
 	/* Standard file location, versions 15.08 and 14.11 */
 	if (fd < 0) {
+		xfree(file_name);
 		hash = job_ptr->job_id % 10;
-		sprintf(job_dir, "/hash.%d/job.%u/script",
-			hash, job_ptr->job_id);
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		xstrcat(file_name, job_dir);
-		fd = open(file_name, 0);
-	}
-
-	/* Standard file location, version 14.3 and earlier
-	 * NOTE: Cannot remove this backwards compatibility as there is no
-	 * process to migrate jobs to the newer directory structure, and
-	 * sites may be jumping through multiple version to bring their
-	 * installation to current. E.g., going from v2.6 -> 14.03 -> 16.05
-	 * would update state files correctly, but leave pending jobs in
-	 * the old directory format.
-	 */
-	if (fd < 0) {
-		xfree(file_name);
-		file_name = slurm_get_state_save_location();
-		sprintf(job_dir, "/job.%u/script", job_ptr->job_id);
-		xstrcat(file_name, job_dir);
+		file_name = xstrdup_printf("%s/hash.%d/job.%u/script",
+					   slurmctld_conf.state_save_location,
+					   hash, job_ptr->job_id);
 		fd = open(file_name, 0);
 	}
 
@@ -7663,7 +7597,7 @@ extern void job_validate_mem(struct job_record *job_ptr)
  * job_time_limit - terminate jobs which have exceeded their time limit
  * global: job_list - pointer global job list
  *	last_job_update - time of last job table update
- * NOTE: READ lock_slurmctld config before entry
+ * NOTE: Job Write lock_slurmctld config before entry
  */
 void job_time_limit(void)
 {
@@ -7675,14 +7609,35 @@ void job_time_limit(void)
 	time_t over_run;
 	int resv_status = 0;
 	uint16_t over_time_limit;
+	int job_test_count = 0;
+
+	/* locks same as in _slurmctld_background() (The only current place this
+	 * is called). */
+	slurmctld_lock_t job_write_lock = {
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
+	DEF_TIMERS;
+
 #ifndef HAVE_BG
 	uint8_t prolog;
 #endif
 
 	begin_job_resv_check();
 	job_iterator = list_iterator_create(job_list);
+	START_TIMER;
 	while ((job_ptr =(struct job_record *) list_next(job_iterator))) {
 		xassert (job_ptr->magic == JOB_MAGIC);
+                if (slurm_delta_tv(&tv1) >= 3000000) {
+			END_TIMER;
+			debug("%s: yielding locks after testing %d jobs, %s",
+			      __func__, job_test_count, TIME_STR);
+			unlock_slurmctld(job_write_lock);
+			usleep(1000000);
+			lock_slurmctld(job_write_lock);
+			START_TIMER;
+			job_test_count = 0;
+		}
+
+		job_test_count++;
 
 #ifndef HAVE_BG
 		/* If the CONFIGURING flag is removed elsewhere like
@@ -8123,7 +8078,8 @@ static int _validate_job_desc(job_desc_msg_t * job_desc_msg, int allocate,
 		struct job_record *dup_job_ptr;
 		if ((submit_uid != 0) &&
 		    (submit_uid != slurmctld_conf.slurm_user_id)) {
-			info("attempt by uid %u to set job_id", submit_uid);
+			info("attempt by uid %u to set job_id to %u",
+			     submit_uid, job_desc_msg->job_id);
 			return ESLURM_INVALID_JOB_ID;
 		}
 		if (job_desc_msg->job_id == 0) {
@@ -12991,17 +12947,7 @@ static void _get_batch_job_dir_ids(List batch_dirs)
 	}
 
 	while ((dir_ent = readdir(f_dir))) {
-		if (!xstrncmp("job.#", dir_ent->d_name, 4)) {
-			/* Read version 14.03 or earlier format state */
-			long_job_id = strtol(&dir_ent->d_name[4], &endptr, 10);
-			if ((long_job_id == 0) || (endptr[0] != '\0'))
-				continue;
-			debug3("found batch directory for job_id %ld",
-			      long_job_id);
-			job_id_ptr = xmalloc(sizeof(uint32_t));
-			*job_id_ptr = long_job_id;
-			list_append(batch_dirs, job_id_ptr);
-		} else if (!xstrncmp("hash.#", dir_ent->d_name, 5)) {
+		if (!xstrncmp("hash.#", dir_ent->d_name, 5)) {
 			char *h_path = NULL;
 			xstrfmtcat(h_path, "%s/%s",
 				   slurmctld_conf.state_save_location,
@@ -13284,11 +13230,8 @@ extern bool job_epilog_complete(uint32_t job_id, char *node_name,
 			 * This would most likely kill other jobs sharing that
 			 * midplane and that is not what we want. */
 			if (return_code) {
-				static uint32_t slurm_user_id = NO_VAL;
-				if (slurm_user_id == NO_VAL)
-					slurm_user_id=slurm_get_slurm_user_id();
 				drain_nodes(node_ptr->name, "Epilog error",
-					    slurm_user_id);
+					    slurmctld_conf.slurm_user_id);
 			}
 #endif
 			/* Change job from completing to completed */
@@ -13301,7 +13244,7 @@ extern bool job_epilog_complete(uint32_t job_id, char *node_name,
 		      __func__, jobid2str(job_ptr, jbuf, sizeof(jbuf)),
 		      node_name);
 		drain_nodes(node_name, "Epilog error",
-			    slurm_get_slurm_user_id());
+			    slurmctld_conf.slurm_user_id);
 	}
 	/* Change job from completing to completed */
 	node_ptr = find_node_record(node_name);
@@ -13506,15 +13449,8 @@ extern void job_completion_logger(struct job_record *job_ptr, bool requeue)
 		 * since it will throw off displays of the job. */
 		job_ptr->job_state &= ~JOB_CONFIGURING;
 
-		/* make sure all parts of the job are notified
-		 * Fed Jobs: only signal the srun from where the was running or
-		 * from the origin if the job wasn't running. */
-		if (!job_ptr->fed_details ||
-		    (fed_mgr_cluster_rec && (job_ptr->fed_details->cluster_lock
-					     == fed_mgr_cluster_rec->fed.id)) ||
-		    (fed_mgr_is_origin_job(job_ptr) &&
-		     !job_ptr->fed_details->cluster_lock))
-			srun_job_complete(job_ptr);
+		/* make sure all parts of the job are notified */
+		srun_job_complete(job_ptr);
 
 		/* mail out notifications of completion */
 		base_state = job_ptr->job_state & JOB_STATE_BASE;
@@ -13702,13 +13638,11 @@ static void _signal_job(struct job_record *job_ptr, int signal)
 	int notify_srun = 0;
 
 	if (notify_srun_static == -1) {
-		char *launch_type = slurm_get_launch_type();
 		/* do this for all but slurm (poe, aprun, etc...) */
-		if (xstrcmp(launch_type, "launch/slurm"))
+		if (xstrcmp(slurmctld_conf.launch_type, "launch/slurm"))
 			notify_srun_static = 1;
 		else
 			notify_srun_static = 0;
-		xfree(launch_type);
 	}
 
 #ifdef HAVE_FRONT_END

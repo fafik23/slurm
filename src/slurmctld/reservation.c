@@ -5378,7 +5378,6 @@ extern void fini_job_resv_check(void)
 		}
 		_advance_resv_time(resv_ptr);
 		if ((resv_ptr->job_run_cnt    == 0) &&
-		    (resv_ptr->flags_set_node == false) &&
 		    ((resv_ptr->flags & RESERVE_FLAG_DAILY ) == 0) &&
 		    ((resv_ptr->flags & RESERVE_FLAG_WEEKLY) == 0)) {
 			if (resv_ptr->job_pend_cnt) {
@@ -5618,7 +5617,7 @@ static void _set_nodes_flags(slurmctld_resv_t *resv_ptr, time_t now,
 			clusteracct_storage_g_node_down(
 				acct_db_conn,
 				node_ptr, now, NULL,
-				slurm_get_slurm_user_id());
+				slurmctld_conf.slurm_user_id);
 		}
 	}
 }

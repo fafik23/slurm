@@ -365,26 +365,6 @@ static bool _job_runnable_test2(struct job_record *job_ptr, bool check_min_time)
 	return true;
 }
 
-/* Return the number of micro-seconds between now and argument "tv",
- * Initialize tv to NOW if zero on entry */
-static int _delta_tv(struct timeval *tv)
-{
-	struct timeval now = {0, 0};
-	int delta_t;
-
-	if (gettimeofday(&now, NULL))
-		return 1;		/* Some error */
-
-	if (tv->tv_sec == 0) {
-		tv->tv_sec  = now.tv_sec;
-		tv->tv_usec = now.tv_usec;
-		return 0;
-	}
-
-	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
-	delta_t += (now.tv_usec - tv->tv_usec);
-	return delta_t;
-}
 /*
  * build_job_queue - build (non-priority ordered) list of pending jobs
  * IN clear_start - if set then clear the start_time for pending jobs,
@@ -408,7 +388,8 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	int job_part_pairs = 0;
 	time_t now = time(NULL);
 
-	(void) _delta_tv(&start_tv);
+	/* init the timer */
+	(void) slurm_delta_tv(&start_tv);
 	job_queue = list_create(_job_queue_rec_del);
 
 	/* Create individual job records for job arrays that need burst buffer
@@ -504,7 +485,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if (((tested_jobs % 100) == 0) &&
-		    (_delta_tv(&start_tv) >= build_queue_timeout)) {
+		    (slurm_delta_tv(&start_tv) >= build_queue_timeout)) {
 			if (difftime(now, last_log_time) > 600) {
 				/* Log at most once every 10 minutes */
 				info("%s has run for %d usec, exiting with %d "
@@ -624,6 +605,7 @@ extern void set_job_elig_time(void)
 	ListIterator job_iterator;
 	slurmctld_lock_t job_write_lock =
 		{ READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
+	time_t now = time(NULL);
 #ifdef HAVE_BG
 	static uint16_t cpus_per_node = 0;
 	if (!cpus_per_node)
@@ -641,7 +623,8 @@ extern void set_job_elig_time(void)
 			continue;
 		if (part_ptr == NULL)
 			continue;
-		if ((job_ptr->details == NULL) || job_ptr->details->begin_time)
+		if ((job_ptr->details == NULL) ||
+		    (job_ptr->details->begin_time > now))
 			continue;
 		if ((part_ptr->state_up & PARTITION_SCHED) == 0)
 			continue;
@@ -913,7 +896,20 @@ next_part:		part_ptr = (struct part_record *)
 			info("sched: Allocate JobId=%u Partition=%s NodeList=%s #CPUs=%u",
 			     job_ptr->job_id, job_ptr->part_ptr->name,
 			     job_ptr->nodes, job_ptr->total_cpus);
-			if (!IS_JOB_CONFIGURING(job_ptr)) {
+
+			if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+				!job_ptr->details->prolog_running &&
+				!(job_ptr->bit_flags & NODE_REBOOT)
+#else
+				!IS_JOB_CONFIGURING(job_ptr)
+#endif
+				) {
 				launch_msg = build_launch_job_msg(job_ptr,
 							msg->protocol_version);
 			}
@@ -1917,7 +1913,19 @@ next_task:
 #endif
 			if (job_ptr->batch_flag == 0)
 				srun_allocate(job_ptr->job_id);
-			else if (!IS_JOB_CONFIGURING(job_ptr))
+			else if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+				!job_ptr->details->prolog_running &&
+				!(job_ptr->bit_flags & NODE_REBOOT)
+#else
+				!IS_JOB_CONFIGURING(job_ptr)
+#endif
+				)
 				launch_job(job_ptr);
 			rebuild_job_part_list(job_ptr);
 			job_cnt++;
@@ -3257,7 +3265,8 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	}
 
 	/* Enforce reservation: access control, time and nodes */
-	if (job_ptr->details->begin_time)
+	if (job_ptr->details->begin_time &&
+	    (job_ptr->details->begin_time > now))
 		start_res = job_ptr->details->begin_time;
 	else
 		start_res = now;
@@ -3852,10 +3861,10 @@ extern int prolog_slurmctld(struct job_record *job_ptr)
 		return errno;
 	}
 
-	if (job_ptr->details)
+	if (job_ptr->details) {
 		job_ptr->details->prolog_running++;
-
-	job_ptr->job_state |= JOB_CONFIGURING;
+		job_ptr->job_state |= JOB_CONFIGURING;
+	}
 
 	slurm_attr_init(&thread_attr_prolog);
 	pthread_attr_setdetachstate(&thread_attr_prolog,

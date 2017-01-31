@@ -148,7 +148,6 @@ static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
 			     int *node_space_recs);
 static int  _attempt_backfill(void);
 static void _clear_job_start_times(void);
-static int  _delta_tv(struct timeval *tv);
 static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2);
 static bool _job_part_valid(struct job_record *job_ptr,
 			    struct part_record *part_ptr);
@@ -453,20 +452,6 @@ extern void stop_backfill_agent(void)
 	stop_backfill = true;
 	slurm_cond_signal(&term_cond);
 	slurm_mutex_unlock(&term_lock);
-}
-
-/* Return the number of micro-seconds between now and argument "tv" */
-static int _delta_tv(struct timeval *tv)
-{
-	struct timeval now = {0, 0};
-	int delta_t;
-
-	if (gettimeofday(&now, NULL))
-		return 1;		/* Some error */
-
-	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
-	delta_t += (now.tv_usec - tv->tv_usec);
-	return delta_t;
 }
 
 /* Sleep for at least specified time, returns actual sleep time in usec */
@@ -1020,20 +1005,29 @@ static int _attempt_backfill(void)
 
 	sort_job_queue(job_queue);
 	while (1) {
+		uint32_t bf_job_id, bf_array_task_id, bf_job_priority;
+
 		job_queue_rec = (job_queue_rec_t *) list_pop(job_queue);
 		if (!job_queue_rec) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL)
 				info("backfill: reached end of job queue");
 			break;
 		}
+
+		job_ptr          = job_queue_rec->job_ptr;
+		part_ptr         = job_queue_rec->part_ptr;
+		bf_job_id        = job_queue_rec->job_id;
+		bf_job_priority  = job_queue_rec->priority;
+		bf_array_task_id = job_queue_rec->array_task_id;
+		xfree(job_queue_rec);
+
 		if (slurmctld_config.shutdown_time ||
 		    (difftime(time(NULL),orig_sched_start)>=backfill_interval)){
-			xfree(job_queue_rec);
 			break;
 		}
 		if (((defer_rpc_cnt > 0) &&
 		     (slurmctld_config.server_thread_count >= defer_rpc_cnt)) ||
-		    (_delta_tv(&start_tv) >= sched_timeout)) {
+		    (slurm_delta_tv(&start_tv) >= sched_timeout)) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL) {
 				END_TIMER;
 				info("backfill: yielding locks after testing "
@@ -1052,7 +1046,6 @@ static int _attempt_backfill(void)
 					     job_test_count);
 				}
 				rc = 1;
-				xfree(job_queue_rec);
 				break;
 			}
 			/* Reset backfill scheduling timers, resume testing */
@@ -1063,17 +1056,14 @@ static int _attempt_backfill(void)
 			START_TIMER;
 		}
 
-		job_ptr  = job_queue_rec->job_ptr;
-
 		/* With bf_continue configured, the original job could have
 		 * been cancelled and purged. Validate pointer here. */
 		if ((job_ptr->magic  != JOB_MAGIC) ||
-		    (job_ptr->job_id != job_queue_rec->job_id)) {
-			xfree(job_queue_rec);
+		    (job_ptr->job_id != bf_job_id)) {
 			continue;
 		}
-		if ((job_ptr->array_task_id != job_queue_rec->array_task_id) &&
-		    (job_queue_rec->array_task_id == NO_VAL)) {
+		if ((job_ptr->array_task_id != bf_array_task_id) &&
+		    (bf_array_task_id == NO_VAL)) {
 			/* Job array element started in other partition,
 			 * reset pointer to "master" job array record */
 			job_ptr = find_job_record(job_ptr->array_job_id);
@@ -1084,9 +1074,8 @@ static int _attempt_backfill(void)
 		if (!_job_runnable_now(job_ptr))
 			continue;
 
-		part_ptr = job_queue_rec->part_ptr;
 		job_ptr->part_ptr = part_ptr;
-		job_ptr->priority = job_queue_rec->priority;
+		job_ptr->priority = bf_job_priority;
 		mcs_select = slurm_mcs_get_select(job_ptr);
 
 		if (job_ptr->state_reason == FAIL_ACCOUNT) {
@@ -1175,7 +1164,6 @@ static int _attempt_backfill(void)
 
 		orig_start_time = job_ptr->start_time;
 		orig_time_limit = job_ptr->time_limit;
-		xfree(job_queue_rec);
 
 next_task:
 		job_test_count++;
@@ -1369,7 +1357,7 @@ next_task:
 		test_time_count++;
 		if (((defer_rpc_cnt > 0) &&
 		     (slurmctld_config.server_thread_count >= defer_rpc_cnt)) ||
-		    (_delta_tv(&start_tv) >= sched_timeout)) {
+		    (slurm_delta_tv(&start_tv) >= sched_timeout)) {
 			uint32_t save_job_id = job_ptr->job_id;
 			uint32_t save_time_limit = job_ptr->time_limit;
 			_set_job_time_limit(job_ptr, orig_time_limit);
@@ -1934,7 +1922,19 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		power_g_job_start(job_ptr);
 		if (job_ptr->batch_flag == 0)
 			srun_allocate(job_ptr->job_id);
-		else if (!IS_JOB_CONFIGURING(job_ptr))
+		else if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+			!job_ptr->details ||
+			!job_ptr->details->prolog_running
+#else
+			!IS_JOB_CONFIGURING(job_ptr)
+#endif
+			)
 			launch_job(job_ptr);
 		slurmctld_diag_stats.backfilled_jobs++;
 		slurmctld_diag_stats.last_backfilled_jobs++;

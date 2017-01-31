@@ -1249,13 +1249,10 @@ static void _slurm_rpc_allocate_resources(slurm_msg_t * msg)
 		if (slurm_send_node_msg(msg->conn_fd, &response_msg) < 0)
 			_kill_job_on_msg_fail(job_ptr->job_id);
 
+		slurm_free_resource_allocation_response_msg_members(&alloc_msg);
+
 		schedule_job_save();	/* has own locks */
 		schedule_node_save();	/* has own locks */
-
-		if (!alloc_msg.node_cnt) /* didn't get an allocation */
-			queue_job_scheduler();
-
-		slurm_free_resource_allocation_response_msg_members(&alloc_msg);
 	} else {	/* allocate error */
 		if (do_unlock) {
 			unlock_slurmctld(job_write_lock);
@@ -2598,12 +2595,6 @@ static void _slurm_rpc_job_will_run(slurm_msg_t * msg, bool allow_sibs)
 				} else {
 					lock_slurmctld(job_write_lock);
 
-					/* Get a job_id now without incrementing
-					 * the job_id count. This prevents
-					 * burning job_ids on will_runs */
-					job_desc_msg->job_id =
-						get_next_job_id(true);
-
 					error_code = job_allocate(
 							job_desc_msg, false,
 							true, &resp, true, uid,
@@ -2932,21 +2923,6 @@ static void _slurm_rpc_job_alloc_info_lite(slurm_msg_t * msg)
 		job_info_resp_msg.job_id         = job_info_msg->job_id;
 		job_info_resp_msg.node_cnt       = job_ptr->node_cnt;
 		job_info_resp_msg.node_list      = xstrdup(job_ptr->nodes);
-
-		if (!(fed_mgr_is_origin_job(job_ptr))) {
-			/* msg.working_cluster_rec will be NULL'ed out before
-			 * being free'd below since it's point to the actual
-			 * fed_mgr_cluster_rec. */
-			job_info_resp_msg.working_cluster_rec =
-				fed_mgr_cluster_rec;
-
-			job_info_resp_msg.node_addr =
-				xmalloc(sizeof(slurm_addr_t) *
-					job_ptr->node_cnt);
-			memcpy(job_info_resp_msg.node_addr, job_ptr->node_addr,
-			       (sizeof(slurm_addr_t) * job_ptr->node_cnt));
-		}
-
 		job_info_resp_msg.partition      = xstrdup(job_ptr->partition);
 		if (job_ptr->qos_ptr) {
 			slurmdb_qos_rec_t *qos;
@@ -2976,9 +2952,6 @@ static void _slurm_rpc_job_alloc_info_lite(slurm_msg_t * msg)
 
 		slurm_send_node_msg(msg->conn_fd, &response_msg);
 
-		/* NULL out msg->working_cluster_rec because it's pointing to
-		 * the actual memory */
-		job_info_resp_msg.working_cluster_rec = NULL;
 		slurm_free_resource_allocation_response_msg_members(
 			&job_info_resp_msg);
 	}
@@ -3593,7 +3566,19 @@ static void _slurm_rpc_submit_batch_job(slurm_msg_t * msg)
 				reject_job = true;
 				goto unlock;
 			}
-			if (IS_JOB_CONFIGURING(job_ptr)) {
+			if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+				job_ptr->details &&
+				job_ptr->details->prolog_running
+#else
+				IS_JOB_CONFIGURING(job_ptr)
+#endif
+				) {
 				error_code = EAGAIN;
 				reject_job = true;
 				goto unlock;
@@ -5852,20 +5837,6 @@ _slurm_rpc_kill_job2(slurm_msg_t *msg)
 	END_TIMER2("_slurm_rpc_kill_job2");
 }
 
-/* Return the number of micro-seconds between now and argument "tv" */
-static int _delta_tv(struct timeval *tv)
-{
-	struct timeval now = {0, 0};
-	int delta_t;
-
-	if (gettimeofday(&now, NULL))
-		return 1;		/* Some error */
-
-	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
-	delta_t += (now.tv_usec - tv->tv_usec);
-	return delta_t;
-}
-
 /* The batch messages when made for the comp_msg need to be freed
  * differently than the normal free, so do that here.
  */
@@ -5991,7 +5962,7 @@ static void  _slurm_rpc_comp_msg_list(composite_msg_t * comp_msg,
 
 	itr = list_iterator_create(comp_msg->msg_list);
 	while ((next_msg = list_next(itr))) {
-		if (_delta_tv(start_tv) >= timeout) {
+		if (slurm_delta_tv(start_tv) >= timeout) {
 			END_TIMER;
 			if (slurmctld_conf.debug_flags & DEBUG_FLAG_ROUTE)
 				info("composite message processing "

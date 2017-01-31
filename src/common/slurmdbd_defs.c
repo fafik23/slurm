@@ -2172,21 +2172,16 @@ static void _load_dbd_state(void)
 		   need to set it back to 0 */
 		set_buf_offset(buffer, 0);
 		safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
-		if (remaining_buf(buffer))
-			goto unpack_error;
 		debug3("Version string in dbd_state header is %s", ver_str);
+	unpack_error:
 		free_buf(buffer);
 		buffer = NULL;
-	unpack_error:
 		if (ver_str) {
-			char curr_ver_str[10];
-			snprintf(curr_ver_str, sizeof(curr_ver_str),
-				 "VER%d", SLURM_PROTOCOL_VERSION);
-			if (!xstrcmp(ver_str, curr_ver_str))
-				rpc_version = SLURM_PROTOCOL_VERSION;
+			/* get the version after VER */
+			rpc_version = slurm_atoul(ver_str + 3);
+			xfree(ver_str);
 		}
 
-		xfree(ver_str);
 		while (1) {
 			/* If the buffer was not the VER%d string it
 			   was an actual message so we don't want to
@@ -3663,8 +3658,7 @@ extern void slurmdbd_pack_list_msg(dbd_list_msg_t *msg,
 		list_iterator_destroy(itr);
 	}
 
-	if (rpc_version >= 8)
-		pack32(msg->return_code, buffer);
+	pack32(msg->return_code, buffer);
 }
 
 extern int slurmdbd_unpack_list_msg(dbd_list_msg_t **msg, uint16_t rpc_version,
@@ -3785,8 +3779,7 @@ extern int slurmdbd_unpack_list_msg(dbd_list_msg_t **msg, uint16_t rpc_version,
 		}
 	}
 
-	if (rpc_version >= 8)
-		safe_unpack32(&msg_ptr->return_code, buffer);
+	safe_unpack32(&msg_ptr->return_code, buffer);
 
 	return SLURM_SUCCESS;
 
