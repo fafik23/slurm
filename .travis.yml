@@ -1,0 +1,40 @@
+sudo: required
+language: c
+addons:
+  mariadb: '10.1'
+  apt:
+    packages:
+    - cmake
+    - libmunge-dev
+    - liblua5.2-dev
+    - munge
+    - expect
+    - libhwloc-dev
+    - libnuma1
+    - libnuma-dev
+    - libpam-dev
+    - libhwloc-dev
+    - gdb
+    - valgrind
+    - libfreeipmi-dev
+    - man2html
+compiler:
+  - clang
+  - gcc
+env:
+  - TEST_SET="1.*"
+  - TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*"
+  - TEST_SET="9.*,12.*,14.*,15.*,16.*"
+  - TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
+  - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
+cache: ccache
+before_script:
+  - export PATH=/usr/lib/ccache:$PATH
+  - export MIGRATION=1
+  - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
+script:
+  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
+  - make -j > /dev/null
+  - make -j install > /dev/null
+  - testsuite/travis/build-travis.sh
+  - sudo testsuite/travis/test-reg.sh

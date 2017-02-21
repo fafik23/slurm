@@ -30,6 +30,7 @@ import os
 import re
 import sys
 import time
+import threading
 from optparse import OptionParser
 from optparse import OptionValueError
 
@@ -106,8 +107,12 @@ def main(argv=None):
 
         if options.time_individual:
             t1 = time.time()
+        timer = RepeatingTimer(10.0, status)
+        timer.daemon = True # Allows program to exit if only the thread is alive
+        timer.start()
         retcode = Popen(('expect', test[2]), shell=False,
                         stdout=testlog, stderr=testlog).wait()
+        timer.cancel()
         if options.time_individual:
             t2 = time.time()
             minutes = int(t2-t1)/60
@@ -128,8 +133,12 @@ def main(argv=None):
                         % (testlog_name, e)
         else:
             failed_tests.append(test)
-            os.rename(testlog_name, testlog_name+'.failed')
             sys.stdout.write('FAILED!\n')
+            testlog = file(testlog_name, 'r')
+            errlog = testlog.read()
+            print "Log  : \n", errlog
+            testlog.close()
+            os.rename(testlog_name, testlog_name+'.failed')
         sys.stdout.flush()
 
     end_time = time.time()
@@ -150,6 +159,7 @@ def main(argv=None):
             sys.stdout.write('%d.%d'%(test[0], test[1]))
         sys.stdout.write('\n')
         sys.stdout.flush()
+        return -1
 
 def test_cmp(testA, testB):
     rc = cmp(testA[0], testB[0])
@@ -258,6 +268,20 @@ class poor_Popen_substitute:
     def wait(self):
         (pid, rc) = os.waitpid(self.pid, 0)
         return rc
+
+class RepeatingTimer(threading._Timer):
+    def run(self):
+        while True:
+            self.finished.wait(self.interval)
+            if self.finished.is_set():
+                return
+            else:
+                self.function(*self.args, **self.kwargs)
+
+
+def status():
+    sys.stdout.write('.')
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     sys.exit(main())
