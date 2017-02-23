@@ -4,13 +4,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -77,6 +77,8 @@
 #include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/fed_mgr.h"
 #include "src/slurmctld/front_end.h"
+#include "src/slurmctld/gang.h"
+#include "src/slurmctld/locks.h"
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/licenses.h"
 #include "src/slurmctld/locks.h"
@@ -85,7 +87,6 @@
 #include "src/slurmctld/preempt.h"
 #include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/reservation.h"
-#include "src/slurmctld/sched_plugin.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/srun_comm.h"
 #include "src/slurmctld/state_save.h"
@@ -97,7 +98,6 @@
 #endif
 #define BUILD_TIMEOUT 2000000	/* Max build_job_queue() run time in usec */
 #define MAX_FAILED_RESV 10
-#define MAX_RETRIES 10
 
 typedef struct epilog_arg {
 	char *epilog_slurmctld;
@@ -366,26 +366,6 @@ static bool _job_runnable_test2(struct job_record *job_ptr, bool check_min_time)
 	return true;
 }
 
-/* Return the number of micro-seconds between now and argument "tv",
- * Initialize tv to NOW if zero on entry */
-static int _delta_tv(struct timeval *tv)
-{
-	struct timeval now = {0, 0};
-	int delta_t;
-
-	if (gettimeofday(&now, NULL))
-		return 1;		/* Some error */
-
-	if (tv->tv_sec == 0) {
-		tv->tv_sec  = now.tv_sec;
-		tv->tv_usec = now.tv_usec;
-		return 0;
-	}
-
-	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
-	delta_t += (now.tv_usec - tv->tv_usec);
-	return delta_t;
-}
 /*
  * build_job_queue - build (non-priority ordered) list of pending jobs
  * IN clear_start - if set then clear the start_time for pending jobs,
@@ -409,7 +389,8 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	int job_part_pairs = 0;
 	time_t now = time(NULL);
 
-	(void) _delta_tv(&start_tv);
+	/* init the timer */
+	(void) slurm_delta_tv(&start_tv);
 	job_queue = list_create(_job_queue_rec_del);
 
 	/* Create individual job records for job arrays that need burst buffer
@@ -505,7 +486,7 @@ extern List build_job_queue(bool clear_start, bool backfill)
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = (struct job_record *) list_next(job_iterator))) {
 		if (((tested_jobs % 100) == 0) &&
-		    (_delta_tv(&start_tv) >= build_queue_timeout)) {
+		    (slurm_delta_tv(&start_tv) >= build_queue_timeout)) {
 			if (difftime(now, last_log_time) > 600) {
 				/* Log at most once every 10 minutes */
 				info("%s has run for %d usec, exiting with %d "
@@ -625,6 +606,7 @@ extern void set_job_elig_time(void)
 	ListIterator job_iterator;
 	slurmctld_lock_t job_write_lock =
 		{ READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
+	time_t now = time(NULL);
 #ifdef HAVE_BG
 	static uint16_t cpus_per_node = 0;
 	if (!cpus_per_node)
@@ -642,7 +624,8 @@ extern void set_job_elig_time(void)
 			continue;
 		if (part_ptr == NULL)
 			continue;
-		if ((job_ptr->details == NULL) || job_ptr->details->begin_time)
+		if ((job_ptr->details == NULL) ||
+		    (job_ptr->details->begin_time > now))
 			continue;
 		if ((part_ptr->state_up & PARTITION_SCHED) == 0)
 			continue;
@@ -914,8 +897,20 @@ next_part:		part_ptr = (struct part_record *)
 			info("sched: Allocate JobId=%u Partition=%s NodeList=%s #CPUs=%u",
 			     job_ptr->job_id, job_ptr->part_ptr->name,
 			     job_ptr->nodes, job_ptr->total_cpus);
-			if ((job_ptr->details->prolog_running == 0) &&
-			    ((job_ptr->bit_flags & NODE_REBOOT) == 0)) {
+
+			if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+				!job_ptr->details->prolog_running &&
+				!(job_ptr->bit_flags & NODE_REBOOT)
+#else
+				!IS_JOB_CONFIGURING(job_ptr)
+#endif
+				) {
 				launch_msg = build_launch_job_msg(job_ptr,
 							msg->protocol_version);
 			}
@@ -1186,7 +1181,7 @@ static int _schedule(uint32_t job_limit)
 	int *sched_part_jobs = NULL, bb_wait_cnt = 0;
 	/* Locks: Read config, write job, write node, read partition */
 	slurmctld_lock_t job_write_lock =
-	    { READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
+	    { READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
 	char jbuf[JBUFSIZ];
 	bool is_job_array_head;
 #ifdef HAVE_BG
@@ -1468,9 +1463,7 @@ static int _schedule(uint32_t job_limit)
 	bit_not(avail_node_bitmap);
 	unavail_node_str = bitmap2node_name(avail_node_bitmap);
 	bit_not(avail_node_bitmap);
-	bit_not(booting_node_bitmap);
-	bit_and(avail_node_bitmap, booting_node_bitmap);
-	bit_not(booting_node_bitmap);
+	bit_and_not(avail_node_bitmap, booting_node_bitmap);
 
 	if (max_jobs_per_part) {
 		ListIterator part_iterator;
@@ -1564,6 +1557,8 @@ next_part:			part_ptr = (struct part_record *)
 				continue;	/* started in other partition */
 			job_ptr->part_ptr = part_ptr;
 		}
+
+		job_ptr->last_sched_eval = time(NULL);
 
 		if (job_ptr->preempt_in_progress)
 			continue;	/* scheduled in another partition */
@@ -1805,8 +1800,31 @@ next_task:
 			save_time_limit = job_ptr->time_limit;
 			job_ptr->time_limit = deadline_time_limit;
 		}
+
+		/* get fed job lock from origin cluster */
+		if (fed_mgr_job_lock(job_ptr, INFINITE)) {
+			job_ptr->state_reason = WAIT_FED_JOB_LOCK;
+			xfree(job_ptr->state_desc);
+			info("sched: JobId=%u can't get fed job lock from origin cluster to start job",
+			     job_ptr->job_id);
+			last_job_update = now;
+			continue;
+		}
+
 		error_code = select_nodes(job_ptr, false, NULL,
 					  unavail_node_str, NULL);
+
+		if (error_code == SLURM_SUCCESS) {
+			/* If the following fails because of network
+			 * connectivity, the origin cluster should ask
+			 * when it comes back up if the cluster_lock
+			 * cluster actually started the job */
+			fed_mgr_job_start(job_ptr, INFINITE,
+					  job_ptr->start_time);
+		} else {
+			fed_mgr_job_unlock(job_ptr, INFINITE);
+		}
+
 		fail_by_part = false;
 		if ((error_code != SLURM_SUCCESS) && deadline_time_limit)
 			job_ptr->time_limit = save_time_limit;
@@ -1843,10 +1861,8 @@ next_task:
 				       job_reason_string(job_ptr->
 							 state_reason),
 				       job_ptr->priority);
-				bit_not(job_ptr->resv_ptr->node_bitmap);
-				bit_and(avail_node_bitmap,
+				bit_and_not(avail_node_bitmap,
 					job_ptr->resv_ptr->node_bitmap);
-				bit_not(job_ptr->resv_ptr->node_bitmap);
 			} else {
 				/* The job has no reservation but requires
 				 * nodes that are currently in some reservation
@@ -1896,10 +1912,20 @@ next_task:
 #endif
 			if (job_ptr->batch_flag == 0)
 				srun_allocate(job_ptr->job_id);
-			else if ((job_ptr->details->prolog_running == 0) &&
-			         ((job_ptr->bit_flags & NODE_REBOOT) == 0)) {
+			else if (
+#ifdef HAVE_BG
+				/* On a bluegene system we need to run the
+				 * prolog while the job is CONFIGURING so this
+				 * can't work off the CONFIGURING flag as done
+				 * elsewhere.
+				 */
+				!job_ptr->details->prolog_running &&
+				!(job_ptr->bit_flags & NODE_REBOOT)
+#else
+				!IS_JOB_CONFIGURING(job_ptr)
+#endif
+				)
 				launch_job(job_ptr);
-			}
 			rebuild_job_part_list(job_ptr);
 			job_cnt++;
 			if (is_job_array_head &&
@@ -1953,10 +1979,8 @@ next_task:
 			fail_by_part = false;
 			/* Do not schedule more jobs on nodes required by this
 			 * job, but don't block the entire queue/partition. */
-			bit_not(job_ptr->details->req_node_bitmap);
-			bit_and(avail_node_bitmap,
+			bit_and_not(avail_node_bitmap,
 				job_ptr->details->req_node_bitmap);
-			bit_not(job_ptr->details->req_node_bitmap);
 		}
 #endif
 		if (fail_by_part && job_ptr->resv_name) {
@@ -1987,10 +2011,8 @@ next_task:
 		 	/* do not schedule more jobs in this partition or on
 			 * nodes in this partition */
 			failed_parts[failed_part_cnt++] = job_ptr->part_ptr;
-			bit_not(job_ptr->part_ptr->node_bitmap);
-			bit_and(avail_node_bitmap,
+			bit_and_not(avail_node_bitmap,
 				job_ptr->part_ptr->node_bitmap);
-			bit_not(job_ptr->part_ptr->node_bitmap);
 		}
 
 		if ((reject_array_job_id == job_ptr->array_job_id) &&
@@ -3224,11 +3246,7 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	if (job_req_node_filter(job_ptr, avail_bitmap, true))
 		rc = ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE;
 	if (job_ptr->details->exc_node_bitmap) {
-		bitstr_t *exc_node_mask = NULL;
-		exc_node_mask = bit_copy(job_ptr->details->exc_node_bitmap);
-		bit_not(exc_node_mask);
-		bit_and(avail_bitmap, exc_node_mask);
-		FREE_NULL_BITMAP(exc_node_mask);
+		bit_and_not(avail_bitmap, job_ptr->details->exc_node_bitmap);
 	}
 	if (job_ptr->details->req_node_bitmap) {
 		if (!bit_super_set(job_ptr->details->req_node_bitmap,
@@ -3238,13 +3256,14 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	}
 
 	/* Enforce reservation: access control, time and nodes */
-	if (job_ptr->details->begin_time)
+	if (job_ptr->details->begin_time &&
+	    (job_ptr->details->begin_time > now))
 		start_res = job_ptr->details->begin_time;
 	else
 		start_res = now;
 
 	i = job_test_resv(job_ptr, &start_res, true, &resv_bitmap,
-			  &exc_core_bitmap, &resv_overlap);
+			  &exc_core_bitmap, &resv_overlap, false);
 	if (i != SLURM_SUCCESS) {
 		FREE_NULL_BITMAP(avail_bitmap);
 		FREE_NULL_BITMAP(exc_core_bitmap);
@@ -3586,8 +3605,10 @@ static void *_run_epilog(void *arg)
 	return NULL;
 }
 
-/* Return a node bitmap identifying which nodes must be rebooted for a job
- * to start. */
+/* Determine which nodes must be rebooted for a job
+ * IN job_ptr - pointer to job that will be initiated
+ * RET bitmap of nodes requiring a reboot
+ */
 extern bitstr_t *node_features_reboot(struct job_record *job_ptr)
 {
 	bitstr_t *active_bitmap = NULL, *boot_node_bitmap = NULL;
@@ -3603,14 +3624,11 @@ extern bitstr_t *node_features_reboot(struct job_record *job_ptr)
 
 	build_active_feature_bitmap(job_ptr, job_ptr->node_bitmap,
 				    &active_bitmap);
-	boot_node_bitmap = bit_copy(job_ptr->node_bitmap);
-	if (active_bitmap == NULL) {
-		FREE_NULL_BITMAP(boot_node_bitmap);
-		return boot_node_bitmap;
-	}
+	if (active_bitmap == NULL)	/* All have desired features */
+		return NULL;
 
-	bit_not(active_bitmap);	/* Change to INactive_bitmap */
-	bit_and(boot_node_bitmap, active_bitmap);
+	boot_node_bitmap = bit_copy(job_ptr->node_bitmap);
+	bit_and_not(boot_node_bitmap, active_bitmap);
 	FREE_NULL_BITMAP(active_bitmap);
 	if (bit_set_count(boot_node_bitmap) == 0)
 		FREE_NULL_BITMAP(boot_node_bitmap);
@@ -3618,6 +3636,39 @@ extern bitstr_t *node_features_reboot(struct job_record *job_ptr)
 		job_ptr->wait_all_nodes = 1;
 
 	return boot_node_bitmap;
+}
+
+/* Determine if node boot required for this job
+ * IN job_ptr - pointer to job that will be initiated
+ * IN node_bitmap - nodes to be allocated
+ * RET - true if reboot required
+ */
+extern bool node_features_reboot_test(struct job_record *job_ptr,
+				      bitstr_t *node_bitmap)
+{
+	bitstr_t *active_bitmap = NULL, *boot_node_bitmap = NULL;
+	int node_cnt;
+
+	if (job_ptr->reboot)
+		return true;
+
+	if ((node_features_g_count() == 0) ||
+	    !node_features_g_user_update(job_ptr->user_id))
+		return false;
+
+	build_active_feature_bitmap(job_ptr, node_bitmap, &active_bitmap);
+	if (active_bitmap == NULL)	/* All have desired features */
+		return false;
+
+	boot_node_bitmap = bit_copy(node_bitmap);
+	bit_and_not(boot_node_bitmap, active_bitmap);
+	node_cnt = bit_set_count(boot_node_bitmap);
+	FREE_NULL_BITMAP(active_bitmap);
+	FREE_NULL_BITMAP(boot_node_bitmap);
+
+	if (node_cnt == 0)
+		return false;
+	return true;
 }
 
 /*
@@ -3799,10 +3850,10 @@ extern int prolog_slurmctld(struct job_record *job_ptr)
 		return errno;
 	}
 
-	if (job_ptr->details)
+	if (job_ptr->details) {
 		job_ptr->details->prolog_running++;
-
-	job_ptr->job_state |= JOB_CONFIGURING;
+		job_ptr->job_state |= JOB_CONFIGURING;
+	}
 
 	slurm_attr_init(&thread_attr_prolog);
 	pthread_attr_setdetachstate(&thread_attr_prolog,
@@ -3884,7 +3935,7 @@ static void *_run_prolog(void *arg)
 	if (status != 0) {
 		bool kill_job = false;
 		slurmctld_lock_t job_write_lock = {
-			NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+			NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 		error("prolog_slurmctld job %u prolog exit status %u:%u",
 		      job_id, WEXITSTATUS(status), WTERMSIG(status));
 		lock_slurmctld(job_write_lock);
@@ -3949,11 +4000,19 @@ extern void prolog_running_decr(struct job_record *job_ptr)
 	    (--job_ptr->details->prolog_running > 0))
 		return;
 
-	job_ptr->job_state &= ~JOB_CONFIGURING;
-	if (job_ptr->batch_flag &&
-	    ((job_ptr->bit_flags & NODE_REBOOT) == 0) &&
-	    (IS_JOB_RUNNING(job_ptr) || IS_JOB_SUSPENDED(job_ptr))) {
-		launch_job(job_ptr);
+	/* Federated job notified the origin that the job is to be requeued,
+	 * need to wait for this job to be cancelled. */
+	if (job_ptr->job_state & JOB_REQUEUE_FED)
+		return;
+
+	if (IS_JOB_CONFIGURING(job_ptr) && test_job_nodes_ready(job_ptr)) {
+		info("%s: Configuration for job %u is complete",
+		      __func__, job_ptr->job_id);
+		job_config_fini(job_ptr);
+		if (job_ptr->batch_flag &&
+		    (IS_JOB_RUNNING(job_ptr) || IS_JOB_SUSPENDED(job_ptr))) {
+			launch_job(job_ptr);
+		}
 	}
 }
 
@@ -4241,14 +4300,13 @@ cleanup_completing(struct job_record *job_ptr)
 	}
 
 	license_job_return(job_ptr);
-	if (slurm_sched_g_freealloc(job_ptr) != SLURM_SUCCESS)
-		error("slurm_sched_freealloc(%u): %m", job_ptr->job_id);
+	gs_job_fini(job_ptr);
 
 	delete_step_records(job_ptr);
 	job_ptr->job_state &= (~JOB_COMPLETING);
 	job_hold_requeue(job_ptr);
 
-	slurm_sched_g_schedule();
+	fed_mgr_job_complete(job_ptr, job_ptr->exit_code, job_ptr->start_time);
 }
 
 /*

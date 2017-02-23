@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -155,7 +155,7 @@ typedef struct {
 	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
 	uint32_t cpu_freq_max; /* Maximum cpu frequency  */
 	uint32_t cpu_freq_gov; /* cpu frequency governor */
-	switch_jobinfo_t *switch_job; /* switch-specific job information     */
+	dynamic_plugin_data_t *switch_job; /* switch-specific job information     */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
 	gid_t         gid;     /* group ID for job                          */
@@ -228,6 +228,7 @@ typedef struct {
 	int		non_smp;	/* Set if task IDs are not monotonically
 					 * increasing across all nodes, set only
 					 * native Cray systems */
+	bool		oom_error;	/* step out of memory error */
 } stepd_step_rec_t;
 
 

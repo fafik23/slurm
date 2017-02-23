@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -418,20 +418,22 @@ slurm_job_step_create (job_step_create_request_msg_t *req,
 
 /*
  * slurm_allocation_lookup - retrieve info for an existing resource allocation
+ * 			     without the addrs and such
  * IN jobid - job allocation identifier
  * OUT info - job allocation information
  * RET 0 on success, otherwise return -1 and set errno to indicate the error
- * NOTE: free the "resp" using slurm_free_resource_allocation_response_msg
+ * NOTE: free the response using slurm_free_resource_allocation_response_msg()
  */
 int
 slurm_allocation_lookup(uint32_t jobid,
-			job_alloc_info_response_msg_t **info)
+			resource_allocation_response_msg_t **info)
 {
-	job_alloc_info_msg_t req;
+	job_alloc_info_msg_t req = {0};
 	slurm_msg_t req_msg;
 	slurm_msg_t resp_msg;
 
 	req.job_id = jobid;
+	req.req_cluster  = slurmctld_conf.cluster_name;
 	slurm_msg_t_init(&req_msg);
 	slurm_msg_t_init(&resp_msg);
 	req_msg.msg_type = REQUEST_JOB_ALLOCATION_INFO;
@@ -440,6 +442,8 @@ slurm_allocation_lookup(uint32_t jobid,
 	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
 		return SLURM_ERROR;
 
+	req.req_cluster = NULL;
+
 	switch(resp_msg.msg_type) {
 	case RESPONSE_SLURM_RC:
 		if (_handle_rc_msg(&resp_msg) < 0)
@@ -447,49 +451,6 @@ slurm_allocation_lookup(uint32_t jobid,
 		*info = NULL;
 		break;
 	case RESPONSE_JOB_ALLOCATION_INFO:
-		*info = (job_alloc_info_response_msg_t *)resp_msg.data;
-		return SLURM_PROTOCOL_SUCCESS;
-		break;
-	default:
-		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
-		break;
-	}
-
-	return SLURM_PROTOCOL_SUCCESS;
-}
-
-/*
- * slurm_allocation_lookup_lite - retrieve info for an existing resource
- *                                allocation without the addrs and such
- * IN jobid - job allocation identifier
- * OUT info - job allocation information
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
- * NOTE: free the response using slurm_free_resource_allocation_response_msg()
- */
-int
-slurm_allocation_lookup_lite(uint32_t jobid,
-			     resource_allocation_response_msg_t **info)
-{
-	job_alloc_info_msg_t req;
-	slurm_msg_t req_msg;
-	slurm_msg_t resp_msg;
-
-	req.job_id = jobid;
-	slurm_msg_t_init(&req_msg);
-	slurm_msg_t_init(&resp_msg);
-	req_msg.msg_type = REQUEST_JOB_ALLOCATION_INFO_LITE;
-	req_msg.data     = &req;
-
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
-		return SLURM_ERROR;
-
-	switch(resp_msg.msg_type) {
-	case RESPONSE_SLURM_RC:
-		if (_handle_rc_msg(&resp_msg) < 0)
-			return SLURM_ERROR;
-		*info = NULL;
-		break;
-	case RESPONSE_JOB_ALLOCATION_INFO_LITE:
 		*info = (resource_allocation_response_msg_t *) resp_msg.data;
 		return SLURM_PROTOCOL_SUCCESS;
 		break;
@@ -894,7 +855,7 @@ _wait_for_allocation_response(uint32_t job_id, const listen_t *listen,
 		 * Let's see if the controller thinks that the allocation
 		 * has been granted.
 		 */
-		if (slurm_allocation_lookup_lite(job_id, &resp) >= 0) {
+		if (slurm_allocation_lookup(job_id, &resp) >= 0) {
 			return resp;
 		}
 		if (slurm_get_errno() == ESLURM_JOB_PENDING) {

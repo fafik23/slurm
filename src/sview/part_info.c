@@ -4,14 +4,14 @@
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -811,7 +811,7 @@ static GtkWidget *_admin_full_edit_part(update_part_msg_t *part_msg,
 
 	gtk_table_set_homogeneous(table, false);
 
-	for(i = 0; i < SORTID_CNT; i++) {
+	for (i = 0; i < SORTID_CNT; i++) {
 		while (display_data++) {
 			if (display_data->id == -1)
 				break;
@@ -861,10 +861,10 @@ static void _subdivide_part(sview_part_info_t *sview_part_info,
 		set = 1;
 	}
 	itr = list_iterator_create(sview_part_info->sub_list);
-	if (list_count(sview_part_info->sub_list) == 1) {
+	if ((list_count(sview_part_info->sub_list) == 1) &&
+	    (sview_part_sub = list_next(itr))) {
 		gtk_tree_store_set(GTK_TREE_STORE(model), iter,
 				   SORTID_ONLY_LINE, 1, -1);
-		sview_part_sub = list_next(itr);
 		_update_part_sub_record(sview_part_sub,
 					GTK_TREE_STORE(model),
 					iter);
@@ -955,7 +955,6 @@ static void _layout_part_record(GtkTreeView *treeview,
 	uint16_t temp_uint16 = 0;
 	int i;
 	int yes_no = -1;
-	int up_down = -1;
 	uint32_t limit_set = NO_VAL;
 	GtkTreeStore *treestore =
 		GTK_TREE_STORE(gtk_tree_view_get_model(treeview));
@@ -975,7 +974,7 @@ static void _layout_part_record(GtkTreeView *treeview,
 	for (i = 0; i < SORTID_CNT; i++) {
 		switch (i) {
 		case SORTID_PART_STATE:
-			switch(part_ptr->state_up) {
+			switch (part_ptr->state_up) {
 			case PARTITION_UP:
 				temp_char = "up";
 				break;
@@ -1187,13 +1186,7 @@ static void _layout_part_record(GtkTreeView *treeview,
 			break;
 		}
 
-		if (up_down != -1) {
-			if (up_down)
-				temp_char = "up";
-			else
-				temp_char = "down";
-			up_down = -1;
-		} else if (yes_no != -1) {
+		if (yes_no != -1) {
 			if (yes_no)
 				temp_char = "yes";
 			else
@@ -1874,10 +1867,6 @@ static List _create_part_info_list(partition_info_msg_t *part_info_ptr,
 		last_list = info_list;
 
 	info_list = list_create(_part_info_list_del);
-	if (!info_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 
 	if (last_list)
 		last_list_itr = list_iterator_create(last_list);
@@ -2163,7 +2152,7 @@ extern bool check_part_includes_node(int node_dx)
 		return false;
 	}
 
-	for (i=0; i<g_part_info_ptr->record_count; i++) {
+	for (i = 0; i < g_part_info_ptr->record_count; i++) {
 		/* don't include allow group or hidden excludes */
 		part_ptr = &(g_part_info_ptr->partition_array[i]);
 		if (part_ptr->flags & PART_FLAG_HIDDEN)
@@ -2210,7 +2199,7 @@ extern bool visible_part(char* part_name)
 
 	if (!g_part_info_ptr)
 		get_new_info_part(&part_info_ptr, force_refresh);
-	for (i=0; i<g_part_info_ptr->record_count; i++) {
+	for (i = 0; i < g_part_info_ptr->record_count; i++) {
 		m_part_ptr = &(g_part_info_ptr->partition_array[i]);
 		if (!xstrcmp(m_part_ptr->name, part_name)) {
 			if (m_part_ptr->flags & PART_FLAG_HIDDEN)
@@ -3139,6 +3128,7 @@ extern void admin_part(GtkTreeModel *model, GtkTreeIter *iter, char *type)
 		if (!model2) {
 			g_print("In change part, no model set up for %d(%s)\n",
 				SORTID_PART_STATE, partid);
+			xfree(part_msg);
 			return;
 		}
 		entry = gtk_combo_box_new_with_model(model2);

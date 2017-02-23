@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -266,6 +266,10 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	packmem(NULL, 0, buf); \
 } while (0)
 
+/* DEPRECATED - DO NOT USE THIS IN NEW CODE */
+/* On larger systems the full result from bit_fmt can be
+ * longer than 0xfffe bytes and thus truncated.
+ * Use pack_bit_str_hex instead. */
 #define pack_bit_fmt(bitmap,buf) do {			\
 	assert(buf->magic == BUF_MAGIC);		\
 	if (bitmap) {					\
@@ -276,22 +280,6 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 		packmem(_tmp_str,_size,buf);		\
 	} else						\
 		packmem(NULL,(uint32_t)0,buf);		\
-} while (0)
-
-/* NOTE: un/pack_bit_str_hex() is much faster than un/pack_bit_str(),
- * especially for larger and/or sparse bitmaps. */
-#define pack_bit_str(bitmap,buf) do {			\
-	assert(buf->magic == BUF_MAGIC);		\
-	if (bitmap) {					\
-		char _tmp_str[0xfffe];			\
-		uint32_t _size;				\
-		bit_fmt(_tmp_str,0xfffe,bitmap);	\
-		_size = bit_size(bitmap);               \
-		pack32(_size, buf);              	\
-		_size = strlen(_tmp_str)+1;		\
-		packmem(_tmp_str,_size,buf);	        \
-	} else						\
-		pack32(NO_VAL, buf);                 	\
 } while (0)
 
 #define pack_bit_str_hex(bitmap,buf) do {		\
@@ -311,17 +299,26 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 
 #define unpack_bit_str_hex(bitmap,buf) do {				\
 	char *tmp_str = NULL;						\
-	uint32_t _size = NO_VAL;					\
+	uint32_t _size, _tmp_uint32;					\
 	assert(*bitmap == NULL);					\
 	assert(buf->magic == BUF_MAGIC);				\
 	safe_unpack32(&_size, buf);					\
 	if (_size != NO_VAL) {						\
+		safe_unpackstr_xmalloc(&tmp_str, &_tmp_uint32, buf);	\
 		*bitmap = bit_alloc(_size);				\
-		safe_unpackstr_xmalloc(&tmp_str, &_size, buf);		\
 		bit_unfmt_hexmask(*bitmap, tmp_str);			\
 		xfree(tmp_str);						\
 	} else								\
 		*bitmap = NULL;						\
+} while (0)
+
+/* note: this would be faster if collapsed into a single function
+ * rather than a combination of unpack_bit_str_hex and bitstr2inx */
+#define unpack_bit_str_hex_as_inx(inx, buf) do {	\
+	bitstr_t *b = NULL;				\
+	unpack_bit_str_hex(&b, buf);			\
+	*inx = bitstr2inx(b);				\
+	FREE_NULL_BITMAP(b);				\
 } while (0)
 
 #define unpackstr_ptr		                        \

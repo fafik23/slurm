@@ -57,6 +57,9 @@ Print information one line per record.
 \fB\-Q\fR, \fB\-\-quiet\fR
 Print no warning or informational messages, only fatal error messages.
 .TP
+\fB\-u\fR, \fB\-\-uid\fR=<\fIuid\fR>
+Attempt to update a job as user <uid> instead of the invoking user id.
+.TP
 \fB\-v\fR, \fB\-\-verbose\fR
 Print detailed event logging. Multiple \fB\-v\fR's will further increase
 the verbosity of logging. By default only errors will be displayed.
@@ -1497,7 +1500,14 @@ If this flag is not set, a job using this reservation may use only the nodes
 and licenses associated with the reservation.
 .TP
 \fIDAILY\fR
-Repeat the reservation at the same time every day
+Repeat the reservation at the same time every day.
+.TP
+\fIFLEX\fR
+Permit jobs requesting the reservation to begin prior to the reservation's
+start time and use resources inside or outside of the reservation. A typical
+use case is to prevent jobs not explicitlg requesting the reservation from using
+those reserved resources rather than forcing jobs requesting the reservation to
+use those resources in the time frame reserved.
 .TP
 \fIFIRST_CORES\fR
 Use the lowest numbered cores on a node only.
@@ -1550,8 +1560,16 @@ The reservation start time is relative to the current time and moves forward
 through time (e.g. a StartTime=now+10minutes will always be 10 minutes in the
 future).
 .TP
+\fIWEEKDAY\fR
+Repeat the reservation at the same time on every weekday (Monday, Tuesday,
+Wednesday, Thursday and Friday).
+.TP
+\fIWEEKEND\fR
+Repeat the reservation at the same time on every weekend day (Saturday and
+Sunday).
+.TP
 \fIWEEKLY\fR
-Repeat the reservation at the same time every week
+Repeat the reservation at the same time every week.
 .RE
 
 .TP

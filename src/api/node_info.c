@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -275,11 +275,32 @@ slurm_sprint_node_table (node_info_t * node_ptr,
 	}
 
 	/****** Line (optional) ******/
-	if (node_ptr->node_hostname || node_ptr->node_addr) {
-		xstrfmtcat(out, "NodeAddr=%s NodeHostName=%s Version=%s",
-			   node_ptr->node_addr, node_ptr->node_hostname,
-			   node_ptr->version);
-		xstrcat(out, line_end);
+	{
+		bool line_used = false;
+
+		if (node_ptr->node_addr) {
+			xstrfmtcat(out, "NodeAddr=%s ", node_ptr->node_addr);
+			line_used = true;
+		}
+
+		if (node_ptr->node_hostname) {
+			xstrfmtcat(out, "NodeHostName=%s ",
+				   node_ptr->node_hostname);
+			line_used = true;
+		}
+
+		if (node_ptr->port != slurm_get_slurmd_port()) {
+			xstrfmtcat(out, "Port=%u ", node_ptr->port);
+			line_used = true;
+		}
+
+		if (node_ptr->version && xstrcmp(node_ptr->version, slurmctld_conf.version)) {
+			xstrfmtcat(out, "Version=%s", node_ptr->version);
+			line_used = true;
+		}
+
+		if (line_used)
+			xstrcat(out, line_end);
 	}
 
 	/****** Line ******/

@@ -6,7 +6,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -571,6 +571,7 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 	while ((rc == SLURM_SUCCESS) && (tok = strsep(&p, ";"))) {
 		if (xstrcasecmp(tok, "help") == 0) {
 			slurm_print_mem_bind_help();
+			xfree(buf);
 			return 1;
 		} else if ((xstrcasecmp(tok, "p") == 0) ||
 			   (xstrcasecmp(tok, "prefer") == 0)) {

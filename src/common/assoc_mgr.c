@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -3384,10 +3384,12 @@ extern int assoc_mgr_info_unpack_msg(
 			     buffer);
 
 	safe_unpack32(&count, buffer);
+	if (count > NO_VAL32)
+		goto unpack_error;
 	if (count) {
 		object_ptr->assoc_list =
 			list_create(slurmdb_destroy_assoc_rec);
-		for (i=0; i<count; i++) {
+		for (i = 0; i < count; i++) {
 			if (slurmdb_unpack_assoc_rec_with_usage(
 				    &list_object, protocol_version,
 				    buffer)
@@ -3398,10 +3400,12 @@ extern int assoc_mgr_info_unpack_msg(
 	}
 
 	safe_unpack32(&count, buffer);
+	if (count > NO_VAL32)
+		goto unpack_error;
 	if (count) {
 		object_ptr->qos_list =
 			list_create(slurmdb_destroy_qos_rec);
-		for (i=0; i<count; i++) {
+		for (i = 0; i < count; i++) {
 			if (slurmdb_unpack_qos_rec_with_usage(
 				    &list_object, protocol_version, buffer)
 			    != SLURM_SUCCESS)
@@ -3411,10 +3415,12 @@ extern int assoc_mgr_info_unpack_msg(
 	}
 
 	safe_unpack32(&count, buffer);
+	if (count > NO_VAL32)
+		goto unpack_error;
 	if (count) {
 		object_ptr->user_list =
 			list_create(slurmdb_destroy_user_rec);
-		for (i=0; i<count; i++) {
+		for (i = 0; i < count; i++) {
 			if (slurmdb_unpack_user_rec(
 				    &list_object, protocol_version, buffer)
 			    != SLURM_SUCCESS)
@@ -4621,6 +4627,9 @@ extern int assoc_mgr_update_qos(slurmdb_update_object_t *update, bool locked)
 		FREE_NULL_LIST(update_list);
 	}
 
+	if (resize_qos_bitstr && init_setup.resize_qos_notify)
+		init_setup.resize_qos_notify();
+
 	return rc;
 }
 
@@ -5340,7 +5349,7 @@ extern int load_assoc_usage(char *state_save_location)
 	uint32_t data_size = 0;
 	uint16_t ver = 0;
 	int state_fd;
-	char *data = NULL, *state_file;
+	char *data = NULL, *state_file, *tmp_str = NULL;
 	Buf buffer = NULL;
 	time_t buf_time;
 	assoc_mgr_lock_t locks = { WRITE_LOCK, READ_LOCK, NO_LOCK, NO_LOCK,
@@ -5386,9 +5395,7 @@ extern int load_assoc_usage(char *state_save_location)
 
 	safe_unpack16(&ver, buffer);
 	debug3("Version in assoc_usage header is %u", ver);
-	/* We used to pack 1 here for the version, so we can't use
-	 * SLURM_MIN_PROTOCOL_VERSION to check until 2 versions after 15.08. */
-	if (ver > SLURM_PROTOCOL_VERSION) {
+	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		error("***********************************************");
 		error("Can not recover assoc_usage state, "
 		      "incompatible version, got %u need > %u <= %u", ver,
@@ -5406,7 +5413,6 @@ extern int load_assoc_usage(char *state_save_location)
 		uint32_t grp_used_wall = 0;
 		long double usage_raw = 0;
 		slurmdb_assoc_rec_t *assoc = NULL;
-		char *tmp_str = NULL;
 		uint32_t tmp32;
 		long double usage_tres_raw[g_tres_count];
 
@@ -5449,6 +5455,7 @@ extern int load_assoc_usage(char *state_save_location)
 unpack_error:
 	if (buffer)
 		free_buf(buffer);
+	xfree(tmp_str);
 	assoc_mgr_unlock(&locks);
 	return SLURM_ERROR;
 }
@@ -5459,7 +5466,7 @@ extern int load_qos_usage(char *state_save_location)
 	uint32_t data_size = 0;
 	uint16_t ver = 0;
 	int state_fd;
-	char *data = NULL, *state_file;
+	char *data = NULL, *state_file, *tmp_str = NULL;
 	Buf buffer = NULL;
 	time_t buf_time;
 	ListIterator itr = NULL;
@@ -5506,9 +5513,7 @@ extern int load_qos_usage(char *state_save_location)
 
 	safe_unpack16(&ver, buffer);
 	debug3("Version in qos_usage header is %u", ver);
-	/* We used to pack 1 here for the version, so we can't use
-	 * SLURM_MIN_PROTOCOL_VERSION to check until 2 versions after 15.08. */
-	if (ver > SLURM_PROTOCOL_VERSION) {
+	if (ver > SLURM_PROTOCOL_VERSION || ver < SLURM_MIN_PROTOCOL_VERSION) {
 		error("***********************************************");
 		error("Can not recover qos_usage state, "
 		      "incompatible version, got %u need > %u <= %u", ver,
@@ -5528,7 +5533,6 @@ extern int load_qos_usage(char *state_save_location)
 		uint32_t tmp32;
 		long double usage_raw = 0;
 		slurmdb_qos_rec_t *qos = NULL;
-		char *tmp_str = NULL;
 
 		safe_unpack32(&qos_id, buffer);
 		safe_unpacklongdouble(&usage_raw, buffer);
@@ -5559,6 +5563,7 @@ unpack_error:
 		free_buf(buffer);
 	if (itr)
 		list_iterator_destroy(itr);
+	xfree(tmp_str);
 	assoc_mgr_unlock(&locks);
 	return SLURM_ERROR;
 }

@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -874,6 +874,10 @@ static int _tres_weight_item(double *weights, char *item_str)
 	}
 
 	type = strtok_r(item_str, "=", &value_str);
+	if (type == NULL) {
+		error("\"%s\" is an invalid TRES weight entry", item_str);
+		return SLURM_ERROR;
+	}
 	if (strchr(type, '/'))
 		type = strtok_r(type, "/", &name);
 
@@ -890,7 +894,7 @@ static int _tres_weight_item(double *weights, char *item_str)
 
 	errno = 0;
 	weight_value = strtod(value_str, &val_unit);
-	if(errno) {
+	if (errno) {
 		error("Unable to convert %s value to double in %s",
 		      __func__, value_str);
 		return SLURM_ERROR;
@@ -920,12 +924,13 @@ static int _tres_weight_item(double *weights, char *item_str)
 double *slurm_get_tres_weight_array(char *weights_str, int tres_cnt)
 {
 	double *weights;
-	char *tmp_str = xstrdup(weights_str);
+	char *tmp_str;
 	char *token, *last = NULL;
 
 	if (!weights_str || !*weights_str || !tres_cnt)
 		return NULL;
 
+	tmp_str = xstrdup(weights_str);
 	weights = xmalloc(sizeof(double) * tres_cnt);
 
 	token = strtok_r(tmp_str, ",", &last);
@@ -1001,7 +1006,7 @@ char *slurm_get_state_save_location(void)
  * returns the TmpFS configuration parameter from slurmctld_conf object
  * RET char *    - tmp_fs, MUST be xfreed by caller
  */
-extern char *slurm_get_tmp_fs(void)
+extern char *slurm_get_tmp_fs(char *node_name)
 {
 	char *tmp_fs = NULL;
 	slurm_ctl_conf_t *conf = NULL;
@@ -1009,7 +1014,11 @@ extern char *slurm_get_tmp_fs(void)
 	if (slurmdbd_conf) {
 	} else {
 		conf = slurm_conf_lock();
-		tmp_fs = xstrdup(conf->tmp_fs);
+		if (!node_name)
+			tmp_fs = xstrdup(conf->tmp_fs);
+		else
+			tmp_fs = slurm_conf_expand_slurmd_path(
+				conf->tmp_fs, node_name);
 		slurm_conf_unlock();
 	}
 	return tmp_fs;
@@ -1886,22 +1895,25 @@ static char *_global_auth_key(void)
 
 	if (slurmdbd_conf) {
 		if (slurmdbd_conf->auth_info) {
-			if (strlen(slurmdbd_conf->auth_info) >
-			    sizeof(storage_pass))
+			if (strlen(slurmdbd_conf->auth_info) >=
+			    sizeof(storage_pass)) {
 				fatal("AuthInfo is too long");
-			strncpy(storage_pass, slurmdbd_conf->auth_info,
-				sizeof(storage_pass));
-			storage_pass_ptr = storage_pass;
+			} else {
+				strcpy(storage_pass, slurmdbd_conf->auth_info);
+				storage_pass_ptr = storage_pass;
+			}
 		}
 	} else {
 		conf = slurm_conf_lock();
 		if (conf->accounting_storage_pass) {
-			if (strlen(conf->accounting_storage_pass) >
-			    sizeof(storage_pass))
+			if (strlen(conf->accounting_storage_pass) >=
+			    sizeof(storage_pass)) {
 				fatal("AccountingStoragePass is too long");
-			strncpy(storage_pass, conf->accounting_storage_pass,
-				sizeof(storage_pass));
-			storage_pass_ptr = storage_pass;
+			} else {
+				strcpy(storage_pass,
+				       conf->accounting_storage_pass);
+				storage_pass_ptr = storage_pass;
+			}
 		}
 		slurm_conf_unlock();
 	}
@@ -2062,23 +2074,23 @@ char *slurm_get_acct_gather_profile_type(void)
 	return acct_gather_profile_type;
 }
 
-/* slurm_get_infiniband_accounting_type
- * get InfinibandAccountingType from slurmctld_conf object
- * RET char *   - infiniband_accounting type, MUST be xfreed by caller
+/* slurm_get_interconnect_accounting_type
+ * get InterconnectAccountingType from slurmctld_conf object
+ * RET char *   - interconnect_accounting type, MUST be xfreed by caller
  */
-char *slurm_get_acct_gather_infiniband_type(void)
+char *slurm_get_acct_gather_interconnect_type(void)
 {
-	char *acct_gather_infiniband_type = NULL;
+	char *acct_gather_interconnect_type = NULL;
 	slurm_ctl_conf_t *conf;
 
 	if (slurmdbd_conf) {
 	} else {
 		conf = slurm_conf_lock();
-		acct_gather_infiniband_type =
-			xstrdup(conf->acct_gather_infiniband_type);
+		acct_gather_interconnect_type =
+			xstrdup(conf->acct_gather_interconnect_type);
 		slurm_conf_unlock();
 	}
-	return acct_gather_infiniband_type;
+	return acct_gather_interconnect_type;
 }
 
 /* slurm_get_filesystem_accounting_type
@@ -2766,7 +2778,7 @@ char *slurm_get_job_container_plugin(void)
 
 /* slurm_get_slurmd_spooldir
  * RET slurmd_spooldir name, must be xfreed by caller */
-char *slurm_get_slurmd_spooldir(void)
+char *slurm_get_slurmd_spooldir(char *node_name)
 {
 	char *slurmd_spooldir = NULL;
 	slurm_ctl_conf_t *conf;
@@ -2774,7 +2786,11 @@ char *slurm_get_slurmd_spooldir(void)
 	if (slurmdbd_conf) {
 	} else {
 		conf = slurm_conf_lock();
-		slurmd_spooldir = xstrdup(conf->slurmd_spooldir);
+		if (!node_name)
+			slurmd_spooldir = xstrdup(conf->slurmd_spooldir);
+		else
+			slurmd_spooldir = slurm_conf_expand_slurmd_path(
+				conf->slurmd_spooldir, node_name);
 		slurm_conf_unlock();
 	}
 	return slurmd_spooldir;
@@ -3042,6 +3058,7 @@ int slurm_open_controller_conn(slurm_addr_t *addr, bool *use_backup)
 		}
 	}
 	addr = NULL;
+	xfree(myproto);
 	slurm_seterrno_ret(SLURMCTLD_COMMUNICATIONS_CONNECTION_ERROR);
 
 end_it:
@@ -3144,11 +3161,10 @@ extern int slurm_unpack_received_msg(slurm_msg_t *msg, int fd, Buf buffer)
 		goto total_return;
 	}
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2,
-					  _global_auth_key() );
+		rc = g_slurm_auth_verify(auth_cred, _global_auth_key());
 	} else {
 		char *auth_info = slurm_get_auth_info();
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2, auth_info );
+		rc = g_slurm_auth_verify(auth_cred, auth_info);
 		xfree(auth_info);
 	}
 
@@ -3421,11 +3437,10 @@ List slurm_receive_msgs(int fd, int steps, int timeout)
 		goto total_return;
 	}
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2,
-					  _global_auth_key() );
+		rc = g_slurm_auth_verify(auth_cred, _global_auth_key());
 	} else {
 		char *auth_info = slurm_get_auth_info();
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2, auth_info );
+		rc = g_slurm_auth_verify(auth_cred, auth_info);
 		xfree(auth_info);
 	}
 
@@ -3656,11 +3671,10 @@ int slurm_receive_msg_and_forward(int fd, slurm_addr_t *orig_addr,
 		goto total_return;
 	}
 	if (header.flags & SLURM_GLOBAL_AUTH_KEY) {
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2,
-					  _global_auth_key() );
+		rc = g_slurm_auth_verify(auth_cred, _global_auth_key());
 	} else {
 		char *auth_info = slurm_get_auth_info();
-		rc = g_slurm_auth_verify( auth_cred, NULL, 2, auth_info );
+		rc = g_slurm_auth_verify(auth_cred, auth_info);
 		xfree(auth_info);
 	}
 
@@ -3792,10 +3806,10 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 	 * wait too long for the incoming message.
 	 */
 	if (msg->flags & SLURM_GLOBAL_AUTH_KEY) {
-		auth_cred = g_slurm_auth_create(NULL, 2, _global_auth_key());
+		auth_cred = g_slurm_auth_create(_global_auth_key());
 	} else {
 		char *auth_info = slurm_get_auth_info();
-		auth_cred = g_slurm_auth_create(NULL, 2, auth_info);
+		auth_cred = g_slurm_auth_create(auth_info);
 		xfree(auth_info);
 	}
 
@@ -3812,11 +3826,10 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 	if (difftime(time(NULL), start_time) >= 60) {
 		(void) g_slurm_auth_destroy(auth_cred);
 		if (msg->flags & SLURM_GLOBAL_AUTH_KEY) {
-			auth_cred = g_slurm_auth_create(NULL, 2,
-							_global_auth_key());
+			auth_cred = g_slurm_auth_create(_global_auth_key());
 		} else {
 			char *auth_info = slurm_get_auth_info();
-			auth_cred = g_slurm_auth_create(NULL, 2, auth_info);
+			auth_cred = g_slurm_auth_create(auth_info);
 			xfree(auth_info);
 		}
 	}
@@ -4020,6 +4033,8 @@ int slurm_unpack_slurm_addr_array(slurm_addr_t ** slurm_address,
 
 	*slurm_address = NULL;
 	safe_unpack32(&nl, buffer);
+	if (nl > NO_VAL32)
+		goto unpack_error;
 	*size_val = ntohl(nl);
 	*slurm_address = xmalloc((*size_val) * sizeof(slurm_addr_t));
 

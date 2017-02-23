@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -218,8 +218,7 @@ _run_script_and_set_env(const char *name, const char *path,
 
 		argv[0] = xstrdup(path);
 		argv[1] = NULL;
-		close(1);
-		if (dup(pfd[1]) == -1)
+		if (dup2(pfd[1], 1) == -1)
 			error("couldn't do the dup: %m");
 		close(2);
 		close(0);
@@ -495,11 +494,10 @@ exec_task(stepd_step_rec_t *job, int i)
 		int sz;
 		sz = read(fd, buf, sizeof(buf));
 		if ((sz >= 3) && (xstrncmp(buf, "#!", 2) == 0)) {
+			buf[sizeof(buf)-1] = '\0';
 			eol = strchr(buf, '\n');
 			if (eol)
 				eol[0] = '\0';
-			else
-				buf[sizeof(buf)-1] = '\0';
 			slurm_seterrno(saved_errno);
 			error("execve(): bad interpreter(%s): %m", buf+2);
 			exit(errno);

@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -78,7 +78,6 @@
 #include "src/common/node_select.h"
 #include "src/common/plugstack.h"
 #include "src/common/read_config.h"
-#include "src/common/siphash.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_acct_gather_energy.h"
@@ -97,6 +96,7 @@
 #include "src/slurmd/slurmd/get_mach_stat.h"
 #include "src/slurmd/slurmd/slurmd.h"
 
+#include "src/slurmd/common/fname.h"
 #include "src/slurmd/common/job_container_plugin.h"
 #include "src/slurmd/common/proctrack.h"
 #include "src/slurmd/common/run_script.h"
@@ -108,8 +108,6 @@
 
 #define RETRY_DELAY 15		/* retry every 15 seconds */
 #define MAX_RETRY   240		/* retry 240 times (one hour max) */
-
-#define EPIL_RETRY_MAX 2	/* max retries of epilog complete message */
 
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN	64
@@ -174,6 +172,7 @@ static void _note_batch_job_finished(uint32_t job_id);
 static int  _prolog_is_running (uint32_t jobid);
 static int  _step_limits_match(void *x, void *key);
 static int  _terminate_all_steps(uint32_t jobid, bool batch);
+static int  _receive_fd(int socket);
 static void _rpc_launch_tasks(slurm_msg_t *);
 static void _rpc_abort_job(slurm_msg_t *);
 static void _rpc_batch_job(slurm_msg_t *msg, bool new_msg);
@@ -220,6 +219,7 @@ static void _sync_messages_kill(kill_job_msg_t *req);
 static int  _waiter_init (uint32_t jobid);
 static int  _waiter_complete (uint32_t jobid);
 
+static void _send_back_fd(int socket, int fd);
 static bool _steps_completed_now(uint32_t jobid);
 static int  _valid_sbcast_cred(file_bcast_msg_t *req, uid_t req_uid,
 			       uint16_t block_no, uint32_t *job_id);
@@ -274,6 +274,7 @@ static pthread_cond_t  job_state_cond    = PTHREAD_COND_INITIALIZER;
 static uint32_t active_job_id[JOB_STATE_CNT];
 
 static pthread_mutex_t prolog_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t prolog_serial_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define FILE_BCAST_TIMEOUT 300
 static pthread_mutex_t file_bcast_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1577,41 +1578,120 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 		send_registration_msg(errnum, false);
 }
 
+/*
+ * Open file based upon permissions of a different user
+ * IN path_name - name of file to open
+ * IN uid - User ID to use for file access check
+ * IN gid - Group ID to use for file access check
+ * RET -1 on error, file descriptor otherwise
+ */
+static int _open_as_other(char *path_name, batch_job_launch_msg_t *req)
+{
+	pid_t child;
+	gids_t *gids;
+	int pipe[2];
+	int fd = -1, rc = 0;
+
+	if (!(gids = _gids_cache_lookup(req->user_name, req->gid))) {
+		error("%s: gids_cache_lookup for %s failed",
+		      __func__, req->user_name);
+		return -1;
+	}
+
+	if ((rc = container_g_create(req->job_id))) {
+		error("%s: container_g_create(%u): %m", __func__, req->job_id);
+		_dealloc_gids(gids);
+		return -1;
+	}
+
+	/* child process will setuid to the user, register the process
+	 * with the container, and open the file for us. */
+	if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pipe) != 0) {
+		error("%s: Failed to open pipe: %m", __func__);
+		_dealloc_gids(gids);
+		return -1;
+	}
+
+	child = fork();
+	if (child == -1) {
+		error("%s: fork failure", __func__);
+		_dealloc_gids(gids);
+		close(pipe[0]);
+		close(pipe[1]);
+		return -1;
+	} else if (child > 0) {
+		close(pipe[0]);
+		(void) waitpid(child, &rc, 0);
+		_dealloc_gids(gids);
+		if (WIFEXITED(rc) && (WEXITSTATUS(rc) == 0))
+			fd = _receive_fd(pipe[1]);
+		close(pipe[1]);
+		return fd;
+	}
+
+	/* child process below here */
+
+	close(pipe[1]);
+
+	/* container_g_add_pid needs to be called in the
+	 * forked process part of the fork to avoid a race
+	 * condition where if this process makes a file or
+	 * detacts itself from a child before we add the pid
+	 * to the container in the parent of the fork. */
+	if (container_g_add_pid(req->job_id, getpid(), req->uid)) {
+		error("%s container_g_add_pid(%u): %m", __func__, req->job_id);
+		exit(SLURM_ERROR);
+	}
+
+	/* The child actually performs the I/O and exits with
+	 * a return code, do not return! */
+
+	/*********************************************************************\
+	 * NOTE: It would be best to do an exec() immediately after the fork()
+	 * in order to help prevent a possible deadlock in the child process
+	 * due to locks being set at the time of the fork and being freed by
+	 * the parent process, but not freed by the child process. Performing
+	 * the work inline is done for simplicity. Note that the logging
+	 * performed by error() should be safe due to the use of
+	 * atfork_install_handlers() as defined in src/common/log.c.
+	 * Change the code below with caution.
+	\*********************************************************************/
+
+	if (setgroups(gids->ngids, gids->gids) < 0) {
+		error("%s: uid: %u setgroups failed: %m", __func__, req->uid);
+		exit(errno);
+	}
+	_dealloc_gids(gids);
+
+	if (setgid(req->gid) < 0) {
+		error("%s: uid:%u setgid(%u): %m", __func__, req->uid,req->gid);
+		exit(errno);
+	}
+	if (setuid(req->uid) < 0) {
+		error("%s: getuid(%u): %m", __func__, req->uid);
+		exit(errno);
+	}
+
+	fd = open(path_name, (O_CREAT|O_APPEND|O_WRONLY), 0644);
+	if (fd == -1) {
+		error("%s: uid:%u can't open `%s`: %m",
+		      __func__, req->uid, path_name);
+		exit(errno);
+	}
+	_send_back_fd(pipe[0], fd);
+	close(fd);
+	exit(SLURM_SUCCESS);
+}
+
 static void
 _prolog_error(batch_job_launch_msg_t *req, int rc)
 {
 	char *err_name = NULL, *path_name = NULL;
-	char *fmt_char;
 	int fd;
 
-	if (req->std_err || req->std_out) {
-		if (req->std_err)
-			err_name = xstrdup(req->std_err);
-		else
-			err_name = xstrdup(req->std_out);
-		if ((fmt_char = strchr(err_name, (int) '%')) &&
-		    (fmt_char[1] == 'j') && !strchr(fmt_char+1, (int) '%')) {
-			char *tmp_name = NULL;
-			fmt_char[1] = 'u';
-			xstrfmtcat(tmp_name, err_name, req->job_id);
-			xfree(err_name);
-			err_name = tmp_name;
-			//tmp_name = NULL;
-		}
-	} else {
-		xstrfmtcat(err_name, "slurm-%u.out", req->job_id);
-	}
-	if (err_name[0] == '/')
-		xstrfmtcat(path_name, "%s", err_name);
-	else if (req->work_dir)
-		xstrfmtcat(path_name, "%s/%s", req->work_dir, err_name);
-	else
-		xstrfmtcat(path_name, "/%s", err_name);
-	xfree(err_name);
-
-	if ((fd = open(path_name, (O_CREAT|O_APPEND|O_WRONLY), 0644)) == -1) {
-		error("Unable to open %s: %s", path_name,
-		      slurm_strerror(errno));
+	path_name = fname_create2(req);
+	if ((fd = _open_as_other(path_name, req)) == -1) {
+		error("Unable to open %s: Permission denied", path_name);
 		xfree(path_name);
 		return;
 	}
@@ -2063,8 +2143,13 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	if (!(slurmctld_conf.prolog_flags & PROLOG_FLAG_NOHOLD))
 		_notify_slurmctld_prolog_fini(req->job_id, rc);
 
-	if (slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN)
-		_spawn_prolog_stepd(msg);
+	if (rc == SLURM_SUCCESS) {
+		if (slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN)
+			_spawn_prolog_stepd(msg);
+	} else {
+		_launch_job_fail(req->job_id, rc);
+		send_registration_msg(rc, false);
+	}
 }
 
 static void
@@ -2344,8 +2429,8 @@ no_job:
 static int
 _launch_job_fail(uint32_t job_id, uint32_t slurm_rc)
 {
-	complete_batch_script_msg_t comp_msg;
-	struct requeue_msg req_msg;
+	complete_batch_script_msg_t comp_msg = {0};
+	struct requeue_msg req_msg = {0};
 	slurm_msg_t resp_msg;
 	int rc = 0, rpc_rc;
 	static time_t config_update = 0;
@@ -2384,9 +2469,19 @@ _launch_job_fail(uint32_t job_id, uint32_t slurm_rc)
 
 	rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc);
 	if ((resp_msg.msg_type == REQUEST_JOB_REQUEUE) &&
-	    (rc == ESLURM_DISABLED)) {
+	    ((rc == ESLURM_DISABLED) || (rc == ESLURM_BATCH_ONLY))) {
 		info("Could not launch job %u and not able to requeue it, "
 		     "cancelling job", job_id);
+
+		if ((slurm_rc == ESLURMD_PROLOG_FAILED) &&
+		    (rc == ESLURM_BATCH_ONLY)) {
+			char *buf = NULL;
+			xstrfmtcat(buf, "Prolog failure on node %s",
+				   conf->node_name);
+			slurm_notify_job(job_id, buf);
+			xfree(buf);
+		}
+
 		comp_msg.job_id = job_id;
 		comp_msg.job_rc = INFINITE;
 		comp_msg.slurm_rc = slurm_rc;
@@ -3848,7 +3943,8 @@ void file_bcast_purge(void)
 
 static int _rpc_file_bcast(slurm_msg_t *msg)
 {
-	int rc, offset, inx;
+	int rc;
+	int64_t offset, inx;
 	file_bcast_info_t *file_info;
 	file_bcast_msg_t *req = msg->data;
 	file_bcast_info_t key;
@@ -5884,6 +5980,31 @@ static void *_prolog_timer(void *x)
 	return NULL;
 }
 
+static int _get_node_inx(char *hostlist)
+{
+	char *host;
+	int node_inx = -1;
+	hostset_t hset;
+
+	if (!conf->node_name)
+		return node_inx;
+
+	if ((hset = hostset_create(hostlist))) {
+		int inx = 0;
+		while ((host = hostset_shift(hset))) {
+			if (!strcmp(host, conf->node_name)) {
+				node_inx = inx;
+				free(host);
+				break;
+			}
+			inx++;
+			free(host);
+		}
+		hostset_destroy(hset);
+	}
+	return node_inx;
+}
+
 static int
 _run_prolog(job_env_t *job_env, slurm_cred_t *cred)
 {
@@ -5899,6 +6020,7 @@ _run_prolog(job_env_t *job_env, slurm_cred_t *cred)
 	pthread_mutex_t timer_mutex = PTHREAD_MUTEX_INITIALIZER;
 	timer_struct_t  timer_struct;
 	bool prolog_fini = false;
+	bool script_lock = false;
 	char **my_env;
 
 	my_env = _build_env(job_env);
@@ -5908,7 +6030,8 @@ _run_prolog(job_env_t *job_env, slurm_cred_t *cred)
 		slurm_cred_get_args(cred, &cred_arg);
 		setenvf(&my_env, "SLURM_JOB_CONSTRAINTS", "%s",
 			cred_arg.job_constraints);
-		gres_plugin_job_set_env(&my_env, cred_arg.job_gres_list);
+		gres_plugin_job_set_env(&my_env, cred_arg.job_gres_list,
+					_get_node_inx(cred_arg.step_hostlist));
 		slurm_cred_free_args(&cred_arg);
 	}
 
@@ -5921,6 +6044,11 @@ _run_prolog(job_env_t *job_env, slurm_cred_t *cred)
 	slurm_mutex_lock(&conf->config_mutex);
 	my_prolog = xstrdup(conf->prolog);
 	slurm_mutex_unlock(&conf->config_mutex);
+
+	if (slurmctld_conf.prolog_flags & PROLOG_FLAG_SERIAL) {
+		slurm_mutex_lock(&prolog_serial_mutex);
+		script_lock = true;
+	}
 
 	slurm_attr_init(&timer_attr);
 	timer_struct.job_id      = job_env->jobid;
@@ -5958,6 +6086,9 @@ _run_prolog(job_env_t *job_env, slurm_cred_t *cred)
 	_destroy_env(my_env);
 
 	pthread_join(timer_id, NULL);
+	if (script_lock)
+		slurm_mutex_unlock(&prolog_serial_mutex);
+
 	return rc;
 }
 #endif
@@ -5971,6 +6102,7 @@ _run_epilog(job_env_t *job_env)
 	int error_code, diff_time;
 	char *my_epilog;
 	char **my_env = _build_env(job_env);
+	bool script_lock = false;
 
 	if (msg_timeout == 0)
 		msg_timeout = slurm_get_msg_timeout();
@@ -5983,6 +6115,11 @@ _run_epilog(job_env_t *job_env)
 	slurm_mutex_unlock(&conf->config_mutex);
 
 	_wait_for_job_running_prolog(job_env->jobid);
+
+	if (slurmctld_conf.prolog_flags & PROLOG_FLAG_SERIAL) {
+		slurm_mutex_lock(&prolog_serial_mutex);
+		script_lock = true;
+	}
 
 	if (timeout == (uint16_t)NO_VAL)
 		error_code = _run_job_script("epilog", my_epilog, job_env->jobid,
@@ -5999,6 +6136,9 @@ _run_epilog(job_env_t *job_env)
 		info("epilog for job %u ran for %d seconds",
 		     job_env->jobid, diff_time);
 	}
+
+	if (script_lock)
+		slurm_mutex_unlock(&prolog_serial_mutex);
 
 	return error_code;
 }
@@ -6077,7 +6217,15 @@ _dealloc_gids_cache(gids_cache_t *p)
 static size_t
 _gids_hashtbl_idx(const char *user)
 {
-	uint64_t x = siphash_str(user);
+	uint64_t x = 0;
+	int i = 0;
+	/* copied from _get_hash_idx in slurmctld */
+	/* step through string, multiply value times position
+	 * to get a bit of entropy back */
+	while (*user) {
+		x += i++ * (int) *user++;
+	}
+
 	return x % GIDS_HASH_LEN;
 }
 
@@ -6449,6 +6597,11 @@ _rpc_forward_data(slurm_msg_t *msg)
 	struct sockaddr_un sa;
 	int fd = -1, rc = 0;
 
+	/* Make sure we adjust for the spool dir coming in on the address to
+	 * point to the right spot.
+	 */
+	xstrsubstitute(req->address, "%n", conf->node_name);
+	xstrsubstitute(req->address, "%h", conf->node_name);
 	debug3("Entering _rpc_forward_data, address: %s, len: %u",
 	       req->address, req->len);
 

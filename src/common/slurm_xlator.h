@@ -34,7 +34,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -91,7 +91,6 @@
 #define	bit_set_count_range	slurm_bit_set_count_range
 #define	bit_clear_count		slurm_bit_clear_count
 #define	bit_nset_max_count	slurm_bit_nset_max_count
-#define	bit_and_set_count	slurm_bit_and_set_count
 #define	bit_rotate_copy		slurm_bit_rotate_copy
 #define	bit_rotate		slurm_bit_rotate
 #define	bit_fmt			slurm_bit_fmt

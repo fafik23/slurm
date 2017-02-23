@@ -88,7 +88,7 @@ libcommon_la_SOURCES = 			\
 	slurm_jobacct_gather.c slurm_jobacct_gather.h \
 	slurm_acct_gather_energy.c slurm_acct_gather_energy.h \
 	slurm_acct_gather_profile.c slurm_acct_gather_profile.h \
-	slurm_acct_gather_infiniband.c slurm_acct_gather_infiniband.h \
+	slurm_acct_gather_interconnect.c slurm_acct_gather_interconnect.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
 	slurm_route.c slurm_route.h	\
@@ -122,7 +122,6 @@ libcommon_la_SOURCES = 			\
 	xcgroup_read_config.c xcgroup_read_config.h \
 	xlua.c xlua.h			\
 	callerid.c callerid.h		\
-	siphash24.c siphash_slurm.c siphash.h \
 	slurm_persist_conn.c slurm_persist_conn.h
 
 EXTRA_libcommon_la_SOURCES = 		\

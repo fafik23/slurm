@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -853,6 +853,11 @@ int setup_env(env_t *env, bool preserve_env)
 			rc = SLURM_FAILURE;
 		}
 	}
+
+	setenvf(&env->env, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d",
+		slurmctld_conf.cluster_name, slurmctld_conf.control_addr,
+		slurmctld_conf.slurmctld_port,
+		SLURM_PROTOCOL_VERSION);
 
 	return rc;
 }

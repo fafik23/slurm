@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -804,6 +804,7 @@ static int _convert2_tables(mysql_conn_t *mysql_conn)
 			error("No grp_cpus col name in assoc_table "
 			      "for cluster %s, this should never happen",
 			      cluster_name);
+			mysql_free_result(result);
 			continue;
 		}
 
@@ -899,6 +900,7 @@ extern int as_mysql_convert_tables(mysql_conn_t *mysql_conn)
 		if (!(row = mysql_fetch_row(result)) || !row[0] || !row[0][0]) {
 			error("No count col name for cluster %s, "
 			      "this should never happen", cluster_name);
+			mysql_free_result(result);
 			continue;
 		}
 

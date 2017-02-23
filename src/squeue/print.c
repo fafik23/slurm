@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -235,8 +235,17 @@ static void _combine_pending_array_tasks(List job_list)
 			xfree(job_rec_ptr->job_ptr->array_task_str);
 			job_rec_ptr->job_ptr->array_task_str =
 				xmalloc(bitstr_len);
-			bit_fmt(job_rec_ptr->job_ptr->array_task_str,
-				bitstr_len, task_bitmap);
+			if (bitstr_len > 0)
+				bit_fmt(job_rec_ptr->job_ptr->array_task_str,
+					bitstr_len, task_bitmap);
+			else {
+				/* Print the full bitmap's string
+				 * representation.  For huge bitmaps this can
+				 * take roughly one minute, so let the client do
+				 * the work */
+				job_rec_ptr->job_ptr->array_task_str =
+					bit_fmt_full(task_bitmap);
+			}
 		}
 	}
 	list_iterator_destroy(job_iterator);
@@ -782,6 +791,18 @@ int _print_job_job_state(job_info_t * job, int width, bool right, char* suffix)
 	return SLURM_SUCCESS;
 }
 
+int _print_job_last_sched_eval(job_info_t *job, int width, bool right,
+			       char *suffix)
+{
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("LAST_SCHED_EVAL", width, right, true);
+	else
+		_print_time(job->last_sched_eval, 0, width, right);
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_job_job_state_compact(job_info_t * job, int width, bool right,
 				 char* suffix)
 {
@@ -997,6 +1018,7 @@ int _print_job_reason_list(job_info_t * job, int width, bool right,
 	} else if (!IS_JOB_COMPLETING(job)
 		   && (IS_JOB_PENDING(job)
 		       || IS_JOB_TIMEOUT(job)
+		       || IS_JOB_OOM(job)
 		       || IS_JOB_DEADLINE(job)
 		       || IS_JOB_FAILED(job))) {
 		char *reason_fmt = NULL, *reason = NULL;

@@ -105,6 +105,7 @@ noinst_PROGRAMS = libcommon.o$(EXEEXT) libeio.o$(EXEEXT) \
 subdir = src/common
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_zlib.m4 \
+	$(top_srcdir)/auxdir/ax_gcc_builtin.m4 \
 	$(top_srcdir)/auxdir/ax_lib_hdf5.m4 \
 	$(top_srcdir)/auxdir/ax_pthread.m4 \
 	$(top_srcdir)/auxdir/libtool.m4 \
@@ -171,7 +172,7 @@ am_libcommon_la_OBJECTS = assoc_mgr.lo cpu_frequency.lo \
 	util-net.lo slurm_auth.lo slurm_acct_gather.lo \
 	slurm_accounting_storage.lo slurm_jobacct_gather.lo \
 	slurm_acct_gather_energy.lo slurm_acct_gather_profile.lo \
-	slurm_acct_gather_infiniband.lo \
+	slurm_acct_gather_interconnect.lo \
 	slurm_acct_gather_filesystem.lo slurm_jobcomp.lo \
 	slurm_route.lo slurm_time.lo slurm_topology.lo switch.lo \
 	slurm_selecttype_info.lo slurm_resource_info.lo hostlist.lo \
@@ -180,7 +181,7 @@ am_libcommon_la_OBJECTS = assoc_mgr.lo cpu_frequency.lo \
 	stepd_api.lo write_labelled_message.lo proc_args.lo \
 	node_conf.lo gres.lo entity.lo layout.lo layouts_mgr.lo \
 	mapping.lo xcgroup_read_config.lo xlua.lo callerid.lo \
-	siphash24.lo siphash_slurm.lo slurm_persist_conn.lo
+	slurm_persist_conn.lo
 libcommon_la_OBJECTS = $(am_libcommon_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
@@ -373,6 +374,10 @@ LIBCURL_CPPFLAGS = @LIBCURL_CPPFLAGS@
 LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
+LIB_SLURM = @LIB_SLURM@
+LIB_SLURMDB = @LIB_SLURMDB@
+LIB_SLURMDB_BUILD = @LIB_SLURMDB_BUILD@
+LIB_SLURM_BUILD = @LIB_SLURM_BUILD@
 LIPO = @LIPO@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
@@ -604,7 +609,7 @@ libcommon_la_SOURCES = \
 	slurm_jobacct_gather.c slurm_jobacct_gather.h \
 	slurm_acct_gather_energy.c slurm_acct_gather_energy.h \
 	slurm_acct_gather_profile.c slurm_acct_gather_profile.h \
-	slurm_acct_gather_infiniband.c slurm_acct_gather_infiniband.h \
+	slurm_acct_gather_interconnect.c slurm_acct_gather_interconnect.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
 	slurm_route.c slurm_route.h	\
@@ -638,7 +643,6 @@ libcommon_la_SOURCES = \
 	xcgroup_read_config.c xcgroup_read_config.h \
 	xlua.c xlua.h			\
 	callerid.c callerid.h		\
-	siphash24.c siphash_slurm.c siphash.h \
 	slurm_persist_conn.c slurm_persist_conn.h
 
 EXTRA_libcommon_la_SOURCES = \
@@ -786,13 +790,11 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/proc_args.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/read_config.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/safeopen.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/siphash24.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/siphash_slurm.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_accounting_storage.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather_energy.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather_filesystem.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather_infiniband.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather_interconnect.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_acct_gather_profile.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_auth.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/slurm_cred.Plo@am__quote@

@@ -10,7 +10,7 @@
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -799,6 +799,7 @@ extern int jobacctinfo_getinfo(
 	jobacct_id_t *jobacct_id = (jobacct_id_t *) data;
 	struct rusage *rusage = (struct rusage *)data;
 	struct jobacctinfo *send = (struct jobacctinfo *) data;
+	char *buf = NULL;
 
 	if (!plugin_polling)
 		return SLURM_SUCCESS;
@@ -812,7 +813,6 @@ extern int jobacctinfo_getinfo(
 		break;
 	case JOBACCT_DATA_PIPE:
 		if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
-			char* buf;
 			int len;
 			Buf buffer;
 
@@ -897,7 +897,9 @@ extern int jobacctinfo_getinfo(
 		debug("jobacct_g_set_getinfo data_type %d invalid", type);
 	}
 	return rc;
+
 rwfail:
+	xfree(buf);
 	return SLURM_ERROR;
 }
 
@@ -957,7 +959,8 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 	uint32_t uint32_tmp;
 	uint8_t  uint8_tmp;
 
-	jobacct_gather_init();
+	if (jobacct_gather_init() < 0)
+		return SLURM_ERROR;
 
 	if (rpc_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack8(&uint8_tmp, buffer);

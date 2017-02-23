@@ -62,7 +62,7 @@
  *  from select/linear
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -184,6 +184,7 @@ bool     preempt_by_qos       = false;
 uint16_t priority_flags       = 0;
 uint64_t select_debug_flags   = 0;
 uint16_t select_fast_schedule = 0;
+bool     spec_cores_first     = false;
 bool     topo_optional        = false;
 
 struct part_res_record *select_part_record = NULL;
@@ -545,21 +546,24 @@ static void _swap_rows(struct part_row_data *a, struct part_row_data *b)
 /* sort the rows of a partition from "most allocated" to "least allocated" */
 extern void cr_sort_part_rows(struct part_res_record *p_ptr)
 {
-	uint32_t i, j, a, b;
+	uint32_t i, j, b;
+	uint32_t a[p_ptr->num_rows];
 
 	if (!p_ptr->row)
 		return;
 
 	for (i = 0; i < p_ptr->num_rows; i++) {
 		if (p_ptr->row[i].row_bitmap)
-			a = bit_set_count(p_ptr->row[i].row_bitmap);
+			a[i] = bit_set_count(p_ptr->row[i].row_bitmap);
 		else
-			a = 0;
+			a[i] = 0;
+	}
+	for (i = 0; i < p_ptr->num_rows; i++) {
 		for (j = i+1; j < p_ptr->num_rows; j++) {
-			if (!p_ptr->row[j].row_bitmap)
-				continue;
-			b = bit_set_count(p_ptr->row[j].row_bitmap);
-			if (b > a) {
+			if (a[j] > a[i]) {
+				b = a[j];
+				a[j] = a[i];
+				a[i] = b;
 				_swap_rows(&(p_ptr->row[i]), &(p_ptr->row[j]));
 			}
 		}
@@ -1818,8 +1822,6 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 
 	/* Build list of running and suspended jobs */
 	cr_job_list = list_create(NULL);
-	if (!cr_job_list)
-		fatal("list_create: memory allocation error");
 	job_iterator = list_iterator_create(job_list);
 	while ((tmp_job_ptr = (struct job_record *) list_next(job_iterator))) {
 		bool cleaning = _job_cleaning(tmp_job_ptr);
@@ -1883,9 +1885,7 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 	    ((job_ptr->bit_flags & TEST_NOW_ONLY) == 0)) {
 		int time_window = 30;
 		bool more_jobs = true;
-		bool timed_out = false;
 		DEF_TIMERS;
-
 		list_sort(cr_job_list, _cr_job_list_sort);
 		START_TIMER;
 		job_iterator = list_iterator_create(cr_job_list);
@@ -1913,14 +1913,12 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 				last_job_ptr = tmp_job_ptr;
 				_rm_job_from_res(future_part, future_usage,
 						 tmp_job_ptr, 0);
-				if ((rm_job_cnt++ > 200) && !timed_out)
+				if (rm_job_cnt++ > 200)
 					break;
 				next_job_ptr = list_peek_next(job_iterator);
 				if (!next_job_ptr) {
 					more_jobs = false;
 					break;
-				} else if (timed_out) {
-					continue;
 				} else if (next_job_ptr->end_time >
 				 	   (first_job_ptr->end_time +
 					    time_window)) {
@@ -1948,12 +1946,9 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 				}
 				break;
 			}
-			/* After 1 second of iterating over groups of running
-			 * jobs, simulate the termination of all remaining jobs
-			 * in order to determine if pending job can ever run */
 			END_TIMER;
-			if (DELTA_TIMER >= 1000000)
-				timed_out = true;
+			if (DELTA_TIMER >= 2000000)
+				break;	/* Quit after 2 seconds wall time */
 		}
 		list_iterator_destroy(job_iterator);
 	}
@@ -2129,6 +2124,10 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 		pack_serial_at_end = true;
 	else
 		pack_serial_at_end = false;
+	if (sched_params && strstr(sched_params, "spec_cores_first"))
+		spec_cores_first = true;
+	else
+		spec_cores_first = false;
 	if (sched_params && strstr(sched_params, "bf_busy_nodes"))
 		backfill_busy_nodes = true;
 	else
@@ -3341,9 +3340,7 @@ extern bitstr_t * select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
 			_make_core_bitmap_filtered(switches_bitmap[i], 1);
 
 		if (*core_bitmap) {
-			bit_not(*core_bitmap);
-			bit_and(switches_core_bitmap[i], *core_bitmap);
-			bit_not(*core_bitmap);
+			bit_and_not(switches_core_bitmap[i], *core_bitmap);
 		}
 		bit_fmt(str, sizeof(str), switches_core_bitmap[i]);
 		switches_cpu_cnt[i] = bit_set_count(switches_core_bitmap[i]);

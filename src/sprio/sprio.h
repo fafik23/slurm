@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -89,7 +89,7 @@ extern uint32_t weight_part; /* weight for Partition factor */
 extern uint32_t weight_qos; /* weight for QOS factor */
 extern char    *weight_tres; /* weight str TRES factors */
 
-extern void parse_command_line( int argc, char* argv[] );
+extern void parse_command_line( int argc, char* *argv );
 extern int  parse_format( char* format );
 
 #endif

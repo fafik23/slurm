@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -95,13 +95,6 @@
 #define OPEN_MPI_PORT_ERROR 108
 #endif
 
-#define MAX_RETRIES 20
-#define MAX_ENTRIES 50
-
-#define	TYPE_NOT_TEXT	0
-#define	TYPE_TEXT	1
-#define	TYPE_SCRIPT	2
-
 static struct termios termdefaults;
 static uint32_t global_rc = 0;
 static srun_job_t *job = NULL;
@@ -119,6 +112,7 @@ static int   _file_bcast(void);
 static void  _pty_restore(void);
 static void  _set_exit_code(void);
 static void  _set_node_alias(void);
+static void  _setup_env_working_cluster();
 static int   _slurm_debug_env_val (void);
 static char *_uint16_array_to_str(int count, const uint16_t *array);
 
@@ -168,8 +162,10 @@ int srun(int ac, char **av)
 	if (slurm_select_init(1) != SLURM_SUCCESS )
 		fatal( "failed to initialize node selection plugin" );
 
-	if (switch_init() != SLURM_SUCCESS )
-		fatal("failed to initialize switch plugin");
+	if (switch_init(0) != SLURM_SUCCESS )
+		fatal("failed to initialize switch plugins");
+
+	_setup_env_working_cluster();
 
 	init_srun(ac, av, &logopt, debug_level, 1);
 	create_srun_job(&job, &got_alloc, 0, 1);
@@ -422,4 +418,41 @@ static void _pty_restore(void)
 	/* STDIN is probably closed by now */
 	if (tcsetattr(STDOUT_FILENO, TCSANOW, &termdefaults) < 0)
 		fprintf(stderr, "tcsetattr: %s\n", strerror(errno));
+}
+
+static void _setup_env_working_cluster()
+{
+	char *working_env  = NULL;
+
+	if ((working_env = xstrdup(getenv("SLURM_WORKING_CLUSTER")))) {
+		char *addr_ptr, *port_ptr, *rpc_ptr;
+
+		if (!(addr_ptr = strchr(working_env,  ':')) ||
+		    !(port_ptr = strchr(addr_ptr + 1, ':')) ||
+		    !(rpc_ptr  = strchr(port_ptr + 1, ':'))) {
+			error("malformed cluster addr and port in SLURM_WORKING_CLUSTER env var: '%s'",
+			      working_env);
+			exit(1);
+		}
+
+		*addr_ptr++ = '\0';
+		*port_ptr++ = '\0';
+		*rpc_ptr++  = '\0';
+
+		if (strcmp(slurmctld_conf.cluster_name, working_env)) {
+			working_cluster_rec =
+				xmalloc(sizeof(slurmdb_cluster_rec_t));
+			slurmdb_init_cluster_rec(working_cluster_rec, false);
+
+			working_cluster_rec->control_host = xstrdup(addr_ptr);;
+			working_cluster_rec->control_port = strtol(port_ptr,
+								   NULL, 10);
+			working_cluster_rec->rpc_version  = strtol(rpc_ptr,
+								   NULL, 10);
+			slurm_set_addr(&working_cluster_rec->control_addr,
+				       working_cluster_rec->control_port,
+				       working_cluster_rec->control_host);
+		}
+		xfree(working_env);
+	}
 }

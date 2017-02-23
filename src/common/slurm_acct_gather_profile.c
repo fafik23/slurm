@@ -8,7 +8,7 @@
  *  Written by Rod Schultz <rod.schultz@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -53,7 +53,7 @@
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
 #include "src/common/read_config.h"
-#include "src/common/slurm_acct_gather_infiniband.h"
+#include "src/common/slurm_acct_gather_interconnect.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/common/slurm_acct_gather_energy.h"
 #include "src/common/slurm_jobacct_gather.h"
@@ -253,7 +253,7 @@ extern int acct_gather_profile_fini(void)
 			acct_gather_filesystem_fini();
 			break;
 		case PROFILE_NETWORK:
-			acct_gather_infiniband_fini();
+			acct_gather_interconnect_fini();
 			break;
 		default:
 			fatal("Unhandled profile option %d please update "
@@ -482,7 +482,7 @@ extern int acct_gather_profile_startpoll(char *freq, char *freq_def)
 				break;
 			_set_freq(i, freq, freq_def);
 
-			acct_gather_infiniband_startpoll(
+			acct_gather_interconnect_startpoll(
 				acct_gather_profile_timer[i].freq);
 			break;
 		default:

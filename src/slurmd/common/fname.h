@@ -1,10 +1,13 @@
 /*****************************************************************************\
- *  siphash_str.c - Slurm specific siphash functions
+ * src/slurmd/common/fname.h - IO filename creation routine
  *****************************************************************************
- *  Copyright (C) 2016 Janne Blomqvist
+ *  Copyright (C) 2002 The Regents of the University of California.
+ *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
+ *  Written by Mark Grondona <mgrondona@llnl.gov>.
+ *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -33,24 +36,14 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include "src/common/fd.h"
-#include "src/common/siphash.h"
+#ifndef _SLURMD_FNAME_H
+#define _SLURMD_FNAME_H
 
+#include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
-/* Use a default value for the key */
-/* Note: Slurm is intentially fixing the key value, and not initializing it
- * from /dev/urandom as is commonly recommended. Slurm does not rely on
- * the hash function for any cryptographic functionality, and randomness
- * would make debugging harder if the hash key changed on each start. */
-static uint8_t siphash_key[KEYLEN] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-                                       12, 13, 14, 15 };
+extern char *fname_create(stepd_step_rec_t *job, const char *fmt, int taskid);
+extern char *fname_create2(batch_job_launch_msg_t *req);
+extern int   fname_single_task_io(const char *fmt);
+extern char *is_path_escaped(char *);
 
-uint64_t siphash_str(const char* str)
-{
-	uint8_t out[HASHLEN];
-	uint64_t out64;
-	const uint8_t *s = (uint8_t *) str;
-	siphash(out, s, strlen(str), siphash_key);
-	memcpy(&out64, out, HASHLEN);
-	return out64;
-}
+#endif /* !_SLURMD_FNAME_H */

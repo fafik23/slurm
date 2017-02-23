@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -290,13 +290,6 @@ static int _setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec)
 
 	if (!cluster_rec->control_port) {
 		debug("Slurmctld on '%s' hasn't registered yet.",
-		      cluster_rec->name);
-		return SLURM_ERROR;
-	}
-
-	if (cluster_rec->rpc_version < 8) {
-		debug("Slurmctld on '%s' must be running at least "
-		      "SLURM 2.2 for cross-cluster communication.",
 		      cluster_rec->name);
 		return SLURM_ERROR;
 	}
@@ -1891,9 +1884,6 @@ extern char *slurmdb_res_type_str(slurmdb_resource_type_t type)
 	case SLURMDB_RESOURCE_LICENSE:
 		return "License";
 		break;
-	default:
-		return "Unknown";
-		break;
 	}
 	return "Unknown";
 }
@@ -1912,9 +1902,6 @@ extern char *slurmdb_admin_level_str(slurmdb_admin_level_t level)
 		break;
 	case SLURMDB_ADMIN_SUPER_USER:
 		return "Administrator";
-		break;
-	default:
-		return "Unknown";
 		break;
 	}
 	return "Unknown";
@@ -2999,17 +2986,6 @@ extern char *slurmdb_get_selected_step_id(
 	return job_id_str;
 }
 
-static int _find_char_in_list(void *name, void *key)
-{
-	char *name_str = (char *)name;
-	char *key_str  = (char *)key;
-
-	if (!xstrcmp(name_str,key_str))
-		return 1;
-
-	return 0;
-}
-
 /* Return the cluster with the fastest start_time.
  *
  * Note: The will_runs are not threaded. Currently it relies on the
@@ -3055,7 +3031,7 @@ extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 
 		/* only try one cluster from each federation */
 		if (working_cluster_rec->fed.id &&
-		    list_find_first(tried_feds, _find_char_in_list,
+		    list_find_first(tried_feds, slurm_find_char_in_list,
 				    working_cluster_rec->fed.name))
 			continue;
 

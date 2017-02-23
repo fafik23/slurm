@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -81,7 +81,7 @@ static void _opt_env(void)
  * parse_command_line
  */
 extern void
-parse_command_line( int argc, char* argv[] )
+parse_command_line( int argc, char* *argv )
 {
 	int opt_char;
 	int option_index;
@@ -424,20 +424,22 @@ _build_job_list( char* str )
 
 	if ( str == NULL)
 		return NULL;
-	my_list = list_create( NULL );
-	my_job_list = xstrdup( str );
-	job = strtok_r( my_job_list, ",", &tmp_char );
+
+	my_list = list_create(NULL);
+	my_job_list = xstrdup(str);
+	job = strtok_r(my_job_list, ",", &tmp_char);
 	while (job) {
 		i = slurm_xlate_job_id(job);
 		if (i <= 0) {
-			error( "Invalid job id: %s", job );
-			exit( 1 );
+			error("Invalid job id: %s", job);
+			exit(1);
 		}
-		job_id = xmalloc( sizeof( uint32_t ) );
+		job_id = xmalloc(sizeof(uint32_t));
 		*job_id = (uint32_t) i;
-		list_append( my_list, job_id );
-		job = strtok_r (NULL, ",", &tmp_char);
+		list_append(my_list, job_id);
+		job = strtok_r(NULL, ",", &tmp_char);
 	}
+	xfree(my_job_list);
 	return my_list;
 }
 
@@ -447,29 +449,30 @@ _build_job_list( char* str )
  * RET List of UIDs (uint32_t)
  */
 static List
-_build_user_list( char* str )
+_build_user_list(char* str)
 {
 	List my_list;
 	char *user = NULL;
 	char *tmp_char = NULL, *my_user_list = NULL;
 	uid_t uid = (uid_t) 0;
 
-	if ( str == NULL)
+	if (str == NULL)
 		return NULL;
 
-	my_list = list_create( NULL );
-	my_user_list = xstrdup( str );
-	user = strtok_r( my_user_list, ",", &tmp_char );
+	my_list = list_create(NULL);
+	my_user_list = xstrdup(str);
+	user = strtok_r(my_user_list, ",", &tmp_char);
 	while (user) {
-		if (uid_from_string (user, &uid) < 0) {
-			error( "Invalid user: %s\n", user);
+		if (uid_from_string(user, &uid) < 0) {
+			error("Invalid user: %s\n", user);
 		} else {
-			uint32_t *u_tmp = xmalloc( sizeof( uint32_t ));
+			uint32_t *u_tmp = xmalloc(sizeof( uint32_t ));
 			*u_tmp = (uint32_t) uid;
-			list_append( my_list, u_tmp );
+			list_append(my_list, u_tmp);
 		}
 		user = strtok_r (NULL, ",", &tmp_char);
 	}
+	xfree(my_user_list);
 	return my_list;
 }
 

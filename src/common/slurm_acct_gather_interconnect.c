@@ -1,12 +1,12 @@
 /*****************************************************************************\
- *  slurm_acct_gather_infiniband.c - implementation-independent job infiniband
+ *  slurm_acct_gather_interconnect.c - implementation-independent job interconnect
  *  accounting plugin definitions
  *****************************************************************************
  *  Copyright (C) 2013 Bull.
  *  Written by Yiannis Georgiou <yiannis.georgiou@bull.net>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -53,30 +53,31 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_acct_gather_infiniband.h"
+#include "src/common/slurm_acct_gather_interconnect.h"
 #include "src/common/slurm_acct_gather_profile.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
-typedef struct slurm_acct_gather_infiniband_ops {
+typedef struct slurm_acct_gather_interconnect_ops {
 	int (*node_update)	(void);
 	void (*conf_options)	(s_p_options_t **full_options,
 				 int *full_options_cnt);
 	void (*conf_set)	(s_p_hashtbl_t *tbl);
 	void (*conf_values)      (List *data);
-} slurm_acct_gather_infiniband_ops_t;
+} slurm_acct_gather_interconnect_ops_t;
 /*
  * These strings must be kept in the same order as the fields
- * declared for slurm_acct_gather_infiniband_ops_t.
+ * declared for slurm_acct_gather_interconnect_ops_t.
  */
 static const char *syms[] = {
-	"acct_gather_infiniband_p_node_update",
-	"acct_gather_infiniband_p_conf_options",
-	"acct_gather_infiniband_p_conf_set",
-	"acct_gather_infiniband_p_conf_values",
+	"acct_gather_interconnect_p_node_update",
+	"acct_gather_interconnect_p_conf_options",
+	"acct_gather_interconnect_p_conf_set",
+	"acct_gather_interconnect_p_conf_values",
 };
 
-static slurm_acct_gather_infiniband_ops_t ops;
-static plugin_context_t *g_context = NULL;
+static slurm_acct_gather_interconnect_ops_t *ops = NULL;
+static plugin_context_t **g_context = NULL;
+static int g_context_num = -1;
 static pthread_mutex_t g_context_lock =	PTHREAD_MUTEX_INITIALIZER;
 static bool init_run = false;
 static bool acct_shutdown = true;
@@ -86,9 +87,10 @@ static pthread_t watch_node_thread_id = 0;
 static void *_watch_node(void *arg)
 {
 	int type = PROFILE_NETWORK;
+	int i;
 
 #if HAVE_SYS_PRCTL_H
-	if (prctl(PR_SET_NAME, "acctg_ib", NULL, NULL, NULL) < 0) {
+	if (prctl(PR_SET_NAME, "acctg_intrcnt", NULL, NULL, NULL) < 0) {
 		error("%s: cannot set my name to %s %m", __func__, "acctg_ib");
 	}
 #endif
@@ -99,7 +101,11 @@ static void *_watch_node(void *arg)
 	while (init_run && acct_gather_profile_test()) {
 		/* Do this until shutdown is requested */
 		slurm_mutex_lock(&g_context_lock);
-		(*(ops.node_update))();
+		for (i = 0; i < g_context_num; i++) {
+			if (!g_context[i])
+				continue;
+			(*(ops[i].node_update))();
+		}
 		slurm_mutex_unlock(&g_context_lock);
 
 		slurm_mutex_lock(&acct_gather_profile_timer[type].notify_mutex);
@@ -113,35 +119,52 @@ static void *_watch_node(void *arg)
 	return NULL;
 }
 
-extern int acct_gather_infiniband_init(void)
+extern int acct_gather_interconnect_init(void)
 {
 	int retval = SLURM_SUCCESS;
-	char *plugin_type = "acct_gather_infiniband";
-	char *type = NULL;
+	char *plugin_type = "acct_gather_interconnect";
+	char *full_plugin_type = NULL;
+	char *last = NULL, *plugin_entry, *type = NULL;
 
-	if (init_run && g_context)
+	if (init_run && (g_context_num >= 0))
 		return retval;
 
 	slurm_mutex_lock(&g_context_lock);
 
-	if (g_context)
+	if (g_context_num >= 0)
 		goto done;
 
-	type = slurm_get_acct_gather_infiniband_type();
+	full_plugin_type = slurm_get_acct_gather_interconnect_type();
+	g_context_num = 0; /* mark it before anything else */
+	plugin_entry = full_plugin_type;
+	while ((type = strtok_r(plugin_entry, ",", &last))) {
+		xrealloc(ops, sizeof(slurm_acct_gather_interconnect_ops_t) *
+			 (g_context_num + 1));
+		xrealloc(g_context, (sizeof(plugin_context_t *) *
+				     (g_context_num + 1)));
+		if (xstrncmp(type, "acct_gather_interconnect/", 25) == 0)
+			type += 25; /* backward compatibility */
+		type = xstrdup_printf("%s/%s", plugin_type, type);
+		g_context[g_context_num] = plugin_context_create(
+			plugin_type, type, (void **)&ops[g_context_num],
+			syms, sizeof(syms));
+		if (!g_context[g_context_num]) {
+			error("cannot create %s context for %s",
+			      plugin_type, type);
+			xfree(type);
+			retval = SLURM_ERROR;
+			break;
+		}
 
-	g_context = plugin_context_create(
-		plugin_type, type, (void **)&ops, syms, sizeof(syms));
-
-	if (!g_context) {
-		error("cannot create %s context for %s", plugin_type, type);
-		retval = SLURM_ERROR;
-		goto done;
+		xfree(type);
+		g_context_num++;
+		plugin_entry = NULL; /* for next iteration */
 	}
 	init_run = true;
 
 done:
 	slurm_mutex_unlock(&g_context_lock);
-	xfree(type);
+	xfree(full_plugin_type);
 	if (retval == SLURM_SUCCESS)
 		retval = acct_gather_conf_init();
 
@@ -149,38 +172,51 @@ done:
 	return retval;
 }
 
-extern int acct_gather_infiniband_fini(void)
+extern int acct_gather_interconnect_fini(void)
 {
-	int rc = SLURM_SUCCESS;
+	int rc2, rc = SLURM_SUCCESS;
+	int i;
 
 	slurm_mutex_lock(&g_context_lock);
-	if (g_context) {
-		init_run = false;
+	init_run = false;
 
-		if (watch_node_thread_id) {
-			pthread_cancel(watch_node_thread_id);
-			pthread_join(watch_node_thread_id, NULL);
-		}
-
-		rc = plugin_context_destroy(g_context);
-		g_context = NULL;
+	if (watch_node_thread_id) {
+		pthread_cancel(watch_node_thread_id);
+		pthread_join(watch_node_thread_id, NULL);
 	}
+
+	for (i = 0; i < g_context_num; i++) {
+		if (!g_context[i])
+			continue;
+
+		rc2 = plugin_context_destroy(g_context[i]);
+		if (rc2 != SLURM_SUCCESS) {
+			debug("%s: %s: %s", __func__,
+			      g_context[i]->type,
+			      slurm_strerror(rc2));
+			rc = SLURM_ERROR;
+		}
+	}
+
+	xfree(ops);
+	xfree(g_context);
+	g_context_num = -1;
+
 	slurm_mutex_unlock(&g_context_lock);
 
 	return rc;
 }
 
-extern int acct_gather_infiniband_startpoll(uint32_t frequency)
+extern int acct_gather_interconnect_startpoll(uint32_t frequency)
 {
 	int retval = SLURM_SUCCESS;
 	pthread_attr_t attr;
 
-	if (acct_gather_infiniband_init() < 0)
+	if (acct_gather_interconnect_init() < 0)
 		return SLURM_ERROR;
 
 	if (!acct_shutdown) {
-		error("acct_gather_infiniband_startpoll: "
-		      "poll already started!");
+		error("%s: poll already started!", __func__);
 		return retval;
 	}
 
@@ -189,43 +225,67 @@ extern int acct_gather_infiniband_startpoll(uint32_t frequency)
 	freq = frequency;
 
 	if (frequency == 0) {   /* don't want dynamic monitoring? */
-		debug2("acct_gather_infiniband dynamic logging disabled");
+		debug2("%s: dynamic logging disabled", __func__);
 		return retval;
 	}
 
 	/* create polling thread */
 	slurm_attr_init(&attr);
-	if (pthread_create(&watch_node_thread_id, &attr, &_watch_node, NULL)) {
-		debug("acct_gather_infiniband failed to create _watch_node "
-		      "thread: %m");
-	} else
-		debug3("acct_gather_infiniband dynamic logging enabled");
+	if (pthread_create(&watch_node_thread_id, &attr, &_watch_node, NULL))
+		debug("%s: failed to create _watch_node thread: %m", __func__);
+	else
+		debug3("%s: dynamic logging enabled", __func__);
 	slurm_attr_destroy(&attr);
 
 	return retval;
 }
 
 
-extern void acct_gather_infiniband_g_conf_options(s_p_options_t **full_options,
-						  int *full_options_cnt)
+extern void acct_gather_interconnect_g_conf_options(
+	s_p_options_t **full_options, int *full_options_cnt)
 {
-	if (acct_gather_infiniband_init() < 0)
+	int i;
+
+	if (acct_gather_interconnect_init() < 0)
 		return;
-	(*(ops.conf_options))(full_options, full_options_cnt);
+
+	slurm_mutex_lock(&g_context_lock);
+	for (i = 0; i < g_context_num; i++) {
+		if (!g_context[i])
+			continue;
+		(*(ops[i].conf_options))(full_options, full_options_cnt);
+	}
+	slurm_mutex_unlock(&g_context_lock);
 }
 
-extern void acct_gather_infiniband_g_conf_set(s_p_hashtbl_t *tbl)
+extern void acct_gather_interconnect_g_conf_set(s_p_hashtbl_t *tbl)
 {
-	if (acct_gather_infiniband_init() < 0)
+	int i;
+
+	if (acct_gather_interconnect_init() < 0)
 		return;
 
-	(*(ops.conf_set))(tbl);
+	slurm_mutex_lock(&g_context_lock);
+	for (i = 0; i < g_context_num; i++) {
+		if (!g_context[i])
+			continue;
+		(*(ops[i].conf_set))(tbl);
+	}
+	slurm_mutex_unlock(&g_context_lock);
 }
 
-extern void acct_gather_infiniband_g_conf_values(void *data)
+extern void acct_gather_interconnect_g_conf_values(void *data)
 {
-	if (acct_gather_infiniband_init() < 0)
+	int i;
+
+	if (acct_gather_interconnect_init() < 0)
 		return;
 
-	(*(ops.conf_values))(data);
+	slurm_mutex_lock(&g_context_lock);
+	for (i = 0; i < g_context_num; i++) {
+		if (!g_context[i])
+			continue;
+		(*(ops[i].conf_values))(data);
+	}
+	slurm_mutex_unlock(&g_context_lock);
 }

@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -91,7 +91,6 @@ extern uint64_t job_getjid(pid_t pid);
 extern pid_t getpgid(pid_t pid);
 #endif
 
-#define HASH_RECS	100
 #define MAX_RETRIES	10
 #define POLL_SLEEP	3	/* retry interval in seconds  */
 
@@ -108,6 +107,7 @@ pthread_mutex_t allocation_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool exit_flag = false;
 static bool suspend_flag = false;
 static bool allocation_interrupted = false;
+static bool allocation_revoked = false;
 static uint32_t pending_job_id = 0;
 static time_t last_timeout = 0;
 static struct termios saved_tty_attributes;
@@ -160,7 +160,7 @@ static void _reset_input_mode (void)
 		tcsetpgrp(STDIN_FILENO, getpgid(getppid()));
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	job_desc_msg_t desc;
@@ -315,6 +315,7 @@ int main(int argc, char *argv[])
 		print_db_notok(opt.clusters, 0);
 		exit(error_exit);
 	}
+	desc.origin_cluster = xstrdup(slurmctld_conf.cluster_name);
 
 	callbacks.ping = _ping_handler;
 	callbacks.timeout = _timeout_handler;
@@ -375,18 +376,28 @@ int main(int argc, char *argv[])
 		 */
 		info("Granted job allocation %u", alloc->job_id);
 		pending_job_id = alloc->job_id;
+
+		if (alloc->working_cluster_rec) {
+			slurm_setup_remote_working_cluster(alloc);
+
+			/* set env for srun's to find the right cluster */
+			setenvf(NULL, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d",
+				working_cluster_rec->name,
+				working_cluster_rec->control_host,
+				working_cluster_rec->control_port,
+				working_cluster_rec->rpc_version);
+		}
+
 #ifdef HAVE_BG
 		if (!_wait_bluegene_block_ready(alloc)) {
 			if (!allocation_interrupted)
-				error("Something is wrong with the "
-				      "boot of the block.");
+				error("Something is wrong with the boot of the block.");
 			goto relinquish;
 		}
 #else
 		if (!_wait_nodes_ready(alloc)) {
 			if (!allocation_interrupted)
-				error("Something is wrong with the "
-				      "boot of the nodes.");
+				error("Something is wrong with the boot of the nodes.");
 			goto relinquish;
 		}
 #endif
@@ -435,8 +446,11 @@ int main(int argc, char *argv[])
 	}
 	if (opt.network)
 		env_array_append_fmt(&env, "SLURM_NETWORK", "%s", opt.network);
-	cluster_name = slurm_get_cluster_name();
-	if (cluster_name) {
+
+	if (working_cluster_rec && working_cluster_rec->name) {
+		env_array_append_fmt(&env, "SLURM_CLUSTER_NAME", "%s",
+				     working_cluster_rec->name);
+	} else if ((cluster_name = slurm_get_cluster_name())) {
 		env_array_append_fmt(&env, "SLURM_CLUSTER_NAME", "%s",
 				     cluster_name);
 		xfree(cluster_name);
@@ -910,6 +924,7 @@ static void _job_complete_handler(srun_job_complete_msg_t *comp)
 			} else {
 				info("Job allocation %u has been revoked.",
 				     comp->job_id);
+				allocation_revoked = true;
 			}
 		}
 		allocation_state = REVOKED;
@@ -1077,7 +1092,7 @@ static int _wait_bluegene_block_ready(resource_allocation_response_msg_t *alloc)
 			is_ready = 1;
 			break;
 		}
-		if (allocation_interrupted)
+		if (allocation_interrupted || allocation_revoked)
 			break;
 	}
 	if (is_ready)
@@ -1140,6 +1155,7 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 	int is_ready = 0, i, rc;
 	int cur_delay = 0;
 	int suspend_time, resume_time, max_delay;
+	bool job_killed = false;
 
 	suspend_time = slurm_get_suspend_timeout();
 	resume_time  = slurm_get_resume_timeout();
@@ -1172,14 +1188,16 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			break;				/* fatal error */
 		if ((rc == READY_JOB_ERROR) || (rc == EAGAIN))
 			continue;			/* retry */
-		if ((rc & READY_JOB_STATE) == 0)	/* job killed */
+		if ((rc & READY_JOB_STATE) == 0) {	/* job killed */
+			job_killed = true;
 			break;
+		}
 		if ((rc & READY_JOB_STATE) && 
 		    ((rc & READY_NODE_STATE) || !opt.wait_all_nodes)) {
 			is_ready = 1;
 			break;
 		}
-		if (allocation_interrupted)
+		if (allocation_interrupted || allocation_revoked)
 			break;
 	}
 	if (is_ready) {
@@ -1188,16 +1206,21 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 		if (i > 0)
      			info("Nodes %s are ready for job", alloc->node_list);
 		if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD") &&
-		    (slurm_allocation_lookup_lite(pending_job_id, &resp)
+		    (slurm_allocation_lookup(pending_job_id, &resp)
 		     == SLURM_SUCCESS)) {
 			tmp_str = alloc->alias_list;
 			alloc->alias_list = resp->alias_list;
 			resp->alias_list = tmp_str;
 			slurm_free_resource_allocation_response_msg(resp);
 		}
-	} else if (!allocation_interrupted)
-		error("Nodes %s are still not ready", alloc->node_list);
-	else	/* allocation_interrupted or slurmctld not responing */
+	} else if (!allocation_interrupted) {
+		if (job_killed) {
+			error("Job allocation %u has been revoked",
+			      alloc->job_id);
+			allocation_interrupted = true;
+		} else
+			error("Nodes %s are still not ready", alloc->node_list);
+	} else	/* allocation_interrupted or slurmctld not responing */
 		is_ready = 0;
 
 	pending_job_id = 0;

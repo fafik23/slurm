@@ -14,7 +14,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -71,8 +71,6 @@
 
 #define SECS_PER_DAY	(24 * 60 * 60)
 #define SECS_PER_WEEK	(7 * SECS_PER_DAY)
-
-#define MIN_USAGE_FACTOR 0.01
 
 /* These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
@@ -663,7 +661,7 @@ static uint32_t _get_priority_internal(time_t start_time,
 		}
 
 		info("Job %u priority: %.2f + %.2f + %.2f + %.2f + %.2f + %2.f "
-		     "- %"PRIi64" = %.2f",
+		     "- %"PRId64" = %.2f",
 		     job_ptr->job_id, job_ptr->prio_factors->priority_age,
 		     job_ptr->prio_factors->priority_fs,
 		     job_ptr->prio_factors->priority_js,
@@ -1891,6 +1889,7 @@ extern bool decay_apply_new_usage(struct job_record *job_ptr,
 	/* apply new usage */
 	if (((flags & PRIORITY_FLAGS_CALCULATE_RUNNING) ||
 	     !IS_JOB_PENDING(job_ptr)) &&
+	    !IS_JOB_POWER_UP_NODE(job_ptr) &&
 	    job_ptr->start_time && job_ptr->assoc_ptr) {
 		if (!_apply_new_usage(job_ptr, g_last_ran, *start_time_ptr, 0))
 			return false;
@@ -1908,11 +1907,11 @@ extern int decay_apply_weighted_factors(struct job_record *job_ptr,
 	 * continue processing list of jobs. */
 
 	/*
-	 * Priority 0 is reserved for held
-	 * jobs. Also skip priority
-	 * calculation for non-pending jobs.
+	 * Priority 0 is reserved for held jobs. Also skip priority
+	 * re_calculation for non-pending jobs.
 	 */
 	if ((job_ptr->priority == 0) ||
+	    IS_JOB_POWER_UP_NODE(job_ptr) ||
 	    (!IS_JOB_PENDING(job_ptr) &&
 	     !(flags & PRIORITY_FLAGS_CALCULATE_RUNNING)))
 		return SLURM_SUCCESS;

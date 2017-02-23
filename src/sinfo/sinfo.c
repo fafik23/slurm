@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>, Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -99,7 +99,7 @@ static int _handle_subgrps(List sinfo_list, uint16_t part_num,
 			   node_info_t *node_ptr, uint32_t node_scaling);
 static int _find_part_list(void *x, void *key);
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY;
 	int rc = 0;
@@ -731,7 +731,7 @@ static void _sort_hostlist(List sinfo_list)
  * data to print. Return true if it is duplicate/redundant data. */
 static bool _match_node_data(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr)
 {
-	uint32_t tmp = 0;
+	uint64_t tmp = 0;
 
 	if (params.node_flag)
 		return false;
@@ -829,6 +829,9 @@ static bool _match_node_data(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr)
 		return false;
 	if (params.match_flags.free_mem_flag &&
 	    (node_ptr->free_mem        != sinfo_ptr->min_free_mem))
+		return false;
+	if (params.match_flags.port_flag &&
+	    (node_ptr->port != sinfo_ptr->port))
 		return false;
 	if (params.match_flags.version_flag &&
 	    (node_ptr->version     != sinfo_ptr->version))
@@ -951,6 +954,7 @@ static void _update_sinfo(sinfo_data_t *sinfo_ptr, node_info_t *node_ptr,
 		sinfo_ptr->max_disk   = node_ptr->tmp_disk;
 		sinfo_ptr->min_mem    = node_ptr->real_memory;
 		sinfo_ptr->max_mem    = node_ptr->real_memory;
+		sinfo_ptr->port       = node_ptr->port;
 		sinfo_ptr->min_weight = node_ptr->weight;
 		sinfo_ptr->max_weight = node_ptr->weight;
 		sinfo_ptr->min_cpu_load = node_ptr->cpu_load;

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -125,6 +125,7 @@ typedef struct {
 static pthread_mutex_t message_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t message_cond = PTHREAD_COND_INITIALIZER;
 static int message_connections;
+static int msg_target_node_id = 0;
 
 /*
  *  Returns true if "uid" is a "slurm authorized user" - i.e. uid == 0
@@ -429,7 +430,7 @@ _handle_accept(void *arg)
 		goto fail;
 	}
 	auth_info = slurm_get_auth_info();
-	rc = g_slurm_auth_verify(auth_cred, NULL, 2, auth_info);
+	rc = g_slurm_auth_verify(auth_cred, auth_info);
 	if (rc != SLURM_SUCCESS) {
 		error("Verifying authentication credential: %s",
 		      g_slurm_auth_errstr(g_slurm_auth_errno(auth_cred)));
@@ -741,8 +742,6 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 	int errnum = 0;
 	int sig;
 	static int msg_sent = 0;
-	char *ptr = NULL;
-	int target_node_id = 0;
 	stepd_step_task_info_t *task;
 	uint32_t i;
 	uint32_t flag;
@@ -794,11 +793,8 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		}
 	}
 
-	ptr = getenvp(job->env, "SLURM_STEP_KILLED_MSG_NODE_ID");
-	if (ptr)
-		target_node_id = atoi(ptr);
 	if ((job->stepid != SLURM_EXTERN_CONT) &&
-	    (job->nodeid == target_node_id) && (msg_sent == 0) &&
+	    (job->nodeid == msg_target_node_id) && (msg_sent == 0) &&
 	    (job->state < SLURMSTEPD_STEP_ENDING)) {
 		time_t now = time(NULL);
 		char entity[24], time_str[24];
@@ -1049,10 +1045,6 @@ _handle_terminate(int fd, stepd_step_rec_t *job, uid_t uid)
 	stepd_step_task_info_t *task;
 	uint32_t i;
 
-	debug("_handle_terminate for step=%u.%u uid=%d",
-	      job->jobid, job->stepid, uid);
-	step_terminate_monitor_start(job->jobid, job->stepid);
-
 	if (uid != job->uid && !_slurm_authorized_user(uid)) {
 		debug("terminate req from uid %ld for job %u.%u "
 		      "owned by uid %ld",
@@ -1061,6 +1053,10 @@ _handle_terminate(int fd, stepd_step_rec_t *job, uid_t uid)
 		errnum = EPERM;
 		goto done;
 	}
+
+	debug("_handle_terminate for step=%u.%u uid=%d",
+	      job->jobid, job->stepid, uid);
+	step_terminate_monitor_start(job);
 
 	/*
 	 * Sanity checks
@@ -1208,8 +1204,12 @@ done:
 			}
 		}
 	}
-
+	if (srun) {
+		xfree(srun->key);
+		xfree(srun);
+	}
 	return SLURM_SUCCESS;
+
 rwfail:
 	if (srun) {
 		xfree(srun->key);
@@ -1838,4 +1838,11 @@ extern void wait_for_resumed(uint16_t msg_type)
 			     msg_type);
 		}
 	}
+}
+
+extern void set_msg_node_id(stepd_step_rec_t *job)
+{
+	char *ptr = getenvp(job->env, "SLURM_STEP_KILLED_MSG_NODE_ID");
+	if (ptr)
+		msg_target_node_id = atoi(ptr);
 }

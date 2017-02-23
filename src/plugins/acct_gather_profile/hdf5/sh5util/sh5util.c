@@ -13,7 +13,7 @@
  *  Adapted by Yoann Blein <yoann.blein@bull.net> @ Bull.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -65,8 +65,6 @@
 #include "src/common/slurm_acct_gather_profile.h"
 #include "../hdf5_api.h"
 #include "sh5util.h"
-
-#include "libsh5util_old/sh5util_old.h"
 
 #define MAX_PROFILE_PATH 1024
 // #define MAX_ATTR_NAME 64
@@ -217,8 +215,6 @@ main(int argc, char **argv)
 		break;
 	}
 
-	if (cc == SLURM_PROTOCOL_VERSION_ERROR)
-		cc = run_old(argc, argv);
 ouch:
 	_cleanup();
 

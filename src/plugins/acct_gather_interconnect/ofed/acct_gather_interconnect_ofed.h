@@ -1,13 +1,12 @@
-/****************************************************************************\
- *  sh5util_old.h
+/*****************************************************************************\
+ *  acct_gather_interconnect_ofed.h - slurm interconnect accounting plugin for
+ *                                    ofed
  *****************************************************************************
- *  Copyright (C) 2015 SchedMD LLC.
- *  Written by Danny Auble <da@schedmd.com>
- *
- *  Provide support for the old version of sh5util.
+ *  Copyright (C) 2013
+ *  Written by Bull- Yiannis Georgiou
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,12 +33,24 @@
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
-\****************************************************************************/
-#ifndef __ACCT_SH5UTIL_OLD_H__
-#define __ACCT_SH5UTIL_OLD_H__
+ *
+ *  This file is patterned after jobcomp_linux.c, written by Morris Jette and
+ *  Copyright (C) 2002 The Regents of the University of California.
+\*****************************************************************************/
 
-#include <stdlib.h>
+#ifndef _GATHER_INTERCONNECT_H_
+#define _GATHER_INTERCONNECT_H_
 
-extern int run_old(int argc, char **argv);
+#define INTERCONNECT_DEFAULT_PORT 1
+
+extern int init ( void );
+extern int fini ( void );
+extern int acct_gather_interconnect_p_update_node(void);
+extern void acct_gather_interconnect_p_conf_options(
+	s_p_options_t **full_options,
+	int *full_options_cnt);
+extern void acct_gather_interconnect_p_conf_set(s_p_hashtbl_t *tbl);
+extern List acct_gather_interconnect_p_get_config(void);
 
 #endif
+

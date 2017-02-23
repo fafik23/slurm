@@ -3,14 +3,14 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov> and
  *  Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -914,6 +914,24 @@ int _print_partition_name(sinfo_data_t * sinfo_data, int width,
 		}
 	} else
 		_print_str("PARTITION", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_port(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix)
+{
+	char id[FORMAT_STRING_SIZE];
+	if (sinfo_data) {
+		_build_min_max_16_string(id, FORMAT_STRING_SIZE,
+				      sinfo_data->port,
+				      sinfo_data->port, false);
+		_print_str(id, width, right_justify, true);
+	} else {
+		_print_str("PORT", width, right_justify, true);
+	}
 
 	if (suffix)
 		printf("%s", suffix);

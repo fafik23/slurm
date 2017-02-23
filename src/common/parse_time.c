@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -646,7 +646,7 @@ extern time_t parse_time(char *time_str, int past)
 }
 
 #if _RUN_STAND_ALONE
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	char in_line[128];
 	time_t when;

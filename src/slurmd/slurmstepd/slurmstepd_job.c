@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -60,9 +60,9 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/slurmd/common/fname.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/io.h"
-#include "src/slurmd/slurmstepd/fname.h"
 #include "src/slurmd/slurmstepd/multi_prog.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 

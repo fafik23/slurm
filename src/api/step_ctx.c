@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -397,7 +397,7 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 	char **char_array_pptr = (char **) NULL;
 	job_step_create_response_msg_t ** step_resp_pptr;
 	slurm_cred_t  **cred;     /* Slurm job credential    */
-	switch_jobinfo_t **switch_job;
+	dynamic_plugin_data_t **switch_job;
 	int *int_ptr;
 	int **int_array_pptr = (int **) NULL;
 
@@ -443,7 +443,7 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 		*cred = ctx->step_resp->cred;
 		break;
 	case SLURM_STEP_CTX_SWITCH_JOB:
-		switch_job = (switch_jobinfo_t **) va_arg(ap, void *);
+		switch_job = (dynamic_plugin_data_t **) va_arg(ap, void *);
 		*switch_job = ctx->step_resp->switch_job;
 		break;
 	case SLURM_STEP_CTX_NUM_HOSTS:
@@ -493,7 +493,7 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
  * RET SLURM_SUCCESS or SLURM_ERROR (with slurm_errno set)
  */
 extern int
-slurm_jobinfo_ctx_get(switch_jobinfo_t *jobinfo, int data_type, void *data)
+slurm_jobinfo_ctx_get(dynamic_plugin_data_t *jobinfo, int data_type, void *data)
 {
 	if (jobinfo == NULL) {
 		slurm_seterrno(EINVAL);

@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>, Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -77,7 +77,7 @@ static void  _usage(void);
 /*
  * parse_command_line, fill in params data structure with data
  */
-extern void parse_command_line(int argc, char *argv[])
+extern void parse_command_line(int argc, char **argv)
 {
 	char *env_val = NULL;
 	int opt_char;
@@ -1011,6 +1011,12 @@ static int _parse_long_format (char* format_long)
 						   field_size,
 						   right_justify,
 						   suffix );
+		} else if (!xstrcasecmp(token, "port")) {
+			params.match_flags.port_flag = true;
+			format_add_port( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
 		} else if (!xstrcasecmp(token, "preemptmode")) {
 			params.match_flags.preempt_mode_flag = true;
 			format_add_preempt_mode( params.format_list,
@@ -1267,6 +1273,8 @@ void _print_options( void )
 	printf("memory_flag     = %s\n", params.match_flags.memory_flag ?
 			"true" : "false");
 	printf("partition_flag  = %s\n", params.match_flags.partition_flag ?
+			"true" : "false");
+	printf("port_flag       = %s\n", params.match_flags.port_flag ?
 			"true" : "false");
 	printf("priority_job_factor_flag   = %s\n",
 			params.match_flags.priority_job_factor_flag ?

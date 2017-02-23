@@ -1,6 +1,5 @@
 /*****************************************************************************\
- * src/slurmd/slurmstepd/fname.c - IO filename creation routine
- *                                 (slurmstepd specific)
+ * src/slurmd/common/fname.c - IO filename creation routine
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,18 +35,18 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+#include <ctype.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
 
+#include "src/slurmd/common/fname.h"
 #include "src/slurmd/slurmd/slurmd.h"
-#include "src/slurmd/slurmstepd/fname.h"
 
 #include "src/common/uid.h"
 #include "src/common/xassert.h"
@@ -71,16 +70,14 @@ static void _step_path_check(char **p, char **q, char **name, unsigned int wid,
 #define MAX_WIDTH 10
 
 /* Create an IO filename from job parameters and the filename format
- * sent from client
- */
-char *
-fname_create(stepd_step_rec_t *job, const char *format, int taskid)
+ * sent from client. Used by slurmstepd. */
+extern char *fname_create(stepd_step_rec_t *job, const char *format, int taskid)
 {
 	char *name = NULL, *orig;
 	int id;
 	char *esc;
 
-	if (((id = fname_single_task_io (format)) >= 0) && (taskid != id))
+	if (((id = fname_single_task_io(format)) >= 0) && (taskid != id))
 		return (xstrdup ("/dev/null"));
 
 	orig = xstrdup(format);
@@ -108,6 +105,54 @@ fname_create(stepd_step_rec_t *job, const char *format, int taskid)
 		name = _create_batch_fname(name, orig, job, taskid);
 	else
 		name = _create_step_fname(name, orig, job, taskid);
+
+fini:
+	xfree(orig);
+	return name;
+}
+
+/* Create an IO filename from job parameters and the filename format
+ * sent from client. Used by slurmd for prolog errors. */
+extern char *fname_create2(batch_job_launch_msg_t *req)
+{
+	stepd_step_rec_t job;
+	char *esc, *name = NULL, *orig = NULL;
+
+	if (req->std_err)
+		orig = xstrdup(req->std_err);
+	else if (req->std_out)
+		orig = xstrdup(req->std_out);
+	else
+		xstrfmtcat(orig, "slurm-%u.out", req->job_id);
+	esc = is_path_escaped(orig);
+
+	/* If format doesn't specify an absolute pathname, use cwd
+	 */
+	if (orig[0] != '/') {
+		xstrcat(name, req->work_dir);
+		if (esc) {
+			xstrcat(name, esc);
+			goto fini;
+		}
+		if (name[strlen(name)-1] != '/')
+			xstrcatchar(name, '/');
+	}
+
+	if (esc) {
+		/* esc is malloc */
+		name = esc;
+		goto fini;
+	}
+
+	memset(&job, 0, sizeof(stepd_step_rec_t));
+	job.array_job_id	= req->array_job_id;
+	job.array_task_id	= req->array_task_id;
+	job.jobid		= req->job_id;
+//	job->nodeid		= TBD;
+	job.stepid		= req->step_id;
+	job.uid			= req->uid;
+	job.user_name		= req->user_name;
+	name = _create_batch_fname(name, orig, &job, 0);
 
 fini:
 	xfree(orig);
@@ -154,8 +199,8 @@ static char *_create_batch_fname(char *name, char *path, stepd_step_rec_t *job,
 	return name;
 }
 
-static char *_create_step_fname (char *name, char *path, stepd_step_rec_t *job,
-				 int taskid)
+static char *_create_step_fname(char *name, char *path, stepd_step_rec_t *job,
+				int taskid)
 {
 
 	unsigned int wid   = 0;
@@ -319,7 +364,7 @@ static void _batch_path_check(char **p, char **q, char **name,
  * Return >= 0 if fmt specifies "single task only" IO
  *  i.e. if it specifies a single integer only
  */
-int fname_single_task_io (const char *fmt)
+extern int fname_single_task_io (const char *fmt)
 {
 	unsigned long taskid;
 	char *p;
@@ -338,8 +383,7 @@ int fname_single_task_io (const char *fmt)
  * The new path will tell the caller not to
  * translate escaped characters.
  */
-char *
-is_path_escaped(char *p)
+extern char *is_path_escaped(char *p)
 {
 	char *buf;
 	bool t;

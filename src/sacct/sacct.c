@@ -6,7 +6,7 @@
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,8 +36,6 @@
 \*****************************************************************************/
 
 #include "sacct.h"
-
-void invalidSwitchCombo(char *good, char *bad);
 
 /*
  * Globals
@@ -178,11 +176,4 @@ int main(int argc, char **argv)
 
 	sacct_fini();
 	return (rc);
-}
-
-
-void invalidSwitchCombo(char *good, char *bad)
-{
-	fprintf(stderr, "\"%s\" may not be used with %s\n", good, bad);
-	return;
 }

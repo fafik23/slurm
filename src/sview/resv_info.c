@@ -3,13 +3,13 @@
  *  mode of sview.
  *****************************************************************************
  *  Copyright (C) 2009-2011 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2012-2015 SchedMD LLC <http://www.schedmd.com>
+ *  Portions Copyright (C) 2012-2015 SchedMD LLC <https://www.schedmd.com>
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -401,9 +401,9 @@ static const char *_set_resv_msg(resv_desc_msg_t *resv_msg,
 		tok = strtok_r(tmp_text, ",", &last);
 		while (tok) {
 			temp_int = strtol(tok, &temp_str, 10);
-			if ((temp_str[0] == 'k') || (temp_str[0] == 'k'))
+			if ((temp_str[0] == 'k') || (temp_str[0] == 'K'))
 				temp_int *= 1024;
-			if ((temp_str[0] == 'm') || (temp_str[0] == 'm'))
+			if ((temp_str[0] == 'm') || (temp_str[0] == 'M'))
 				temp_int *= (1024 * 1024);
 			xrealloc(resv_msg->node_cnt,
 				 (sizeof(uint32_t) * (block_inx + 2)));
@@ -851,10 +851,6 @@ static List _create_resv_info_list(reserve_info_msg_t *resv_info_ptr)
 		last_list = info_list;
 
 	info_list = list_create(_resv_info_list_del);
-	if (!info_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 
 	if (last_list)
 		last_list_itr = list_iterator_create(last_list);

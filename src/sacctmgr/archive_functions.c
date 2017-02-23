@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -137,7 +137,7 @@ extern int _addto_uid_char_list(List char_list, char *names)
 	return count;
 }
 
-static int _set_cond(int *start, int argc, char *argv[],
+static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_archive_cond_t *arch_cond)
 {
 	int i;
@@ -188,6 +188,14 @@ static int _set_cond(int *start, int argc, char *argv[],
 		} else if (!end && !strncasecmp(argv[i], "suspend",
 					  MAX(command_len, 1))) {
 			arch_cond->purge_suspend |= SLURMDB_PURGE_ARCHIVE;
+			set = 1;
+		} else if (!end && !strncasecmp(argv[i], "txn",
+					  MAX(command_len, 1))) {
+			arch_cond->purge_txn |= SLURMDB_PURGE_ARCHIVE;
+			set = 1;
+		} else if (!end && !strncasecmp(argv[i], "usage",
+					  MAX(command_len, 1))) {
+			arch_cond->purge_usage |= SLURMDB_PURGE_ARCHIVE;
 			set = 1;
 		} else if (!end
 			  || !strncasecmp(argv[i], "Clusters",
@@ -315,6 +323,24 @@ static int _set_cond(int *start, int argc, char *argv[],
 				arch_cond->purge_suspend |= tmp;
 				set = 1;
 			}
+		} else if (!strncasecmp (argv[i], "PurgeTXNAfter",
+					 MAX(command_len, 10))) {
+			if ((tmp = slurmdb_parse_purge(argv[i]+end))
+			    == NO_VAL) {
+				exit_code = 1;
+			} else {
+				arch_cond->purge_txn |= tmp;
+				set = 1;
+			}
+		} else if (!strncasecmp (argv[i], "PurgeUsageAfter",
+					 MAX(command_len, 10))) {
+			if ((tmp = slurmdb_parse_purge(argv[i]+end))
+			    == NO_VAL) {
+				exit_code = 1;
+			} else {
+				arch_cond->purge_usage |= tmp;
+				set = 1;
+			}
 		} else if (!strncasecmp (argv[i], "PurgeEventMonths",
 					 MAX(command_len, 6))) {
 			if (get_uint(argv[i]+end, &tmp, "PurgeEventMonths")
@@ -366,6 +392,28 @@ static int _set_cond(int *start, int argc, char *argv[],
 					|= SLURMDB_PURGE_MONTHS;
 				set = 1;
 			}
+		} else if (!strncasecmp (argv[i], "PurgeTXNMonths",
+					 MAX(command_len, 6))) {
+			if (get_uint(argv[i]+end, &tmp, "PurgeTXNMonths")
+			    != SLURM_SUCCESS) {
+				exit_code = 1;
+			} else {
+				arch_cond->purge_txn |= tmp;
+				arch_cond->purge_txn
+					|= SLURMDB_PURGE_MONTHS;
+				set = 1;
+			}
+		} else if (!strncasecmp (argv[i], "PurgeUsageMonths",
+					 MAX(command_len, 6))) {
+			if (get_uint(argv[i]+end, &tmp, "PurgeUsageMonths")
+			    != SLURM_SUCCESS) {
+				exit_code = 1;
+			} else {
+				arch_cond->purge_usage |= tmp;
+				arch_cond->purge_usage
+					|= SLURMDB_PURGE_MONTHS;
+				set = 1;
+			}
 		} else if (!strncasecmp (argv[i], "Start",
 					 MAX(command_len, 2))) {
 			job_cond->usage_start = parse_time(argv[i]+end, 1);
@@ -394,7 +442,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 	return set;
 }
 
-extern int sacctmgr_archive_dump(int argc, char *argv[])
+extern int sacctmgr_archive_dump(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	slurmdb_archive_cond_t *arch_cond =
@@ -420,6 +468,10 @@ extern int sacctmgr_archive_dump(int argc, char *argv[])
 		arch_cond->purge_step = NO_VAL;
 	if (!arch_cond->purge_suspend)
 		arch_cond->purge_suspend = NO_VAL;
+	if (!arch_cond->purge_txn)
+		arch_cond->purge_txn = NO_VAL;
+	if (!arch_cond->purge_usage)
+		arch_cond->purge_usage = NO_VAL;
 
 	if (exit_code) {
 		slurmdb_destroy_archive_cond(arch_cond);
@@ -506,7 +558,7 @@ extern int sacctmgr_archive_dump(int argc, char *argv[])
 	return rc;
 }
 
-extern int sacctmgr_archive_load(int argc, char *argv[])
+extern int sacctmgr_archive_load(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	slurmdb_archive_rec_t *arch_rec =

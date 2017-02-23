@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -72,10 +72,9 @@
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
 
-
+#include "src/slurmd/common/fname.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/io.h"
-#include "src/slurmd/slurmstepd/fname.h"
 #include "src/slurmd/slurmstepd/slurmstepd.h"
 
 /**********************************************************************
@@ -225,7 +224,7 @@ _client_readable(eio_obj_t *obj)
 	xassert(client->magic == CLIENT_IO_MAGIC);
 
 	if (client->in_eof) {
-		debug5("  false");
+		debug5("  false, in_eof");
 		/* We no longer want the _client_read() function to handle
 		   errors on write now that the read side of the connection
 		   is closed.  Setting handle_read to NULL will result in
@@ -1063,7 +1062,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 		/* create pipe and eio object */
 		int pout[2];
 #if HAVE_PTY_H
-		if (job->flags & LAUNCH_BUFFERED_IO) {
+		if (!(job->flags & LAUNCH_BUFFERED_IO)) {
 #if HAVE_SETRESUID
 			if (setresuid(geteuid(), geteuid(), 0) < 0)
 				error("%s: %d setresuid() %m",
@@ -1808,8 +1807,11 @@ _task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cb
 	struct io_buf *msg;
 	char *ptr;
 	Buf packbuf;
+	bool must_truncate = false;
+	int avail;
 	struct slurm_io_header header;
 	int n;
+	bool buffered_stdio = job->flags & LAUNCH_BUFFERED_IO;
 
 	debug4("%s: Entering...", __func__);
 
@@ -1820,13 +1822,43 @@ _task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cb
 	}
 
 	ptr = msg->data + io_hdr_packed_size();
-	n = cbuf_read(cbuf, ptr, MAX_MSG_LEN);
+
+	if (buffered_stdio) {
+		avail = cbuf_peek_line(cbuf, ptr, MAX_MSG_LEN, 1);
+		if (avail >= MAX_MSG_LEN)
+			must_truncate = true;
+		else if (avail == 0 && cbuf_used(cbuf) >= MAX_MSG_LEN)
+			must_truncate = true;
+	}
+
+	debug5("%s: buffered_stdio is %s", __func__,
+	       buffered_stdio ? "true" : "false");
+	debug5("%s: must_truncate  is %s", __func__,
+	       must_truncate ? "true" : "false");
+
+	/*
+	 * If eof has been read from a tasks stdout or stderr, we need to
+	 * ignore normal line buffering and send the buffer immediately.
+	 * Hence the "|| out->eof".
+	 */
+	if (must_truncate || !buffered_stdio || out->eof) {
+		n = cbuf_read(cbuf, ptr, MAX_MSG_LEN);
+	} else {
+		n = cbuf_read_line(cbuf, ptr, MAX_MSG_LEN, -1);
+		if (n == 0) {
+			debug5("  partial line in buffer, ignoring");
+			debug4("Leaving  _task_build_message");
+			list_enqueue(job->free_outgoing, msg);
+			return NULL;
+		}
+	}
+
 	header.type = out->type;
 	header.ltaskid = out->ltaskid;
 	header.gtaskid = out->gtaskid;
 	header.length = n;
 
-	debug4("%s: header.length %d", __func__, n);
+	debug4("%s: header.length = %d", __func__, n);
 	packbuf = create_buf(msg->data, io_hdr_packed_size());
 	if (!packbuf) {
 		fatal("Failure to allocate memory for a message header");
@@ -1840,7 +1872,7 @@ _task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cb
 	packbuf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(packbuf);
 
-	debug4("%s: Leaving...", __func__);
+	debug4("%s: Leaving", __func__);
 	return msg;
 }
 

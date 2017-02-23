@@ -6,7 +6,7 @@
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -288,15 +288,16 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task)
 {
 	static bool ran = false;
+	int rc = SLURM_SUCCESS;
 
 	/* Only run this on the first call since this will run for
 	 * every task on the node.
 	 */
 	if (use_memory && !ran) {
-		task_cgroup_memory_check_oom(job);
+		rc = task_cgroup_memory_check_oom(job);
 		ran = true;
 	}
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 /*

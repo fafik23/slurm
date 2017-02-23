@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -69,7 +69,6 @@ struct squeue_parameters {
 	bool array_flag;
 	int  iterate;
 	bool job_flag;
-	bool show_fedtrack;
 	bool start_flag;
 	bool step_flag;
 	bool long_format;
@@ -114,7 +113,7 @@ struct squeue_parameters {
 
 extern struct squeue_parameters params;
 
-extern void parse_command_line( int argc, char* argv[] );
+extern void parse_command_line( int argc, char* *argv );
 extern int  parse_format( char* format );
 extern int  parse_long_format( char* format_long);
 extern void sort_job_list( List job_list );

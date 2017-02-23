@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -508,10 +508,6 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 	}
 
 	block_list = list_create(_block_list_del);
-	if (!block_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 
 	last_block_info_ptr = block_info_ptr;
 

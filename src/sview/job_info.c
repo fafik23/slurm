@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -141,6 +141,7 @@ enum {
 	SORTID_IMAGE_MLOADER,
 	SORTID_JOBID,
 	SORTID_JOBID_FORMATTED,
+	SORTID_LAST_SCHED_EVAL,
 	SORTID_LICENSES,
 	SORTID_MCS_LABEL,
 	SORTID_CPU_REQ,
@@ -400,6 +401,8 @@ static display_data_t display_data_job[] = {
 	{G_TYPE_STRING, SORTID_FEATURES, "Features",
 	 false, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_GRES, "Gres",
+	 false, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_LAST_SCHED_EVAL, "Last Sched Eval",
 	 false, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_LICENSES, "Licenses",
 	 false, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
@@ -763,19 +766,20 @@ static const char *_set_job_msg(job_desc_msg_t *job_msg, const char *new_text,
 	char *p;
 	uint16_t rotate;
 	uint16_t conn_type[cluster_dims];
-	char* token, *delimiter = ",x", *next_ptr;
+	char *token, *delimiter = ",x", *next_ptr;
 	char *sep_char;
 	int j;
 	uint16_t geo[cluster_dims];
-	char* geometry_tmp = xstrdup(new_text);
-	char* original_ptr = geometry_tmp;
+	char *geometry_tmp, *original_ptr;
 
 	/* need to clear global_edit_error here (just in case) */
 	global_edit_error = 0;
 	if (!job_msg)
 		return NULL;
 
-	switch(column) {
+	geometry_tmp = xstrdup(new_text);
+	original_ptr = geometry_tmp;
+	switch (column) {
 	case SORTID_ACTION:
 		xfree(got_edit_signal);
 		if (!xstrcasecmp(new_text, "None"))
@@ -1048,9 +1052,9 @@ static const char *_set_job_msg(job_desc_msg_t *job_msg, const char *new_text,
 	case SORTID_GEOMETRY:
 		type = "geometry";
 		token = strtok_r(geometry_tmp, delimiter, &next_ptr);
-		for (j=0; j<cluster_dims; j++)
+		for (j = 0; j < cluster_dims; j++)
 			geo[j] = (uint16_t) NO_VAL;
-		for (j=0; j<cluster_dims; j++) {
+		for (j = 0; j < cluster_dims; j++) {
 			if (!token) {
 				//error("insufficient dimensions in "
 				//      "Geometry");
@@ -1647,6 +1651,13 @@ static void _layout_job_record(GtkTreeView *treeview,
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_JOBID),
+				   tmp_char);
+
+	slurm_make_time_str(&job_ptr->last_sched_eval, tmp_char,
+			    sizeof(tmp_char));
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_LAST_SCHED_EVAL),
 				   tmp_char);
 
 	add_display_treestore_line(update, treestore, &iter,
@@ -3142,10 +3153,6 @@ static List _create_job_info_list(job_info_msg_t *job_info_ptr,
 		info_list = list_create(NULL);
 		odd_info_list = list_create(_job_info_list_del);
 	}
-	if (!info_list || !odd_info_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 	if (last_list)
 		last_list_itr = list_iterator_create(last_list);
 	for (i=0; i<job_info_ptr->record_count; i++) {
@@ -3439,6 +3446,8 @@ need_refresh:
 			}
 		}
 		list_iterator_destroy(itr);
+		xfree(color_inx);
+		xfree(color_set_flag);
 	}
 	post_setup_popup_grid_list(popup_win);
 
@@ -4784,7 +4793,6 @@ extern void admin_job(GtkTreeModel *model, GtkTreeIter *iter,
 	if (xstrcmp(type, "Edit Job") == 0)
 		return _edit_jobs(model, iter, type, treeview);
 
-	job_msg = xmalloc(sizeof(job_desc_msg_t));
 	popup = gtk_dialog_new_with_buttons(
 			type,
 			GTK_WINDOW(main_window),
@@ -4813,6 +4821,7 @@ extern void admin_job(GtkTreeModel *model, GtkTreeIter *iter,
 		gtk_tree_model_get(model, iter, SORTID_POS, &jobid, -1);
 	}
 
+	job_msg = xmalloc(sizeof(job_desc_msg_t));
 	slurm_init_job_desc_msg(job_msg);
 
 	if (!xstrcasecmp("Signal", type)) {

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -42,7 +42,6 @@
 #include "sview.h"
 
 #define _DEBUG 0
-#define MAX_RETRIES 3		/* g_thread_create retries */
 
 typedef struct {
 	GtkTable *table;
@@ -1446,7 +1445,7 @@ extern void close_tab(GtkWidget *widget, GdkEventButton *event,
 	//g_print("hid %d\n", display_data->extra);
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	GtkWidget *menubar = NULL;
 	GtkWidget *table = NULL;

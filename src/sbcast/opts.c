@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -68,7 +68,7 @@ static void     _usage( void );
 /*
  * parse_command_line, fill in params data structure with data
  */
-extern void parse_command_line(int argc, char *argv[])
+extern void parse_command_line(int argc, char **argv)
 {
 	char *sbcast_parameters;
 	char *end_ptr = NULL, *env_val = NULL, *sep, *tmp;
@@ -100,7 +100,7 @@ extern void parse_command_line(int argc, char *argv[])
 			sep[0] = ',';
 	}
 
-	if (getenv("SBCAST_COMPRESS"))
+	if ((env_val = getenv("SBCAST_COMPRESS")))
 		params.compress = parse_compress_type(env_val);
 	if ( ( env_val = getenv("SBCAST_FANOUT") ) )
 		params.fanout = atoi(env_val);

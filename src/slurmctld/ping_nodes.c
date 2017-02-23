@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -50,9 +50,6 @@
 #include "src/slurmctld/front_end.h"
 #include "src/slurmctld/ping_nodes.h"
 #include "src/slurmctld/slurmctld.h"
-
-/* Attempt to fork a thread at most MAX_RETRIES times before aborting */
-#define MAX_RETRIES 10
 
 /* Request that nodes re-register at most every MAX_REG_FREQUENCY pings */
 #define MAX_REG_FREQUENCY 20
@@ -118,7 +115,7 @@ void ping_end (void)
 	if (ping_count > 0)
 		ping_count--;
 	else
-		fatal ("ping_count < 0");
+		error("%s: ping_count < 0", __func__);
 	ping_start = 0;
 	slurm_mutex_unlock(&lock_mutex);
 }

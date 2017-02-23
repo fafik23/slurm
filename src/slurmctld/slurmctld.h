@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2014 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2014 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -210,6 +210,7 @@ extern int   sched_interval;
 extern bool  slurmctld_init_db;
 extern int   slurmctld_primary;
 extern int   slurmctld_tres_cnt;
+extern slurmdb_cluster_rec_t *response_cluster_rec;
 
 /* Buffer size use to print the jobid2str()
  * jobid, taskid and state.
@@ -434,7 +435,6 @@ extern time_t last_job_update;	/* time of last update to job records */
 
 #define DETAILS_MAGIC	0xdea84e7
 #define JOB_MAGIC	0xf0b7392c
-#define STEP_MAGIC	0xce593bc1
 
 #define FEATURE_OP_OR   0
 #define FEATURE_OP_AND  1
@@ -564,6 +564,7 @@ typedef struct {
 } acct_policy_limit_set_t;
 
 typedef struct {
+	uint32_t cluster_lock;	/* sibling that has lock on job */
 	char    *origin_str;	/* origin cluster name */
 	uint64_t siblings;	/* bitmap of sibling cluster ids */
 	char    *siblings_str;	/* comma separated list of sibling names */
@@ -604,6 +605,8 @@ struct job_record {
 	uint16_t ckpt_interval;		/* checkpoint interval in minutes */
 	time_t ckpt_time;		/* last time job was periodically
 					 * checkpointed */
+	char *clusters;			/* clusters job is submitted to with -M
+					   option */
 	char *comment;			/* arbitrary comment */
 	uint32_t cpu_cnt;		/* current count of CPUs held
 					 * by the job, decremented while job is
@@ -656,6 +659,7 @@ struct job_record {
 	uint32_t job_state;		/* state of the job */
 	uint16_t kill_on_node_fail;	/* 1 if job should be killed on
 					 * node failure */
+	time_t last_sched_eval;		/* last time job was evaluated for scheduling */
 	char *licenses;			/* licenses required by the job */
 	List license_list;		/* structure with license info */
 	acct_policy_limit_set_t limit_set; /* flags if indicate an
@@ -689,6 +693,8 @@ struct job_record {
 	char *nodes_completing;		/* nodes still in completing state
 					 * for this job, used to insure
 					 * epilog is not re-run for job */
+	char *origin_cluster;		/* cluster name that the job was
+					 * submitted from */
 	uint16_t other_port;		/* port for client communications */
 	uint32_t pack_leader;		/* job_id of pack_leader for job_pack
 	                                 * or 0 */
@@ -870,7 +876,7 @@ struct 	step_record {
 /*	time_t suspend_time;		 * time step last suspended or resumed
 					 * implicitly the same as suspend_time
 					 * in the job record */
-	switch_jobinfo_t *switch_job;	/* switch context, opaque */
+	dynamic_plugin_data_t *switch_job; /* switch context, opaque */
 	time_t time_last_active;	/* time step was last found on node */
 	time_t tot_sus_time;		/* total time in suspended state */
 	char *tres_alloc_str;           /* simple tres string for step */
@@ -1322,7 +1328,7 @@ extern int job_fail(uint32_t job_id, uint32_t job_state);
  * The requeue can happen directly from job_requeue() or from
  * job_epilog_complete() after the last component has finished.
  */
-extern void job_hold_requeue(struct job_record *job_ptr);
+extern bool job_hold_requeue(struct job_record *job_ptr);
 
 /*
  * determine if job is ready to execute per the node select plugin
@@ -1647,6 +1653,13 @@ extern int list_find_feature(void *feature_entry, void *key);
  * global- part_list - the global partition list
  */
 extern int list_find_part (void *part_entry, void *key);
+
+/*
+ * list_find_job_id - find specific job_id entry in the job list,
+ *	see common/list.h for documentation, key is job_id_ptr
+ * global- job_list - the global partition list
+ */
+extern int list_find_job_id(void *job_entry, void *key);
 
 /*
  * load_all_job_state - load the job state from file, recover from last
@@ -2205,6 +2218,10 @@ extern bool test_job_array_finished(uint32_t array_job_id);
 /* Return true if ANY tasks of specific array job ID are pending */
 extern bool test_job_array_pending(uint32_t array_job_id);
 
+/* Determine of the nodes are ready to run a job
+ * RET true if ready */
+extern bool test_job_nodes_ready(struct job_record *job_ptr);
+
 /*
  * Synchronize the batch job in the system with their files.
  * All pending batch jobs must have script and environment files
@@ -2427,4 +2444,41 @@ extern void set_partition_tres();
  */
 extern void set_job_fed_details(struct job_record *job_ptr,
 				uint64_t fed_siblings);
+
+/*
+ * purge_job_record - purge specific job record. No testing is performed to
+ *	insure the job records has no active references. Use only for job
+ *	records that were never fully operational (e.g. WILL_RUN test, failed
+ *	job load, failed job create, etc.).
+ * IN job_id - job_id of job record to be purged
+ * RET int - count of job's purged
+ * global: job_list - global job table
+ */
+extern int purge_job_record(uint32_t job_id);
+
+/*
+ * copy_job_record_to_job_desc - construct a job_desc_msg_t for a job.
+ * IN job_ptr - the job record
+ * RET the job_desc_msg_t, NULL on error
+ */
+extern job_desc_msg_t *copy_job_record_to_job_desc(struct job_record *job_ptr);
+
+
+/*
+ * Set the allocation response with the current cluster's information and the
+ * job's allocated node's addr's if the allocation is being filled by a cluster
+ * other than the cluster that submitted the job
+ *
+ * Note: make sure that the resp's working_cluster_rec is NULL'ed out before the
+ * resp is free'd since it points to global memory.
+ *
+ * IN resp - allocation response being sent back to client.
+ * IN job_ptr - allocated job
+ * IN req_cluster - the cluster requesting the allocation info.
+ */
+extern void
+set_remote_working_response(resource_allocation_response_msg_t *resp,
+			    struct job_record *job_ptr,
+			    const char *req_cluster);
+
 #endif /* !_HAVE_SLURMCTLD_H */

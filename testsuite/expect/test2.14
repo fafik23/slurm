@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -110,7 +110,7 @@ if {[wait_for_file $file_out] != 0} {
 set task_count 0
 spawn $bin_cat $file_out
 expect {
-	-re "slurm_allocation_lookup_lite" {
+	-re "slurm_allocation_lookup" {
 		send_user "\nFAILURE: Couldn't look up the job correctly\n\n\n"
 		set exit_code 1
 	}

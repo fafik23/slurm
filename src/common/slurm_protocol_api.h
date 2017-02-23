@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -414,7 +414,7 @@ char *slurm_get_state_save_location(void);
  * returns the TmpFS configuration parameter from slurmctld_conf object
  * RET char *    - tmp_fs, MUST be xfreed by caller
  */
-extern char *slurm_get_tmp_fs(void);
+extern char *slurm_get_tmp_fs(char *node_name);
 
 /* slurm_get_auth_type
  * returns the authentication type from slurmctld_conf object
@@ -752,11 +752,11 @@ char *slurm_get_acct_gather_energy_type(void);
  */
 char *slurm_get_acct_gather_profile_type(void);
 
-/* slurm_get_acct_infiniband_profile_type
- * get InfinibandAccountingType from slurmctld_conf object
- * RET char *   - acct_gather_infiniband_type, MUST be xfreed by caller
+/* slurm_get_acct_interconnect_profile_type
+ * get InterconnectAccountingType from slurmctld_conf object
+ * RET char *   - acct_gather_interconnect_type, MUST be xfreed by caller
  */
-char *slurm_get_acct_gather_infiniband_type(void);
+char *slurm_get_acct_gather_interconnect_type(void);
 
 /* slurm_get_acct_filesystem_profile_type
  * get FilesystemAccountingType from slurmctld_conf object
@@ -893,7 +893,7 @@ char *slurm_get_job_container_plugin(void);
 
 /* slurm_get_slurmd_spooldir
  * RET slurmd_spooldir name, must be xfreed by caller */
-char *slurm_get_slurmd_spooldir(void);
+char *slurm_get_slurmd_spooldir(char *node_name);
 
 /* slurm_get_layouts
  * RET comma seperated list of layouts in a string, must be xfreed by caller

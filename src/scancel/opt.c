@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -121,7 +121,7 @@ static void _usage(void);
 
 /*---[ end forward declarations of static functions ]---------------------*/
 
-int initialize_and_process_args(int argc, char *argv[])
+int initialize_and_process_args(int argc, char **argv)
 {
 	/* initialize option defaults */
 	_opt_default();
@@ -206,7 +206,7 @@ static uint16_t _xlate_signal_name(const char *signal_name)
 	if ((*end_ptr == '\0') || (sig_num != 0))
 		return sig_num;
 
-	for (i=0; i<SIZE(sig_name_num); i++) {
+	for (i = 0; i < SIZE(sig_name_num); i++) {
 		if (xstrcasecmp(sig_name_num[i].name, signal_name) == 0) {
 			xfree(sig_names);
 			return sig_name_num[i].val;
@@ -246,6 +246,7 @@ static void _opt_default(void)
 }
 #endif
 	opt.full	= false;
+	opt.hurry	= false;
 	opt.interactive	= false;
 	opt.job_cnt	= 0;
 	opt.job_list    = NULL;
@@ -303,6 +304,9 @@ static void _opt_env(void)
 		else
 			error ("Unrecognized SCANCEL_FULL value: %s", val);
 	}
+
+	if (getenv("SCANCEL_HURRY"))
+		opt.hurry = true;
 
 	if ( (val=getenv("SCANCEL_INTERACTIVE")) ) {
 		if (xstrcasecmp(val, "true") == 0)
@@ -363,13 +367,14 @@ static void _opt_env(void)
 static void _opt_args(int argc, char **argv)
 {
 	char **rest = NULL;
-	int i, opt_char, option_index;
+	int opt_char, option_index;
 	static struct option long_options[] = {
 		{"account",	required_argument, 0, 'A'},
 		{"batch",	no_argument,       0, 'b'},
 		{"ctld",	no_argument,	   0, OPT_LONG_CTLD},
 		{"full",	no_argument,       0, 'f'},
 		{"help",        no_argument,       0, OPT_LONG_HELP},
+		{"hurry",       no_argument,       0, 'H'},
 		{"interactive", no_argument,       0, 'i'},
 		{"cluster",     required_argument, 0, 'M'},
 		{"clusters",    required_argument, 0, 'M'},
@@ -410,6 +415,9 @@ static void _opt_args(int argc, char **argv)
 			break;
 		case (int)'f':
 			opt.full = true;
+			break;
+		case (int)'H':
+			opt.hurry = true;
 			break;
 		case (int)'i':
 			opt.interactive = true;
@@ -471,15 +479,9 @@ static void _opt_args(int argc, char **argv)
 
 	if (optind < argc)
 		rest = argv + optind;
-	if (rest && (rest[0][0] >= '0') && (rest[0][0] <= '9')) {
+
+	if (rest)
 		opt.job_list = _xlate_job_step_ids(rest);
-	} else if (rest) {
-		for (i = optind; i < argc; i++) {
-			if (opt.job_name)
-				xstrcat(opt.job_name, ",");
-			xstrcat(opt.job_name, argv[i]);
-		}
-	}
 
 	if (!_opt_verify())
 		exit(1);
@@ -514,7 +516,7 @@ _xlate_job_step_ids(char **rest)
 	for (i = 0; id_args[i] && (buf_offset < buf_size); i++) {
 		job_id = strtol(id_args[i], &next_str, 10);
 		if (job_id <= 0) {
-			error ("Invalid job_id %s", id_args[i]);
+			error ("Invalid job id %s", id_args[i]);
 			exit (1);
 		}
 		opt.job_id[buf_offset] = job_id;
@@ -591,7 +593,7 @@ _xlate_job_step_ids(char **rest)
 			next_str[0] = '\0';
 			id_args[i+1] = xstrdup(next_str + 1);
 		} else if (next_str[0] != '\0') {
-			error ("Invalid job ID %s", id_args[i]);
+			error ("Invalid job id %s", id_args[i]);
 			exit (1);
 		}
 	}
@@ -643,6 +645,7 @@ static void _opt_list(void)
 	info("batch          : %s", tf_(opt.batch));
 	info("ctld           : %s", tf_(opt.ctld));
 	info("full           : %s", tf_(opt.full));
+	info("hurry          : %s", tf_(opt.hurry));
 	info("interactive    : %s", tf_(opt.interactive));
 	info("job_name       : %s", opt.job_name);
 	info("nodelist       : %s", opt.nodelist);
@@ -690,7 +693,8 @@ static void _usage(void)
 	printf("Usage: scancel [-A account] [--batch] [--full] [--interactive] [-n job_name]\n");
 	printf("               [-p partition] [-Q] [-q qos] [-R reservation][-s signal | integer]\n");
 	printf("               [-t PENDING | RUNNING | SUSPENDED] [--usage] [-u user_name]\n");
-	printf("               [-V] [-v] [-w hosts...] [--wckey=wckey] [job_id[_array_id][.step_id]]\n");
+	printf("               [--hurry] [-V] [-v] [-w hosts...] [--wckey=wckey]\n");
+	printf("               [job_id[_array_id][.step_id]]\n");
 }
 
 static void _help(void)
@@ -700,6 +704,7 @@ static void _help(void)
 	printf("  -b, --batch                     signal batch shell for specified job\n");
 /*	printf("      --ctld                      send request directly to slurmctld\n"); */
 	printf("  -f, --full                      signal batch shell and all steps for specified job\n");
+	printf("  -H, --hurry                     avoid burst buffer stage out\n");
 	printf("  -i, --interactive               require response from user for each job\n");
 	printf("  -M, --clusters                  clusters to issue commands to.\n");
 	printf("                                  NOTE: SlurmDBD must be up.\n");

@@ -8,7 +8,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -240,11 +240,12 @@ no_wckeyid:
 extern int as_mysql_job_start(mysql_conn_t *mysql_conn,
 			      struct job_record *job_ptr)
 {
-	int rc=SLURM_SUCCESS;
+	int rc = SLURM_SUCCESS;
 	char *nodes = NULL, *jname = NULL, *node_inx = NULL;
 	int track_steps = 0;
-	char *block_id = NULL, *partition = NULL,
-		*gres_req = NULL, *gres_alloc = NULL;
+	char *block_id = NULL, *partition = NULL;
+	char *gres_req = NULL, *gres_alloc = NULL;
+	char temp_bit[BUF_SIZE];
 	char *query = NULL;
 	int reinit = 0;
 	time_t begin_time, check_time, start_time, submit_time;
@@ -421,8 +422,6 @@ no_rollup_change:
 		node_cnt = job_ptr->total_nodes;
 		node_inx = job_ptr->network;
 	} else {
-		char temp_bit[BUF_SIZE];
-
 		if (job_ptr->node_bitmap) {
 			node_inx = bit_fmt(temp_bit, sizeof(temp_bit),
 					   job_ptr->node_bitmap);
@@ -843,6 +842,8 @@ extern int as_mysql_job_complete(mysql_conn_t *mysql_conn,
 
 		if (IS_JOB_REQUEUED(job_ptr))
 			job_state = JOB_REQUEUE;
+		else if (IS_JOB_REVOKED(job_ptr))
+			job_state = JOB_REVOKED;
 		else
 			job_state = job_ptr->job_state & JOB_STATE_BASE;
 	}
@@ -942,7 +943,8 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 			       struct step_record *step_ptr)
 {
 	int tasks = 0, nodes = 0, task_dist = 0;
-	int rc=SLURM_SUCCESS;
+	int rc = SLURM_SUCCESS;
+	char temp_bit[BUF_SIZE];
 	char node_list[BUFFER_SIZE];
 	char *node_inx = NULL, *step_name = NULL;
 	time_t start_time, submit_time;
@@ -979,8 +981,6 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 		task_dist = step_ptr->step_layout->task_dist;
 		node_inx = step_ptr->network;
 	} else if (step_ptr->step_id == SLURM_BATCH_SCRIPT) {
-		char temp_bit[BUF_SIZE];
-
 		if (step_ptr->step_node_bitmap) {
 			node_inx = bit_fmt(temp_bit, sizeof(temp_bit),
 					   step_ptr->step_node_bitmap);
@@ -998,7 +998,6 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 				   TRES_NODE, 1);
 	} else {
 		char *ionodes = NULL, *temp_nodes = NULL;
-		char temp_bit[BUF_SIZE];
 
 		if (step_ptr->step_node_bitmap) {
 			node_inx = bit_fmt(temp_bit, sizeof(temp_bit),

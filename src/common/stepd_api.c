@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -224,14 +224,16 @@ stepd_connect(const char *directory, const char *nodename,
 	int rc;
 	void *auth_cred;
 	char *auth_info;
+	char *local_nodename = NULL;
 	Buf buffer;
 	int len;
 
 	*protocol_version = 0;
 
 	if (nodename == NULL) {
-		if (!(nodename = _guess_nodename()))
+		if (!(local_nodename = _guess_nodename()))
 			return -1;
+		nodename = local_nodename;
 	}
 	if (directory == NULL) {
 		slurm_ctl_conf_t *cf;
@@ -245,7 +247,7 @@ stepd_connect(const char *directory, const char *nodename,
 	buffer = init_buf(0);
 	/* Create an auth credential */
 	auth_info = slurm_get_auth_info();
-	auth_cred = g_slurm_auth_create(NULL, 2, auth_info);
+	auth_cred = g_slurm_auth_create(auth_info);
 	xfree(auth_info);
 	if (auth_cred == NULL) {
 		error("Creating authentication credential: %s",
@@ -279,9 +281,9 @@ stepd_connect(const char *directory, const char *nodename,
 		error("slurmstepd refused authentication: %m");
 		slurm_seterrno(SLURM_PROTOCOL_AUTHENTICATION_ERROR);
 		goto rwfail;
-	} else if (rc)
+	} else if (rc) {
 		*protocol_version = rc;
-	else {
+	} else {
 		/* 0n older versions of Slurm < 14.11 SLURM_SUCCESS
 		 * was returned here instead of the protocol version.
 		 * This can be removed when we are 2 versions past
@@ -293,12 +295,14 @@ stepd_connect(const char *directory, const char *nodename,
 	}
 
 	free_buf(buffer);
+	xfree(local_nodename);
 	return fd;
 
 rwfail:
 	close(fd);
 fail1:
 	free_buf(buffer);
+	xfree(local_nodename);
 	return -1;
 }
 
@@ -1004,7 +1008,7 @@ stepd_task_info(int fd, uint16_t protocol_version,
 		uint32_t *task_info_count)
 {
 	int req = REQUEST_STEP_TASK_INFO;
-	slurmstepd_task_info_t *task;
+	slurmstepd_task_info_t *task = NULL;
 	uint32_t ntasks;
 	int i;
 
@@ -1022,6 +1026,7 @@ stepd_task_info(int fd, uint16_t protocol_version,
 	}
 
 	if (ntasks == 0) {
+		xfree(task);
 		*task_info_count = 0;
 		*task_info = NULL;
 	} else {
@@ -1031,8 +1036,10 @@ stepd_task_info(int fd, uint16_t protocol_version,
 
 	return SLURM_SUCCESS;
 rwfail:
+	xfree(task);
 	*task_info_count = 0;
 	*task_info = NULL;
+	xfree(task);
 	return SLURM_ERROR;
 }
 

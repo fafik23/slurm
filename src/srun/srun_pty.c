@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -56,8 +56,6 @@
 #include "opt.h"
 #include "srun_job.h"
 #include "srun_pty.h"
-
-#define MAX_RETRIES 3
 
 /*  Processed by pty_thr() */
 static int pty_sigarray[] = { SIGWINCH, 0 };
@@ -159,12 +157,16 @@ static void *_pty_thread(void *arg)
 
 	while (job->state <= SRUN_JOB_RUNNING) {
 		debug2("waiting for SIGWINCH");
-		poll(NULL, 0, -1);
+		if (poll(NULL, 0, -1) < 1) {
+			debug("%s: poll error %m", __func__);
+			continue;
+		}
 		if (winch) {
 			set_winsize(job);
 			_notify_winsize_change(fd, job);
 		}
 		winch = 0;
 	}
+	slurm_close(fd);
 	return NULL;
 }

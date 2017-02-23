@@ -5,13 +5,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Kevin Tew <tew1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -182,7 +182,7 @@ extern List slurm_copy_char_list(List char_list)
 	return ret_list;
 }
 
-static int _find_char_in_list(void *x, void *key)
+extern int slurm_find_char_in_list(void *x, void *key)
 {
 	char *char1 = (char *)x;
 	char *char2 = (char *)key;
@@ -192,7 +192,6 @@ static int _find_char_in_list(void *x, void *key)
 
 	return 0;
 }
-
 
 /* returns number of objects added to list */
 extern int slurm_addto_char_list(List char_list, char *names)
@@ -252,7 +251,7 @@ extern int slurm_addto_char_list(List char_list, char *names)
 					 * with qos.
 					 */
 					if (list_find(itr,
-						      _find_char_in_list,
+						      slurm_find_char_in_list,
 						      name)) {
 						list_delete_item(itr);
 					} else
@@ -302,9 +301,10 @@ extern int slurm_addto_char_list(List char_list, char *names)
 						 * needed for get associations
 						 * with qos.
 						 */
-						if (list_find(itr,
-							    _find_char_in_list,
-							    this_node_name)) {
+						if (list_find(
+							itr,
+							slurm_find_char_in_list,
+							this_node_name)) {
 							list_delete_item(itr);
 						} else
 							count++;
@@ -331,7 +331,7 @@ extern int slurm_addto_char_list(List char_list, char *names)
 			 * This is needed for get associations
 			 * with qos.
 			 */
-			if (list_find(itr, _find_char_in_list, name)) {
+			if (list_find(itr, slurm_find_char_in_list, name)) {
 				list_delete_item(itr);
 			} else
 				count++;
@@ -638,7 +638,10 @@ extern void slurm_free_shutdown_msg(shutdown_msg_t * msg)
 
 extern void slurm_free_job_alloc_info_msg(job_alloc_info_msg_t * msg)
 {
-	xfree(msg);
+	if (msg) {
+		xfree(msg->req_cluster);
+		xfree(msg);
+	}
 }
 
 extern void slurm_free_step_alloc_info_msg(step_alloc_info_msg_t * msg)
@@ -687,8 +690,10 @@ extern void slurm_free_job_id_response_msg(job_id_response_msg_t * msg)
 
 extern void slurm_free_job_step_kill_msg(job_step_kill_msg_t * msg)
 {
-	xfree(msg->sjob_id);
-	xfree(msg);
+	if (msg) {
+		xfree(msg->sjob_id);
+		xfree(msg);
+	}
 }
 
 extern void slurm_free_job_info_request_msg(job_info_request_msg_t *msg)
@@ -765,6 +770,7 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t * msg)
 		xfree(msg->mloaderimage);
 		xfree(msg->name);
 		xfree(msg->network);
+		xfree(msg->origin_cluster);
 		xfree(msg->qos);
 		xfree(msg->std_out);
 		xfree(msg->partition);
@@ -793,7 +799,9 @@ extern void slurm_free_sib_msg(sib_msg_t *msg)
 {
 	if (msg) {
 		free_buf(msg->data_buffer);
-		slurm_free_msg_data(msg->data_type, msg->data);
+		xfree(msg->resp_host);
+		if (msg->data)
+			slurm_free_msg_data(msg->data_type, msg->data);
 		xfree(msg);
 	}
 }
@@ -1817,6 +1825,10 @@ extern char *job_reason_string(enum job_state_reason inx)
 		return "PartitionConfig";
 	case WAIT_ACCOUNT_POLICY:
 		return "AccountingPolicy";
+	case WAIT_FED_JOB_LOCK:
+		return "FedJobLock";
+	case FAIL_OOM:
+		return "OutOfMemory";
 	default:
 		snprintf(val, sizeof(val), "%d", inx);
 		return val;
@@ -2043,12 +2055,16 @@ extern char *job_state_string(uint32_t inx)
 		return "RESIZING";
 	if (inx & JOB_REQUEUE)
 		return "REQUEUED";
+	if (inx & JOB_REQUEUE_FED)
+		return "REQUEUE_FED";
 	if (inx & JOB_REQUEUE_HOLD)
 		return "REQUEUE_HOLD";
 	if (inx & JOB_SPECIAL_EXIT)
 		return "SPECIAL_EXIT";
 	if (inx & JOB_STOPPED)
 		return "STOPPED";
+	if (inx & JOB_REVOKED)
+		return "REVOKED";
 
 
 	/* Process JOB_STATE_BASE */
@@ -2075,6 +2091,8 @@ extern char *job_state_string(uint32_t inx)
 		return "BOOT_FAIL";
 	case JOB_DEADLINE:
 		return "DEADLINE";
+	case JOB_OOM:
+		return "OUT_OF_MEMORY";
 	default:
 		return "?";
 	}
@@ -2091,12 +2109,16 @@ extern char *job_state_string_compact(uint32_t inx)
 		return "RS";
 	if (inx & JOB_REQUEUE)
 		return "RQ";
+	if (inx & JOB_REQUEUE_FED)
+		return "RF";
 	if (inx & JOB_REQUEUE_HOLD)
 		return "RH";
 	if (inx & JOB_SPECIAL_EXIT)
 		return "SE";
 	if (inx & JOB_STOPPED)
 		return "ST";
+	if (inx & JOB_REVOKED)
+		return "RV";
 
 	/* Process JOB_STATE_BASE */
 	switch (inx & JOB_STATE_BASE) {
@@ -2122,6 +2144,8 @@ extern char *job_state_string_compact(uint32_t inx)
 		return "BF";
 	case JOB_DEADLINE:
 		return "DL";
+	case JOB_OOM:
+		return "OOM";
 	default:
 		return "?";
 	}
@@ -2151,6 +2175,8 @@ extern uint32_t job_state_num(const char *state_name)
 		return JOB_CONFIGURING;
 	if (_job_name_test(JOB_RESIZING, state_name))
 		return JOB_RESIZING;
+	if (_job_name_test(JOB_REVOKED, state_name))
+		return JOB_REVOKED;
 	if (_job_name_test(JOB_SPECIAL_EXIT, state_name))
 		return JOB_SPECIAL_EXIT;
 
@@ -2273,6 +2299,11 @@ extern char *reservation_flags_string(uint32_t flags)
 			xstrcat(flag_str, ",");
 		xstrcat(flag_str, "NO_MAINT");
 	}
+	if (flags & RESERVE_FLAG_FLEX) {
+		if (flag_str[0])
+			xstrcat(flag_str, ",");
+		xstrcat(flag_str, "FLEX");
+	}
 	if (flags & RESERVE_FLAG_OVERLAP) {
 		if (flag_str[0])
 			xstrcat(flag_str, ",");
@@ -2292,6 +2323,16 @@ extern char *reservation_flags_string(uint32_t flags)
 		if (flag_str[0])
 			xstrcat(flag_str, ",");
 		xstrcat(flag_str, "NO_DAILY");
+	}
+	if (flags & RESERVE_FLAG_WEEKDAY) {
+		if (flag_str[0])
+			xstrcat(flag_str, ",");
+		xstrcat(flag_str, "WEEKDAY");
+	}
+	if (flags & RESERVE_FLAG_WEEKEND) {
+		if (flag_str[0])
+			xstrcat(flag_str, ",");
+		xstrcat(flag_str, "WEEKEND");
 	}
 	if (flags & RESERVE_FLAG_WEEKLY) {
 		if (flag_str[0])
@@ -3086,10 +3127,12 @@ extern void slurm_free_resource_allocation_response_msg_members (
 		for (i = 0; i < msg->env_size; i++)
 			xfree(msg->environment[i]);
 		xfree(msg->environment);
+		xfree(msg->node_addr);
 		xfree(msg->node_list);
 		xfree(msg->partition);
 		xfree(msg->qos);
 		xfree(msg->resv_name);
+		slurmdb_destroy_cluster_rec(msg->working_cluster_rec);
 	}
 }
 
@@ -3121,27 +3164,6 @@ extern void slurm_free_sbcast_cred_msg(job_sbcast_cred_msg_t * msg)
 		xfree(msg);
 	}
 }
-
-/*
- * slurm_free_job_alloc_info_response_msg - free slurm job allocation
- *					    info response message
- * IN msg - pointer to job allocation info response message
- * NOTE: buffer is loaded by slurm_allocate_resources
- */
-extern void slurm_free_job_alloc_info_response_msg(
-		job_alloc_info_response_msg_t *msg)
-{
-	if (msg) {
-		if (msg->select_jobinfo)
-			select_g_select_jobinfo_free(msg->select_jobinfo);
-		xfree(msg->node_list);
-		xfree(msg->cpus_per_node);
-		xfree(msg->cpu_count_reps);
-		xfree(msg->node_addr);
-		xfree(msg);
-	}
-}
-
 
 /*
  * slurm_free_job_step_create_response_msg - free slurm
@@ -3888,6 +3910,12 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_UPDATE_JOB:
 		slurm_free_job_desc_msg(data);
 		break;
+	case REQUEST_SIB_JOB_START:
+	case REQUEST_SIB_JOB_CANCEL:
+	case REQUEST_SIB_JOB_REQUEUE:
+	case REQUEST_SIB_JOB_COMPLETE:
+	case REQUEST_SIB_JOB_LOCK:
+	case REQUEST_SIB_JOB_UNLOCK:
 	case REQUEST_SIB_JOB_WILL_RUN:
 	case REQUEST_SIB_SUBMIT_BATCH_JOB:
 	case REQUEST_SIB_RESOURCE_ALLOCATION:
@@ -3908,7 +3936,6 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		break;
 	case REQUEST_JOB_END_TIME:
 	case REQUEST_JOB_ALLOCATION_INFO:
-	case REQUEST_JOB_ALLOCATION_INFO_LITE:
 		slurm_free_job_alloc_info_msg(data);
 		break;
 	case REQUEST_JOB_SBCAST_CRED:
@@ -4494,6 +4521,18 @@ rpc_num2string(uint16_t opcode)
 		return "RESPONSE_JOB_ATTACH";
 	case REQUEST_JOB_WILL_RUN:
 		return "REQUEST_JOB_WILL_RUN";
+	case REQUEST_SIB_JOB_START:
+		return "REQUEST_SIB_JOB_START";
+	case REQUEST_SIB_JOB_CANCEL:
+		return "REQUEST_SIB_JOB_CANCEL";
+	case REQUEST_SIB_JOB_REQUEUE:
+		return "REQUEST_SIB_JOB_REQUEUE";
+	case REQUEST_SIB_JOB_COMPLETE:
+		return "REQUEST_SIB_JOB_COMPLETE";
+	case REQUEST_SIB_JOB_LOCK:
+		return "REQUEST_SIB_JOB_LOCK";
+	case REQUEST_SIB_JOB_UNLOCK:
+		return "REQUEST_SIB_JOB_UNLOCK";
 	case REQUEST_SIB_JOB_WILL_RUN:
 		return "REQUEST_SIB_JOB_WILL_RUN";
 	case REQUEST_SIB_SUBMIT_BATCH_JOB:
@@ -4506,10 +4545,6 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_JOB_ALLOCATION_INFO";
 	case RESPONSE_JOB_ALLOCATION_INFO:
 		return "RESPONSE_JOB_ALLOCATION_INFO";
-	case REQUEST_JOB_ALLOCATION_INFO_LITE:
-		return "REQUEST_JOB_ALLOCATION_INFO_LITE";
-	case RESPONSE_JOB_ALLOCATION_INFO_LITE:
-		return "RESPONSE_JOB_ALLOCATION_INFO_LITE";
 	case REQUEST_UPDATE_JOB_TIME:
 		return "REQUEST_UPDATE_JOB_TIME";
 	case REQUEST_JOB_READY:

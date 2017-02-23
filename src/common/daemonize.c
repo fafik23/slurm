@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -149,6 +149,7 @@ read_pidfile(const char *pidfile, int *pidfd)
 	else
 		(void) close(fd);
 
+/*	fclose(fp);	NOTE: DO NOT CLOSE, "fd" CONTAINS FILE DESCRIPTOR */
 	return (lpid);
 }
 
@@ -192,6 +193,7 @@ create_pidfile(const char *pidfile, uid_t uid)
 	if (uid && (fchown(fd, uid, -1) < 0))
 		error ("Unable to reset owner of pidfile: %m");
 
+/*	fclose(fp);	NOTE: DO NOT CLOSE, "fd" CONTAINS FILE DESCRIPTOR */
 	return fd;
 
   error:

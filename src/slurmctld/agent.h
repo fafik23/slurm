@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -85,11 +85,10 @@ extern void agent_queue_request(agent_arg_t *agent_arg_ptr);
  *	issued if it has been pending for at least min_wait seconds
  * IN min_wait - Minimum wait time between re-issue of a pending RPC
  * IN mail_too - Send pending email too, note this performed using a
- *		fork/waitpid, so it can take longer than just creating
- *		a pthread to send RPCs
- * RET count of queued requests remaining
+ *	fork/waitpid, so it can take longer than just creating a pthread
+ *	to send RPCs
  */
-extern int agent_retry (int min_wait, bool mail_too);
+extern void agent_retry(int min_wait, bool mail_too);
 
 /* agent_purge - purge all pending RPC requests */
 extern void agent_purge (void);

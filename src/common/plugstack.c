@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -1372,15 +1372,15 @@ static char * _opt_env_name (struct spank_plugin_opt *p, char *buf, size_t siz)
 
 static int _option_setenv (struct spank_plugin_opt *option)
 {
-	char var [1024];
+	char var[1024];
 
-	_opt_env_name (option, var, sizeof (var));
+	_opt_env_name(option, var, sizeof(var));
 
-	if (setenv (var, option->optarg, 1) < 0)
-	    error ("failed to set %s=%s in env", var, option->optarg);
+	if (setenv(var, option->optarg, 1) < 0)
+		error("failed to set %s=%s in env", var, option->optarg);
 
-	if (dyn_spank_set_job_env (var, option->optarg, 1) < 0)
-	    error ("failed to set %s=%s in env", var, option->optarg);
+	if (dyn_spank_set_job_env(var, option->optarg, 1) < 0)
+		error("failed to set %s=%s in env", var, option->optarg);
 
 	return (0);
 }
@@ -2239,40 +2239,55 @@ spank_err_t spank_unsetenv (spank_t spank, const char *var)
 /*
  *  Dynamically loaded versions of spank_*_job_env
  */
-const char *dyn_spank_get_job_env (const char *name)
+const char *dyn_spank_get_job_env(const char *name)
 {
-	void *h = dlopen (NULL, 0);
+	void *h = dlopen(NULL, 0);
 	char * (*fn)(const char *n);
+	char *rc;
 
-	fn = dlsym (h, "spank_get_job_env");
-	if (fn == NULL)
+	fn = dlsym(h, "spank_get_job_env");
+	if (fn == NULL) {
+		(void) dlclose(h);
 		return NULL;
+	}
 
-	return ((*fn) (name));
+	rc = ((*fn) (name));
+/*	(void) dlclose(h);	NOTE: DO NOT CLOSE OR SPANK WILL BREAK */
+	return rc;
 }
 
-int dyn_spank_set_job_env (const char *n, const char *v, int overwrite)
+int dyn_spank_set_job_env(const char *n, const char *v, int overwrite)
 {
-	void *h = dlopen (NULL, 0);
+	void *h = dlopen(NULL, 0);
 	int (*fn)(const char *n, const char *v, int overwrite);
+	int rc;
 
-	fn = dlsym (h, "spank_set_job_env");
-	if (fn == NULL)
+	fn = dlsym(h, "spank_set_job_env");
+	if (fn == NULL) {
+		(void) dlclose(h);
 		return (-1);
+	}
 
-	return ((*fn) (n, v, overwrite));
+	rc = ((*fn) (n, v, overwrite));
+/*	(void) dlclose(h);	NOTE: DO NOT CLOSE OR SPANK WILL BREAK */
+	return rc;
 }
 
-extern int dyn_spank_unset_job_env (const char *n)
+extern int dyn_spank_unset_job_env(const char *n)
 {
-	void *h = dlopen (NULL, 0);
+	void *h = dlopen(NULL, 0);
 	int (*fn)(const char *n);
+	int rc;
 
-	fn = dlsym (h, "spank_unset_job_env");
-	if (fn == NULL)
+	fn = dlsym(h, "spank_unset_job_env");
+	if (fn == NULL) {
+		(void) dlclose(h);
 		return (-1);
+	}
 
-	return ((*fn) (n));
+	rc = ((*fn) (n));
+/*	(void) dlclose(h);	NOTE: DO NOT CLOSE OR SPANK WILL BREAK */
+	return rc;
 }
 
 static spank_err_t spank_job_control_access_check (spank_t spank)

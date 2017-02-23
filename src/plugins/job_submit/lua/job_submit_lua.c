@@ -2,13 +2,13 @@
  *  job_submit_lua.c - Set defaults in job submit request specifications.
  *****************************************************************************
  *  Copyright (C) 2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2015 SchedMD LLC <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -457,10 +457,6 @@ static int _resv_field(const slurmctld_resv_t *resv_ptr,
 		lua_pushboolean(L, resv_ptr->full_nodes);
 	} else if (!xstrcmp(name, "flags_set_node")) {
 		lua_pushboolean(L, resv_ptr->flags_set_node);
-	} else if (!xstrcmp(name, "job_pend_cnt")) {
-		lua_pushnumber(L, resv_ptr->job_pend_cnt);
-	} else if (!xstrcmp(name, "job_run_cnt")) {
-		lua_pushnumber(L, resv_ptr->job_run_cnt);
 	} else if (!xstrcmp(name, "licenses")) {
 		lua_pushstring(L, resv_ptr->licenses);
 	} else if (!xstrcmp(name, "node_cnt")) {
@@ -705,6 +701,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->gres);
 	} else if (!xstrcmp(name, "group_id")) {
 		lua_pushnumber (L, job_desc->group_id);
+	} else if (!xstrcmp(name, "immediate")) {
+		lua_pushnumber (L, job_desc->immediate);
 	} else if (!xstrcmp(name, "licenses")) {
 		lua_pushstring (L, job_desc->licenses);
 	} else if (!xstrcmp(name, "mail_type")) {
@@ -912,6 +910,8 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->gres);
 		if (strlen(value_str))
 			job_desc->gres = xstrdup(value_str);
+	} else if (!xstrcmp(name, "immediate")) {
+		job_desc->immediate = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "licenses")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->licenses);

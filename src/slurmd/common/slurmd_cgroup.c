@@ -7,7 +7,7 @@
  *  Written by Martin Perry <martin.perry@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,6 +40,7 @@
 
 #define _GNU_SOURCE
 #include <ctype.h>
+#include <limits.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -54,10 +55,6 @@
 #include "src/slurmd/common/slurmd_cgroup.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
-
-#ifndef PATH_MAX
-#define PATH_MAX 256
-#endif
 
 static xcgroup_t system_cpuset_cg = {NULL, NULL, NULL, 0, 0, 0, 0};
 static xcgroup_t system_memory_cg = {NULL, NULL, NULL, 0, 0, 0, 0};

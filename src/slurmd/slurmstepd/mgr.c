@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -94,6 +94,7 @@
 #include "src/slurmd/slurmd/slurmd.h"
 
 #include "src/slurmd/common/core_spec_plugin.h"
+#include "src/slurmd/common/fname.h"
 #include "src/slurmd/common/job_container_plugin.h"
 #include "src/slurmd/common/log_ctld.h"
 #include "src/slurmd/common/proctrack.h"
@@ -114,7 +115,6 @@
 #include "src/slurmd/slurmstepd/pam_ses.h"
 #include "src/slurmd/slurmstepd/ulimits.h"
 #include "src/slurmd/slurmstepd/step_terminate_monitor.h"
-#include "src/slurmd/slurmstepd/fname.h"
 
 #define RETRY_DELAY 15		/* retry every 15 seconds */
 #define MAX_RETRY   240		/* retry 240 times (one hour max) */
@@ -683,11 +683,17 @@ _send_exit_msg(stepd_step_rec_t *job, uint32_t *tid, int n, int status)
 	ListIterator    i       = NULL;
 	srun_info_t    *srun    = NULL;
 
-	debug3("sending task exit msg for %d tasks status %d", n, status);
+	debug3("sending task exit msg for %d tasks status %d oom %d",
+	       n, status, job->oom_error);
 
 	msg.task_id_list	= tid;
 	msg.num_tasks		= n;
-	msg.return_code		= status;
+	/* FIXME: Add oom_error field to the RPC in version 17.11. For now,
+	 * pack SIG_OOM code into top 16 bits of 32-bit return_code field */
+	if (job->oom_error)
+		msg.return_code		= (status & 0xffffff00) + SIG_OOM;
+	else
+		msg.return_code		= status;
 	msg.job_id		= job->jobid;
 	msg.step_id		= job->stepid;
 	slurm_msg_t_init(&resp);
@@ -1073,7 +1079,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	 * the cgroup hierarchy.
 	 */
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
-	step_terminate_monitor_start(job->jobid, job->stepid);
+	step_terminate_monitor_start(job);
 	proctrack_g_signal(job->cont_id, SIGKILL);
 	proctrack_g_wait(job->cont_id);
 	step_terminate_monitor_stop();
@@ -1127,7 +1133,7 @@ job_manager(stepd_step_rec_t *job)
 	 * (i.e. due to a Slurm upgrade) after the process starts.
 	 */
 	if ((core_spec_g_init() != SLURM_SUCCESS)		||
-	    (switch_init() != SLURM_SUCCESS)			||
+	    (switch_init(1) != SLURM_SUCCESS)			||
 	    (slurmd_task_init() != SLURM_SUCCESS)		||
 	    (slurm_proctrack_init() != SLURM_SUCCESS)		||
 	    (checkpoint_init(ckpt_type) != SLURM_SUCCESS)	||
@@ -1278,8 +1284,6 @@ job_manager(stepd_step_rec_t *job)
 	xsignal_block (mgr_sigarray);
 	reattach_job = job;
 
-	_set_job_state(job, SLURMSTEPD_STEP_RUNNING);
-
 	/* Attach slurmstepd to system cgroups, if configured */
 	attach_system_cgroup_pid(getpid());
 
@@ -1291,6 +1295,7 @@ job_manager(stepd_step_rec_t *job)
 
 	/* Send job launch response with list of pids */
 	_send_launch_resp(job, 0);
+	_set_job_state(job, SLURMSTEPD_STEP_RUNNING);
 
 #ifdef PR_SET_DUMPABLE
 	/* RHEL6 requires setting "dumpable" flag AGAIN; after euid changes */
@@ -1323,7 +1328,7 @@ fail2:
 	 * switch_g_job_postfini().
 	 */
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
-	step_terminate_monitor_start(job->jobid, job->stepid);
+	step_terminate_monitor_start(job);
 	if (job->cont_id != 0) {
 		proctrack_g_signal(job->cont_id, SIGKILL);
 		proctrack_g_wait(job->cont_id);
@@ -1686,11 +1691,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	}
 
 	exec_wait_list = list_create ((ListDelF) _exec_wait_info_destroy);
-	if (!exec_wait_list) {
-		error ("Unable to create exec_wait_list");
-		rc = SLURM_ERROR;
-		goto fail4;
-	}
 
 	/*
 	 * Fork all of the task processes.
@@ -1937,7 +1937,10 @@ _log_task_exit(unsigned long taskid, unsigned long pid, int status)
 	 *   that code, but it is better than dropping a potentially useful
 	 *   exit status.
 	 */
-	if (WIFEXITED(status)) {
+	if ((status & 0xff) == SIG_OOM) {
+		verbose("task %lu (%lu) Out Of Memory (OOM)",
+			taskid, pid);
+	} else if (WIFEXITED(status)) {
 		verbose("task %lu (%lu) exited with exit code %d.",
 			taskid, pid, WEXITSTATUS(status));
 	} else if (WIFSIGNALED(status)) {
@@ -1970,7 +1973,7 @@ static int
 _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 {
 	stepd_step_task_info_t *t = NULL;
-	int status = 0;
+	int rc, status = 0;
 	pid_t pid;
 	int completed = 0;
 	jobacctinfo_t *jobacct = NULL;
@@ -2054,13 +2057,14 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 						    job, -1, job->env);
 				xfree(my_epilog);
 			}
-			job->envtp->procid = t->id;
 
 			if (spank_task_exit (job, t->id) < 0) {
 				error ("Unable to spank task %d at exit",
 				       t->id);
 			}
-			task_g_post_term(job, t);
+			rc = task_g_post_term(job, t);
+			if (rc == ENOMEM)
+				job->oom_error = true;
 		}
 
 	} while ((pid > 0) && !waitflag);
@@ -2308,7 +2312,7 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	resp.count_of_pids = 0;
 
 	if (_send_srun_resp_msg(&resp_msg, msg->nnodes) != SLURM_SUCCESS)
-		error("Failed to send RESPONSE_LAUNCH_TASKS: %m");
+		error("%s: Failed to send RESPONSE_LAUNCH_TASKS: %m", __func__);
 	xfree(name);
 	return;
 }
@@ -2344,7 +2348,7 @@ _send_launch_resp(stepd_step_rec_t *job, int rc)
 	}
 
 	if (_send_srun_resp_msg(&resp_msg, job->nnodes) != SLURM_SUCCESS)
-		error("failed to send RESPONSE_LAUNCH_TASKS: %m");
+		error("%s: Failed to send RESPONSE_LAUNCH_TASKS: %m", __func__);
 
 	xfree(resp.local_pids);
 	xfree(resp.task_ids);

@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2014 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2014 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Kevin Tew <tew1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -80,6 +80,10 @@
 	((_X->job_state & JOB_STATE_BASE) == JOB_NODE_FAIL)
 #define IS_JOB_DEADLINE(_X)		\
 	((_X->job_state & JOB_STATE_BASE) == JOB_DEADLINE)
+#define IS_JOB_OOM(_X)		\
+	((_X->job_state & JOB_STATE_BASE) == JOB_OOM)
+#define IS_JOB_POWER_UP_NODE(_X)	\
+	(_X->job_state & JOB_POWER_UP_NODE)
 
 /* Derived job states */
 #define IS_JOB_COMPLETING(_X)		\
@@ -96,8 +100,12 @@
 	(_X->job_state & JOB_RESIZING)
 #define IS_JOB_REQUEUED(_X)		\
 	(_X->job_state & JOB_REQUEUE)
+#define IS_JOB_FED_REQUEUED(_X)		\
+	(_X->job_state & JOB_REQUEUE_FED)
 #define IS_JOB_UPDATE_DB(_X)		\
 	(_X->job_state & JOB_UPDATE_DB)
+#define IS_JOB_REVOKED(_X)		\
+	(_X->job_state & JOB_REVOKED)
 
 /* Defined node states */
 #define IS_NODE_UNKNOWN(_X)		\
@@ -279,8 +287,6 @@ typedef enum {
 	RESPONSE_JOB_WILL_RUN,
 	REQUEST_JOB_ALLOCATION_INFO,
 	RESPONSE_JOB_ALLOCATION_INFO,
-	REQUEST_JOB_ALLOCATION_INFO_LITE,
-	RESPONSE_JOB_ALLOCATION_INFO_LITE,
 	REQUEST_UPDATE_JOB_TIME,
 	REQUEST_JOB_READY,
 	RESPONSE_JOB_READY,		/* 4020 */
@@ -288,6 +294,12 @@ typedef enum {
 	REQUEST_JOB_NOTIFY,
 	REQUEST_JOB_SBCAST_CRED,
 	RESPONSE_JOB_SBCAST_CRED,
+	REQUEST_SIB_JOB_START,
+	REQUEST_SIB_JOB_CANCEL,
+	REQUEST_SIB_JOB_REQUEUE,
+	REQUEST_SIB_JOB_COMPLETE,
+	REQUEST_SIB_JOB_LOCK,
+	REQUEST_SIB_JOB_UNLOCK,
 	REQUEST_SIB_JOB_WILL_RUN,
 	REQUEST_SIB_SUBMIT_BATCH_JOB,
 	REQUEST_SIB_RESOURCE_ALLOCATION,
@@ -760,8 +772,7 @@ typedef struct job_step_create_response_msg {
                                            * step is laid out */
 	slurm_cred_t *cred;    	  /* slurm job credential */
 	dynamic_plugin_data_t *select_jobinfo;	/* select opaque data type */
-	switch_jobinfo_t *switch_job;	/* switch context, opaque
-                                         * data structure */
+	dynamic_plugin_data_t *switch_job;	/* switch opaque data type */
 	uint16_t use_protocol_ver;   /* Lowest protocol version running on
 				      * the slurmd's in this step.
 				      */
@@ -842,7 +853,7 @@ typedef struct launch_tasks_request_msg {
 	uint16_t   slurmd_debug; /* remote slurmd debug level */
 
 	slurm_cred_t *cred;	/* job credential            */
-	switch_jobinfo_t *switch_job;	/* switch credential for the job */
+	dynamic_plugin_data_t *switch_job; /* switch credential for the job */
 	job_options_t options;  /* Arbitrary job options */
 	char *complete_nodelist;
 	char *ckpt_dir;		/* checkpoint path */
@@ -898,6 +909,8 @@ typedef struct composite_msg {
  * from getting the MPIRUN_PARTITION at that time. It is needed for
  * the job epilog. */
 
+#define SIG_OOM		253	/* Dummy signal value for out of memory
+				 * (OOM) notification */
 #define SIG_UME		992	/* Dummy signal value for uncorrectable memory
 				 * error (UME) notification */
 #define SIG_REQUEUED	993	/* Dummy signal value to job requeue */
@@ -1103,9 +1116,9 @@ enum compress_type {
 
 typedef struct file_bcast_msg {
 	char *fname;		/* name of the destination file */
-	uint16_t block_no;	/* block number of this data */
-	uint16_t last_block;	/* last block of bcast if set */
-	uint16_t force;		/* replace existing file if set */
+	uint32_t block_no;	/* block number of this data */
+	uint16_t last_block;	/* last block of bcast if set (flag) */
+	uint16_t force;		/* replace existing file if set (flag) */
 	uint16_t compress;	/* compress file if set, use compress_type */
 	uint16_t modes;		/* access rights for destination file */
 	uint32_t uid;		/* owner for destination file */
@@ -1115,7 +1128,7 @@ typedef struct file_bcast_msg {
 	time_t mtime;		/* last modification time for dest file */
 	sbcast_cred_t *cred;	/* credential for the RPC */
 	uint32_t block_len;	/* length of this data block */
-	uint32_t block_offset;	/* offset for this data block */
+	uint64_t block_offset;	/* offset for this data block */
 	uint32_t uncomp_len;	/* uncompressed length of this data block */
 	char *block;		/* data for this block */
 	uint64_t file_size;	/* file size */
@@ -1211,6 +1224,7 @@ typedef struct slurm_event_log_msg {
 } slurm_event_log_msg_t;
 
 typedef struct {
+	uint32_t cluster_id;	/* cluster id of cluster making request */
 	void    *data;		/* Unpacked buffer
 				 * Only populated on the receiving side. */
 	Buf      data_buffer;	/* Buffer that holds an unpacked data type.
@@ -1220,6 +1234,13 @@ typedef struct {
 	uint64_t fed_siblings;	/* sibling bitmap of job */
 	uint32_t job_id;	/* job_id of job - set in job_desc on receiving
 				 * side */
+	uint32_t return_code;   /* return code of job */
+	time_t   start_time;    /* time sibling job started */
+	char    *resp_host;     /* response host for interactive allocations */
+	uint32_t req_uid;       /* uid of user making the request. e.g if a
+				   cancel is happening from a user and being
+				   passed to a remote then the uid will be the
+				   user and not the SlurmUser. */
 } sib_msg_t;
 
 /*****************************************************************************\
@@ -1269,6 +1290,7 @@ extern List slurm_copy_char_list(List char_list);
 extern int slurm_addto_char_list(List char_list, char *names);
 extern int slurm_addto_mode_char_list(List char_list, char *names, int mode);
 extern int slurm_addto_step_list(List step_list, char *names);
+extern int slurm_find_char_in_list(void *x, void *key);
 extern int slurm_sort_char_list_asc(void *, void *);
 extern int slurm_sort_char_list_desc(void *, void *);
 
@@ -1388,8 +1410,6 @@ extern void slurm_free_resource_allocation_response_msg_members (
 	resource_allocation_response_msg_t * msg);
 extern void slurm_free_resource_allocation_response_msg (
 		resource_allocation_response_msg_t * msg);
-extern void slurm_free_job_alloc_info_response_msg (
-		job_alloc_info_response_msg_t * msg);
 extern void slurm_free_job_step_create_response_msg(
 		job_step_create_response_msg_t * msg);
 extern void slurm_free_submit_response_response_msg(

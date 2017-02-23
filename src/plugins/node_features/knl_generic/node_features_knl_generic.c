@@ -6,7 +6,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -51,6 +51,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__FreeBSD__) || defined(__NetBSD__)
@@ -155,6 +156,7 @@ static uint16_t allow_mcdram = KNL_MCDRAM_FLAG;
 static uint16_t allow_numa = KNL_NUMA_FLAG;
 static uid_t *allowed_uid = NULL;
 static int allowed_uid_cnt = 0;
+static uint32_t boot_time = (5 * 60);	/* 5 minute estimated boot time */
 static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool debug_flag = false;
 static uint16_t default_mcdram = KNL_CACHE;
@@ -175,6 +177,7 @@ static s_p_options_t knl_conf_file_options[] = {
 	{"AllowMCDRAM", S_P_STRING},
 	{"AllowNUMA", S_P_STRING},
 	{"AllowUserBoot", S_P_STRING},
+	{"BootTime", S_P_UINT32},
 	{"DefaultMCDRAM", S_P_STRING},
 	{"DefaultNUMA", S_P_STRING},
 	{"LogFile", S_P_STRING},
@@ -587,7 +590,7 @@ static char *_make_uid_str(uid_t *uid_array, int uid_cnt)
 	return uid_str;
 }
 
-/* Watch for Uncorrectable Memory Errors. Shutdown if any detected */
+/* Watch for Uncorrectable Memory Errors. Notify jobs if any detected */
 static void *_ume_agent(void *args)
 {
 	struct timespec req;
@@ -705,6 +708,7 @@ extern int init(void)
 			_make_uid_array(tmp_str);
 			xfree(tmp_str);
 		}
+		(void) s_p_get_uint32(&boot_time, "BootTime", tbl);
 		if (s_p_get_string(&tmp_str, "DefaultMCDRAM", tbl)) {
 			default_mcdram = _knl_mcdram_parse(tmp_str, ",");
 			if (_knl_mcdram_bits_cnt(default_mcdram) != 1) {
@@ -756,6 +760,7 @@ extern int init(void)
 		info("AllowMCDRAM=%s AllowNUMA=%s",
 		     allow_mcdram_str, allow_numa_str);
 		info("AllowUserBoot=%s", allow_user_str);
+		info("BootTIme=%u", boot_time);
 		info("DefaultMCDRAM=%s DefaultNUMA=%s",
 		     default_mcdram_str, default_numa_str);
 		info("McPath=%s", mc_path);
@@ -1382,4 +1387,10 @@ extern bool node_features_p_user_update(uid_t uid)
 	}
 
 	return false;
+}
+
+/* Return estimated reboot time, in seconds */
+extern uint32_t node_features_p_boot_time(void)
+{
+	return boot_time;
 }

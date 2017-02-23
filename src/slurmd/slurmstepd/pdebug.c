@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -103,10 +103,6 @@ pdebug_trace_process(stepd_step_rec_t *job, pid_t pid)
 		if (_PTRACE(PT_DETACH, pid, NULL, 0)) {
 #elif defined(__sun)
 		if (_PTRACE(7, pid, NULL, 0)) {
-#elif defined(__CYGWIN__)
-		if (1) {
-			debug3("No ptrace for cygwin");
-		} else {
 #else
 		if (_PTRACE(PTRACE_DETACH, pid, NULL, 0)) {
 #endif
@@ -133,8 +129,6 @@ pdebug_stop_current(stepd_step_rec_t *job)
 	     && (_PTRACE(PT_TRACE_ME, 0, NULL, 0) < 0) )
 #elif defined(__sun)
 	     && (_PTRACE(0, 0, NULL, 0) < 0))
-#elif defined(__CYGWIN__)
-	     && 0)
 #else
 	     && (_PTRACE(PTRACE_TRACEME, 0, NULL, 0) < 0) )
 #endif
@@ -154,6 +148,8 @@ static bool _pid_to_wake(pid_t pid)
 		return false;  /* process is now gone */
 	proc_stat = xmalloc(4097);
 	len = read(proc_fd, proc_stat, 4096);
+	if (len >= 0)
+		proc_stat[len] = '\0';
 	close(proc_fd);
 	if (len < 14) {
 		xfree(proc_stat);

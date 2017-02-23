@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -1234,6 +1234,7 @@ extern GtkTreeStore *create_treestore(GtkTreeView *tree_view,
 			if (!xstrcasecmp(display_data[i].name, "Node Count")
 			    || !xstrcasecmp(display_data[i].name, "CPU Count")
 			    || !xstrcasecmp(display_data[i].name, "Real Memory")
+			    || !xstrcasecmp(display_data[i].name, "Port")
 			    || !xstrcasecmp(display_data[i].name, "Tmp Disk")) {
 				gtk_tree_sortable_set_sort_func(
 					GTK_TREE_SORTABLE(treestore),

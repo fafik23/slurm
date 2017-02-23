@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -143,7 +143,8 @@ job_create_noalloc(void)
 {
 	srun_job_t *job = NULL;
 	allocation_info_t *ai = xmalloc(sizeof(allocation_info_t));
-	uint16_t cpn = 1;
+	uint16_t cpn[1];
+	uint32_t cpu_count_reps[1];
 	hostlist_t  hl = hostlist_create(opt.nodelist);
 
 	if (!hl) {
@@ -152,17 +153,19 @@ job_create_noalloc(void)
 	}
 	srand48(getpid());
 	ai->jobid          = MIN_NOALLOC_JOBID +
-		((uint32_t) lrand48() %
-		 (MAX_NOALLOC_JOBID - MIN_NOALLOC_JOBID + 1));
+			     ((uint32_t) lrand48() %
+			      (MAX_NOALLOC_JOBID - MIN_NOALLOC_JOBID + 1));
 	ai->stepid         = (uint32_t) (lrand48());
 	ai->nodelist       = opt.nodelist;
 	ai->nnodes         = hostlist_count(hl);
 
 	hostlist_destroy(hl);
 
-	cpn = (opt.ntasks + ai->nnodes - 1) / ai->nnodes;
-	ai->cpus_per_node  = &cpn;
-	ai->cpu_count_reps = &ai->nnodes;
+	cpn[0] = (opt.ntasks + ai->nnodes - 1) / ai->nnodes;
+	ai->cpus_per_node  = cpn;
+	cpu_count_reps[0] = ai->nnodes;
+	ai->cpu_count_reps = cpu_count_reps;
+	ai->num_cpu_groups = 1;
 
 	/*
 	 * Create job, then fill in host addresses
@@ -520,6 +523,10 @@ extern void create_srun_job(srun_job_t **p_job, bool *got_alloc,
 			exit(error_exit);
 		}
 	} else if ((resp = existing_allocation())) {
+
+		if (resp->working_cluster_rec)
+			slurm_setup_remote_working_cluster(resp);
+
 		select_g_alter_node_cnt(SELECT_APPLY_NODE_MAX_OFFSET,
 					&resp->node_cnt);
 		if (opt.nodes_set_env && !opt.nodes_set_opt &&

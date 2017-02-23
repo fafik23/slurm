@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -529,6 +529,12 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrfmtcat(out, "SecsPreSuspend=%ld", (long int)job_ptr->pre_sus_time);
 	xstrcat(out, line_end);
 
+	/****** Line ******/
+	slurm_make_time_str(&job_ptr->last_sched_eval, time_str,
+			    sizeof(time_str));
+	xstrfmtcat(out, "LastSchedEval=%s", time_str);
+	xstrcat(out, line_end);
+
 	/****** Line 11 ******/
 	xstrfmtcat(out, "Partition=%s AllocNode:Sid=%s:%u",
 		   job_ptr->partition, job_ptr->alloc_node, job_ptr->alloc_sid);
@@ -928,13 +934,6 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 		xstrfmtcat(out, "StdOut=%s", tmp_path);
 	}
 
-	/****** Line 33 (optional) ******/
-	if (job_ptr->batch_script) {
-		xstrcat(out, line_end);
-		xstrcat(out, "BatchScript=\n");
-		xstrcat(out, job_ptr->batch_script);
-	}
-
 	/****** Line 34 (optional) ******/
 	if (job_ptr->req_switch) {
 		char time_buf[32];
@@ -981,6 +980,14 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 		if (job_ptr->bitflags & SPREAD_JOB)
 			xstrcat(out, "SpreadJob=Yes");
 	}
+
+	/****** Last line ******/
+	if (job_ptr->batch_script) {
+		xstrcat(out, line_end);
+		xstrcat(out, "BatchScript=\n");
+		xstrcat(out, job_ptr->batch_script);
+	}
+	/* NOTE: Keep BatchScript last so it is more easily readable */
 
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
@@ -1181,7 +1188,7 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 
 	rc = slurm_send_recv_node_msg(&req_msg, &resp_msg, 0);
 
-	if (rc != 0 || !resp_msg.auth_cred) {
+	if ((rc != 0) || !resp_msg.auth_cred) {
 		error("slurm_pid2jobid: %m");
 		if (resp_msg.auth_cred)
 			g_slurm_auth_destroy(resp_msg.auth_cred);
@@ -1269,7 +1276,7 @@ slurm_get_end_time(uint32_t jobid, time_t *end_time_ptr)
 	int rc;
 	slurm_msg_t resp_msg;
 	slurm_msg_t req_msg;
-	job_alloc_info_msg_t job_msg;
+	job_alloc_info_msg_t job_msg = {0};
 	srun_timeout_msg_t *timeout_msg;
 	time_t now = time(NULL);
 	static uint32_t jobid_cache = 0;

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -327,6 +327,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Waiting for burst buffer"				},
 	{ ESLURM_PARTITION_DOWN,
 	  "Partition in DOWN state"				},
+	{ ESLURM_DUPLICATE_GRES,
+	  "Duplicate generic resource (gres) specification"	},
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,

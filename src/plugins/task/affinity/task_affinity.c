@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,6 +43,7 @@
 
 #include <ctype.h>
 #include <dirent.h>
+#include <limits.h>
 #include <signal.h>
 #include <sys/types.h>
 
@@ -531,7 +532,7 @@ extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task
 #endif
 	if (snprintf(path, PATH_MAX, "%s/slurm%u.%u_%d",
 				 base, job->jobid, job->stepid,
-				 job->envtp->localid) >= PATH_MAX) {
+				 task->id) >= PATH_MAX) {
 		error("%s: cpuset path too long", __func__);
 		return SLURM_ERROR;
 	}

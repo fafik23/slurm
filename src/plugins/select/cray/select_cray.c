@@ -6,7 +6,7 @@
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -1763,7 +1763,11 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 		}
 		if (end_nn != topology_num_nodes) {
 			/* already looped */
-			fatal("Node %s(%d) isn't found on the system",
+			for (nn = 0; nn < topology_num_nodes; nn++) {
+				info("ALPS topology, record:%d nid:%d",
+				     nn, topology[nn].nid);
+			}
+			fatal("Node %s(%d) isn't found in the ALPS system topoloogy table",
 			      node_ptr->name, nodeinfo->nid);
 		} else if (!found) {
 			end_nn = last_nn;
@@ -1880,9 +1884,7 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 					bit_nclear(bitmap, 0,
 						   bit_size(bitmap) - 1);
 			} else {
-				bit_not(blade_nodes_running_npc);
-				bit_and(bitmap, blade_nodes_running_npc);
-				bit_not(blade_nodes_running_npc);
+				bit_and_not(bitmap, blade_nodes_running_npc);
 			}
 		}
 	}

@@ -1422,7 +1422,7 @@ MCS Plugin Parameters.
 The supported parameters are specific to the \fBMCSPlugin\fR.
 Changes to this value take effect when the Slurm daemons are reconfigured.
 More information about MCS is available here
-<https://slurm.schedmd.com/mcs_Plugins.html>.
+<https://slurm.schedmd.com/mcs_plugins.html>.
 
 .TP
 \fBMCSPlugin\fR
@@ -2090,6 +2090,10 @@ block until the prolog is finished on each node.  The blocking will happen when
 steps reach the slurmd and before any execution has happened in the step.
 This is a much faster way to work and if using srun to launch your tasks you
 should use this flag.
+\fBSerial\fR
+By default, the Prolog and Epilog scripts run concurrently on each node.
+This flag forces those scripts to run serially within each node, but with
+a significant penalty to job throughput on each node.
 .RE
 
 .TP
@@ -2308,8 +2312,10 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 \fBResumeTimeout\fR
 Maximum time permitted (in second) between when a node resume request
 is issued and when the node is actually available for use.
-Nodes which fail to respond in this time frame may be marked DOWN and
+Nodes which fail to respond in this time frame will be marked DOWN and
 the jobs scheduled on the node requeued.
+Nodes which reboot after this time frame will be marked DOWN with a reason of
+"unexpected reboot."
 The default value is 60 seconds.
 Related configuration options include \fBResumeProgram\fR, \fBResumeRate\fR,
 \fBSuspendRate\fR, \fBSuspendTime\fR, \fBSuspendTimeout\fR, \fBSuspendProgram\fR,
@@ -2516,8 +2522,8 @@ Also see bf_min_age_reserve and bf_min_prio_reserve.
 
 .TP
 \fBbf_max_job_array_resv=#\fR
-The maximum number of tasks from a job array for which to reserve resources in
-the future.
+The maximum number of tasks from a job array for which the backfill scheduler
+will reserve resources in the future.
 Since job arrays can potentially have millions of tasks, the overhead in
 reserving resources for all tasks can be prohibitive.
 In addition various limits may prevent all the jobs from starting at the
@@ -2654,6 +2660,11 @@ nodes which already have the specified features.
 The argument is in units of minutes.
 Individual jobs may override this default value with the \fB\-\-delay\-boot\fR
 option.
+.TP
+\fBdefault_gbytes\fR
+The default units in job submission memory and temporary disk size specification
+will be gigabytes rather than megabytes.
+Users can override the default by using a suffix of "M" for megabytes.
 .TP
 \fBdisable_user_top\fR
 Disable use of the "scontrol top" command by non-privileged users.
@@ -2806,6 +2817,12 @@ cycle and the beginning of the next scheduling cycle.
 A value of zero will disable throttling of the scheduling logic interval.
 The default value is 1,000,000 microseconds on Cray/ALPS systems and
 zero microseconds (throttling is disabled) on other systems.
+.TP
+\fBspec_cores_first\fR
+Specialized cores will be selected from the first cores of the first sockets,
+cycling through the sockets on a round robin basis.
+By default, specialized cores will be selected from the last cores of the
+last sockets, cycling through the sockets on a round robin basis.
 .TP
 \fBstep_retry_count=#\fR
 When a step completes and there are steps ending resource allocation, then
@@ -3378,6 +3395,9 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 \fBSuspendTime\fR
 Nodes which remain idle for this number of seconds will be placed into
 power save mode by \fBSuspendProgram\fR.
+For efficient system utilization, it is recommeded that the value of
+\fBSuspendTime\fR be at least as large as the sum of \fBSuspendTimeout\fR
+plus \fBResumeTimeout\fR.
 A value of \-1 disables power save mode and is the default.
 Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 \fBResumeRate\fR, \fBSuspendProgram\fR, \fBSuspendRate\fR, \fBSuspendTimeout\fR,
@@ -4579,7 +4599,7 @@ with \fISelectType=cons_res\fR.
 Makes all resources in the partition available for sharing upon request by
 the job.
 Resources will only be over\-subscribed when explicitly requested
-by the user using the "\-\-share" option on job submission.
+by the user using the "\-\-oversubscribe" option on job submission.
 May be followed with a colon and maximum number of jobs in
 running or suspended state.
 For example "OverSubscribe=YES:4" enables each node, socket or

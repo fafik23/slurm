@@ -11,7 +11,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -206,7 +206,7 @@ static void      _wait_for_all_threads(int secs);
 static void      _wait_health_check(void);
 
 int
-main (int argc, char *argv[])
+main (int argc, char **argv)
 {
 	int i, pidfd;
 	int blocked_signals[] = {SIGPIPE, 0};
@@ -1014,8 +1014,8 @@ _read_config(void)
 		      xstrdup(cf->acct_gather_energy_type));
 	_free_and_set(conf->acct_gather_filesystem_type,
 		      xstrdup(cf->acct_gather_filesystem_type));
-	_free_and_set(conf->acct_gather_infiniband_type,
-		      xstrdup(cf->acct_gather_infiniband_type));
+	_free_and_set(conf->acct_gather_interconnect_type,
+		      xstrdup(cf->acct_gather_interconnect_type));
 	_free_and_set(conf->acct_gather_profile_type,
 		      xstrdup(cf->acct_gather_profile_type));
 	_free_and_set(conf->job_acct_gather_type,
@@ -1247,7 +1247,7 @@ _destroy_conf(void)
 	if (conf) {
 		xfree(conf->acct_gather_energy_type);
 		xfree(conf->acct_gather_filesystem_type);
-		xfree(conf->acct_gather_infiniband_type);
+		xfree(conf->acct_gather_interconnect_type);
 		xfree(conf->acct_gather_profile_type);
 		xfree(conf->auth_info);
 		xfree(conf->block_map);
@@ -2241,19 +2241,44 @@ static int _memory_spec_init(void)
 static void _select_spec_cores(void)
 {
 	int spec_cores, res_core, res_sock, res_off, core_off, thread_off;
+	int from_core, to_core, incr_core, from_sock, to_sock, incr_sock;
+	char *sched_params;
+	bool spec_cores_first;
 
+	sched_params = slurm_get_sched_params();
+	if (sched_params && strstr(sched_params, "spec_cores_first"))
+		spec_cores_first = true;
+	else
+		spec_cores_first = false;
+	xfree(sched_params);
+	if (spec_cores_first) {
+		from_core = 0;
+		to_core   = conf->cores;
+		incr_core = 1;
+		from_sock = 0;
+		to_sock   = conf->sockets;
+		incr_sock = 1;
+	} else {
+		from_core = conf->cores - 1;
+		to_core   = -1;
+		incr_core = -1;
+		from_sock = conf->sockets - 1;
+		to_sock   = -1;
+		incr_sock = -1;
+	}
 	spec_cores = conf->core_spec_cnt;
-	for (res_core = conf->cores - 1;
-	     (spec_cores && (res_core >= 0)); res_core--) {
-		for (res_sock = conf->sockets - 1;
-		     (spec_cores && (res_sock >= 0)); res_sock--) {
+	for (res_core = from_core;
+	     (spec_cores && (res_core != to_core)); res_core += incr_core) {
+		for (res_sock = from_sock;
+		     (spec_cores && (res_sock != to_sock));
+		      res_sock += incr_sock) {
 			core_off = ((res_sock*conf->cores) + res_core) *
 					conf->threads;
 			for (thread_off = 0; thread_off < conf->threads;
 			     thread_off++) {
 				bit_set(res_cpu_bitmap, core_off + thread_off);
 			}
-			res_off = (res_sock*conf->cores) + res_core;
+			res_off = (res_sock * conf->cores) + res_core;
 			bit_set(res_core_bitmap, res_off);
 			spec_cores--;
 		}

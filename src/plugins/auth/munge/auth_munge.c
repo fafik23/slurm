@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -81,8 +81,7 @@
  * plugin_version - an unsigned 32-bit integer containing the Slurm version
  * (major.minor.micro combined into a single number).
  */
-const char plugin_name[]       	= "auth plugin for Munge "
-				  "(http://code.google.com/p/munge/)";
+const char plugin_name[]       	= "Munge authentication plugin";
 const char plugin_type[]       	= "auth/munge";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
@@ -155,8 +154,7 @@ int init ( void )
  * allocate a credential.  Whether the credential is populated with useful
  * data at this time is implementation-dependent.
  */
-slurm_auth_credential_t *
-slurm_auth_create( void *argv[], char *opts )
+slurm_auth_credential_t *slurm_auth_create(char *opts)
 {
 	int rc, retry = RETRY_COUNT, auth_ttl;
 	slurm_auth_credential_t *cred = NULL;
@@ -214,7 +212,7 @@ slurm_auth_create( void *argv[], char *opts )
 	 */
 	ohandler = xsignal(SIGALRM, (SigFunc *)SIG_BLOCK);
 
-    again:
+again:
 	err = munge_encode(&cred->m_str, ctx, cred->buf, cred->len);
 	if (err != EMUNGE_SUCCESS) {
 		if ((err == EMUNGE_SOCKET) && retry--) {

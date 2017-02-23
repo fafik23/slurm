@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -69,7 +69,7 @@ static int  _print_job ( bool clear_old );
 static int  _print_job_steps( bool clear_old );
 
 int
-main (int argc, char *argv[])
+main (int argc, char **argv)
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY ;
 	int error_code = SLURM_SUCCESS;
@@ -175,9 +175,6 @@ _print_job ( bool clear_old )
 	if (params.all_flag || (params.job_list && list_count(params.job_list)))
 		show_flags |= SHOW_ALL;
 
-	if (params.show_fedtrack)
-		show_flags |= SHOW_FED_TRACK;
-
 	/* We require detail data when CPUs are requested */
 	if (params.format && strstr(params.format, "C"))
 		show_flags |= SHOW_DETAIL;
@@ -220,7 +217,7 @@ _print_job ( bool clear_old )
 		return SLURM_ERROR;
 	}
 	old_job_ptr = new_job_ptr;
-	if (params.job_id || params.job_id)
+	if (params.job_id || params.user_id)
 		old_job_ptr->last_update = (time_t) 0;
 
 	if (params.verbose) {

@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -54,9 +54,6 @@
 const char		plugin_name[]	= "SLURM Backfill Scheduler plugin";
 const char		plugin_type[]	= "sched/backfill";
 const uint32_t		plugin_version	= SLURM_VERSION_NUMBER;
-
-/* A plugin-global errno. */
-static int plugin_errno = SLURM_SUCCESS;
 
 static pthread_t backfill_thread = 0;
 static pthread_mutex_t thread_flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -107,53 +104,8 @@ int slurm_sched_p_reconfig( void )
 	return SLURM_SUCCESS;
 }
 
-int slurm_sched_p_schedule(void)
-{
-	return SLURM_SUCCESS;
-}
-
-int slurm_sched_p_newalloc(struct job_record *job_ptr)
-{
-	return SLURM_SUCCESS;
-}
-
-int slurm_sched_p_freealloc(struct job_record *job_ptr)
-{
-	return SLURM_SUCCESS;
-}
-
 uint32_t slurm_sched_p_initial_priority(uint32_t last_prio,
 					struct job_record *job_ptr)
 {
 	return priority_g_set(last_prio, job_ptr);
-}
-
-void slurm_sched_p_job_is_pending( void )
-{
-	/* Empty. */
-}
-
-void slurm_sched_p_partition_change( void )
-{
-	/* Empty. */
-}
-
-int slurm_sched_p_get_errno( void )
-{
-	return plugin_errno;
-}
-
-char *slurm_sched_p_strerror( int errnum )
-{
-	return NULL;
-}
-
-void slurm_sched_p_requeue( struct job_record *job_ptr, char *reason )
-{
-	/* Empty. */
-}
-
-char *slurm_sched_p_get_conf( void )
-{
-	return NULL;
 }

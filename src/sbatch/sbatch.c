@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -76,7 +76,7 @@ static void  _set_submit_dir_env(void);
 static int   _set_umask_env(void);
 static int   _job_wait(uint32_t job_id);
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	job_desc_msg_t desc;

@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -254,7 +254,6 @@ extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
 	int rc = SLURM_SUCCESS;
 	Buf buffer;
 
-	xassert(slurmdbd_conn);
 	xassert(req);
 	xassert(resp);
 
@@ -265,14 +264,14 @@ extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
 	halt_agent = 1;
 	slurm_mutex_lock(&slurmdbd_lock);
 	halt_agent = 0;
-	if (slurmdbd_conn->fd < 0) {
+	if (!slurmdbd_conn || (slurmdbd_conn->fd < 0)) {
 		/* Either slurm_open_slurmdbd_conn() was not executed or
 		 * the connection to Slurm DBD has been closed */
 		if (req->msg_type == DBD_GET_CONFIG)
 			_open_slurmdbd_conn(0);
 		else
 			_open_slurmdbd_conn(1);
-		if (slurmdbd_conn->fd < 0) {
+		if (!slurmdbd_conn || (slurmdbd_conn->fd < 0)) {
 			rc = SLURM_ERROR;
 			goto end_it;
 		}
@@ -334,6 +333,8 @@ extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 
 	buffer = slurm_persist_msg_pack(
 		slurmdbd_conn, (persist_msg_t *)req);
+	if (!buffer)	/* pack error */
+		return SLURM_ERROR;
 
 	slurm_mutex_lock(&agent_lock);
 	if ((agent_tid == 0) || (agent_list == NULL)) {
@@ -439,6 +440,7 @@ static void _open_slurmdbd_conn(bool need_db)
 	}
 	slurmdbd_shutdown = 0;
 	slurmdbd_conn->shutdown = &slurmdbd_shutdown;
+	slurmdbd_conn->version  = SLURM_PROTOCOL_VERSION;
 
 	xfree(slurmdbd_conn->rem_host);
 	slurmdbd_conn->rem_host = slurm_get_accounting_storage_host();
@@ -2170,21 +2172,16 @@ static void _load_dbd_state(void)
 		   need to set it back to 0 */
 		set_buf_offset(buffer, 0);
 		safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
-		if (remaining_buf(buffer))
-			goto unpack_error;
 		debug3("Version string in dbd_state header is %s", ver_str);
+	unpack_error:
 		free_buf(buffer);
 		buffer = NULL;
-	unpack_error:
 		if (ver_str) {
-			char curr_ver_str[10];
-			snprintf(curr_ver_str, sizeof(curr_ver_str),
-				 "VER%d", SLURM_PROTOCOL_VERSION);
-			if (!xstrcmp(ver_str, curr_ver_str))
-				rpc_version = SLURM_PROTOCOL_VERSION;
+			/* get the version after VER */
+			rpc_version = slurm_atoul(ver_str + 3);
+			xfree(ver_str);
 		}
 
-		xfree(ver_str);
 		while (1) {
 			/* If the buffer was not the VER%d string it
 			   was an actual message so we don't want to
@@ -3661,8 +3658,7 @@ extern void slurmdbd_pack_list_msg(dbd_list_msg_t *msg,
 		list_iterator_destroy(itr);
 	}
 
-	if (rpc_version >= 8)
-		pack32(msg->return_code, buffer);
+	pack32(msg->return_code, buffer);
 }
 
 extern int slurmdbd_unpack_list_msg(dbd_list_msg_t **msg, uint16_t rpc_version,
@@ -3783,8 +3779,7 @@ extern int slurmdbd_unpack_list_msg(dbd_list_msg_t **msg, uint16_t rpc_version,
 		}
 	}
 
-	if (rpc_version >= 8)
-		safe_unpack32(&msg_ptr->return_code, buffer);
+	safe_unpack32(&msg_ptr->return_code, buffer);
 
 	return SLURM_SUCCESS;
 

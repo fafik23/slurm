@@ -5,13 +5,13 @@
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
  *  Portions Copyright (C) 2008 Vijay Ramasubramanian.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Mette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -85,7 +85,7 @@ extern char *default_plugstack;
 #define DEFAULT_JOB_ACCT_GATHER_FREQ  "30"
 #define DEFAULT_ACCT_GATHER_ENERGY_TYPE "acct_gather_energy/none"
 #define DEFAULT_ACCT_GATHER_PROFILE_TYPE "acct_gather_profile/none"
-#define DEFAULT_ACCT_GATHER_INFINIBAND_TYPE "acct_gather_infiniband/none"
+#define DEFAULT_ACCT_GATHER_INTERCONNECT_TYPE "acct_gather_interconnect/none"
 #define DEFAULT_ACCT_GATHER_FILESYSTEM_TYPE "acct_gather_filesystem/none"
 #define ACCOUNTING_STORAGE_TYPE_NONE "accounting_storage/none"
 #define DEFAULT_CORE_SPEC_PLUGIN    "core_spec/none"
@@ -580,5 +580,17 @@ extern bool run_in_daemon(char *daemons);
 /* Translate a job constraint specification into a node feature specification
  * RET - String MUST be xfreed */
 extern char *xlate_features(char *job_features);
+
+/*
+ * Add nodes and corresponding pre-configured slurm_addr_t's to node conf hash
+ * tables.
+ *
+ * IN node_list  - node_list allocated to job
+ * IN node_addrs - array of slurm_addr_t that corresponds to nodes built from
+ * 	host_list. See build_node_details().
+ * RET return SLURM_SUCCESS on success, SLURM_ERROR otherwise.
+ */
+extern int add_remote_nodes_to_conf_tbls(char *node_list,
+					 slurm_addr_t *node_addrs);
 
 #endif /* !_READ_CONFIG_H */

@@ -5,7 +5,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -264,6 +264,7 @@ unpack_error:
 		xfree(job_fail_ptr->fail_node_names[i]);
 	xfree(job_fail_ptr->fail_node_names);
 	xfree(job_fail_ptr->pending_node_name);
+	xfree(job_fail_ptr);
 	return SLURM_ERROR;
 }
 

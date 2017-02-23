@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *  
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *  
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -80,7 +80,7 @@ extern int read_proc(void);
 static int _dump_proc(int uid, int sid);
 /* main is used here for testing purposes only */
 int 
-main(int argc, char * argv[]) 
+main(int argc, char * *argv)
 {
 	int error_code, i, iterations, uid;
 	if ((argc < 2) || (argc > 3)) {
@@ -273,7 +273,8 @@ read_proc(void)
 		if (proc_fd == -1) 
 			continue;  /* process is now gone */
 		while ((n = read(proc_fd, proc_stat, proc_stat_size)) > 0) {
-			if (n < (proc_stat_size-1))
+			proc_stat[n] = '\0';
+			if (n < (proc_stat_size - 1))
 				break;
 			proc_stat_size += BUF_SIZE;
 			xrealloc(proc_stat, proc_stat_size + 1);

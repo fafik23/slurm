@@ -5,7 +5,7 @@
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,6 +37,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
@@ -53,10 +54,6 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "xcgroup.h"
-
-#ifndef PATH_MAX
-#define PATH_MAX 256
-#endif
 
 /* internal functions */
 size_t _file_getsize(int fd);
@@ -438,7 +435,6 @@ int xcgroup_instantiate(xcgroup_t* cg)
 	char* file_path;
 	uid_t uid;
 	gid_t gid;
-	int create_only;
 	uint32_t notify;
 
 	/* init variables based on input cgroup */
@@ -446,7 +442,6 @@ int xcgroup_instantiate(xcgroup_t* cg)
 	file_path = cg->path;
 	uid = cg->uid;
 	gid = cg->gid;
-	create_only = 0;
 	notify = cg->notify;
 
 	/* save current mask and apply working one */
@@ -454,20 +449,23 @@ int xcgroup_instantiate(xcgroup_t* cg)
 	omask = umask(cmask);
 
 	/* build cgroup */
- 	if (mkdir(file_path, 0755)) {
-		if (create_only || errno != EEXIST) {
-			debug2("%s: unable to create cgroup '%s' : %m",
-			       __func__, file_path);
+	if (mkdir(file_path, 0755)) {
+		if (errno != EEXIST) {
+			error("%s: unable to create cgroup '%s' : %m",
+			      __func__, file_path);
 			umask(omask);
 			return fstatus;
+		} else {
+			debug("%s: cgroup '%s' already exists",
+			      __func__, file_path);
 		}
 	}
 	umask(omask);
 
 	/* change cgroup ownership as requested */
 	if (chown(file_path, uid, gid)) {
-		debug2("%s: unable to chown %d:%d cgroup '%s' : %m",
-		       __func__, uid, gid, file_path);
+		error("%s: unable to chown %d:%d cgroup '%s' : %m",
+		      __func__, uid, gid, file_path);
 		return fstatus;
 	}
 

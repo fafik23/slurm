@@ -3,7 +3,7 @@
 dnl Prologue
 dnl
 
-AC_INIT(slurm, m4_esyscmd([perl -ne 'print,exit if s/^\s*VERSION:\s*(\d*.\d*).\S*/\1/i' ./META | sed 's/^v//' | tr '-' '_' | tr -d '\n']), [slurm-dev@schedmd.com], [], [http://slurm.schedmd.com])
+AC_INIT(slurm, m4_esyscmd([perl -ne 'print,exit if s/^\s*VERSION:\s*(\d*.\d*).\S*/\1/i' ./META | sed 's/^v//' | tr '-' '_' | tr -d '\n']), [slurm-dev@schedmd.com], [], [https://slurm.schedmd.com])
 AC_PREREQ(2.59)
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_AUX_DIR([auxdir])
@@ -28,11 +28,17 @@ AM_MAINTAINER_MODE
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_HEADERS([slurm/slurm.h])
 
-dnl This needs to be close to the front to set CFLAGS=-m64
 X_AC_RPATH
+
+dnl This sets the first compiler to be C instead of C++ (which would happen
+dnl if X_AC_BGQ was the first thing called.
+X_AC_DATABASES
 
 X_AC_BG
 
+dnl This needs to be close to the front to set CFLAGS=-m64, but needs to
+dnl be after something that does a AC_LINK_IFELSE or the compiler configure
+dnl checks for will be C++ instead of C.
 X_AC_BGQ
 
 dnl We need to know if this is a Q system
@@ -145,6 +151,10 @@ dnl Check for PAM module support
 X_AC_PAM
 
 dnl
+dnl Check to see how we link to libslurm
+X_AC_LIBSLURM
+
+dnl
 dnl Check for ISO compliance
 X_AC_ISO
 
@@ -163,6 +173,9 @@ dnl Checks for compiler characteristics.
 dnl
 AC_PROG_GCC_TRADITIONAL([])
 
+AX_GCC_BUILTIN(__builtin_clzll)
+AX_GCC_BUILTIN(__builtin_ctzll)
+AX_GCC_BUILTIN(__builtin_popcountll)
 
 dnl checks for library functions.
 dnl
@@ -266,8 +279,6 @@ if test "x$ac_glib_test" != "xyes" -o "x$ac_gtk_test" != "xyes"; then
 fi
 
 AM_CONDITIONAL(BUILD_SVIEW, [test "x$ac_glib_test" = "xyes"] && [test "x$ac_gtk_test" = "xyes"])
-
-X_AC_DATABASES
 
 dnl Cray ALPS/Basil support depends on mySQL
 X_AC_CRAY
@@ -484,16 +495,15 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/acct_gather_energy/ibmaem/Makefile
 		 src/plugins/acct_gather_energy/ipmi/Makefile
 		 src/plugins/acct_gather_energy/none/Makefile
-		 src/plugins/acct_gather_infiniband/Makefile
-		 src/plugins/acct_gather_infiniband/ofed/Makefile
-		 src/plugins/acct_gather_infiniband/none/Makefile
+		 src/plugins/acct_gather_interconnect/Makefile
+		 src/plugins/acct_gather_interconnect/ofed/Makefile
+		 src/plugins/acct_gather_interconnect/none/Makefile
 		 src/plugins/acct_gather_filesystem/Makefile
 		 src/plugins/acct_gather_filesystem/lustre/Makefile
 		 src/plugins/acct_gather_filesystem/none/Makefile
 		 src/plugins/acct_gather_profile/Makefile
 		 src/plugins/acct_gather_profile/hdf5/Makefile
 		 src/plugins/acct_gather_profile/hdf5/sh5util/Makefile
-		 src/plugins/acct_gather_profile/hdf5/sh5util/libsh5util_old/Makefile
 		 src/plugins/acct_gather_profile/none/Makefile
 		 src/plugins/auth/Makefile
 		 src/plugins/auth/munge/Makefile
@@ -635,6 +645,8 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/slurm_unit/api/Makefile
 		 testsuite/slurm_unit/api/manual/Makefile
 		 testsuite/slurm_unit/common/Makefile
+		 testsuite/slurm_unit/common/slurm_protocol_pack/Makefile
+		 testsuite/slurm_unit/common/slurmdb_pack/Makefile
 		 ]
 )
 

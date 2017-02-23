@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -950,7 +950,7 @@ extern void set_front_end_down (front_end_record_t *front_end_ptr,
 		xfree(front_end_ptr->reason);
 		front_end_ptr->reason = xstrdup(reason);
 		front_end_ptr->reason_time = now;
-		front_end_ptr->reason_uid = slurm_get_slurm_user_id();
+		front_end_ptr->reason_uid = slurmctld_conf.slurm_user_id;
 	}
 	last_front_end_update = now;
 #endif

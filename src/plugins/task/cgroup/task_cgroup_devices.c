@@ -5,7 +5,7 @@
  *  Written by Yiannis Georgiou <yiannis.georgiou@bull.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,6 +36,7 @@
 
 #define _GNU_SOURCE
 #include <glob.h>
+#include <limits.h>
 #include <sched.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -51,10 +52,6 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #include "task_cgroup.h"
-
-#ifndef PATH_MAX
-#define PATH_MAX 256
-#endif
 
 static char user_cgroup_path[PATH_MAX];
 static char job_cgroup_path[PATH_MAX];
@@ -435,6 +432,7 @@ error:
 	xcgroup_destroy(&devices_cg);
 	xfree(gres_step_bit_alloc);
 	xfree(gres_job_bit_alloc);
+	xfree(gres_count);
 	xfree(gres_name);
 	xfree(dev_path);
 	xfree(gres_cgroup);

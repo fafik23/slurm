@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -95,6 +95,7 @@
 #include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/fed_mgr.h"
 #include "src/slurmctld/front_end.h"
+#include "src/slurmctld/gang.h"
 #include "src/slurmctld/job_scheduler.h"
 #include "src/slurmctld/job_submit.h"
 #include "src/slurmctld/licenses.h"
@@ -107,9 +108,9 @@
 #include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/read_config.h"
 #include "src/slurmctld/reservation.h"
+#include "src/slurmctld/sched_plugin.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/slurmctld_plugstack.h"
-#include "src/slurmctld/sched_plugin.h"
 #include "src/slurmctld/srun_comm.h"
 #include "src/slurmctld/state_save.h"
 #include "src/slurmctld/trigger_mgr.h"
@@ -175,6 +176,7 @@ diag_stats_t slurmctld_diag_stats;
 int	slurmctld_primary = 1;
 bool	want_nodes_reboot = true;
 int   slurmctld_tres_cnt = 0;
+slurmdb_cluster_rec_t *response_cluster_rec = NULL;
 
 /* Local variables */
 static pthread_t assoc_cache_thread = (pthread_t) 0;
@@ -212,7 +214,7 @@ static void         _default_sigaction(int sig);
 static void         _init_config(void);
 static void         _init_pidfile(void);
 static void         _kill_old_slurmctld(void);
-static void         _parse_commandline(int argc, char *argv[]);
+static void         _parse_commandline(int argc, char **argv);
 inline static int   _ping_backup_controller(void);
 static void         _remove_assoc(slurmdb_assoc_rec_t *rec);
 static void         _remove_qos(slurmdb_qos_rec_t *rec);
@@ -238,7 +240,7 @@ static bool         _valid_controller(void);
 static bool         _wait_for_server_thread(void);
 
 /* main - slurmctld main function, start various threads and process RPCs */
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	int cnt, error_code, i;
 	pthread_attr_t thread_attr;
@@ -247,7 +249,6 @@ int main(int argc, char *argv[])
 	slurmctld_lock_t config_write_lock = {
 		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
 	slurm_trigger_callbacks_t callbacks;
-	char *dir_name;
 	bool create_clustername_file;
 	/*
 	 * Make sure we have no extra open files which
@@ -549,12 +550,14 @@ int main(int argc, char *argv[])
 		}
 		slurm_attr_destroy(&thread_attr);
 
-		fed_mgr_init(acct_db_conn);
-
 		clusteracct_storage_g_register_ctld(
 			acct_db_conn,
 			slurmctld_conf.slurmctld_port);
 		_accounting_cluster_ready();
+
+		/* call after registering so that the current cluster's
+		 * control_host and control_port will be filled in. */
+		fed_mgr_init(acct_db_conn);
 
 		if (slurm_priority_init() != SLURM_SUCCESS)
 			fatal("failed to initialize priority plugin");
@@ -604,9 +607,7 @@ int main(int argc, char *argv[])
 		_slurmctld_background(NULL);
 
 		/* termination of controller */
-		dir_name = slurm_get_state_save_location();
-		switch_g_save(dir_name);
-		xfree(dir_name);
+		switch_g_save(slurmctld_conf.state_save_location);
 		slurm_priority_fini();
 		slurmctld_plugstack_fini();
 		shutdown_state_save();
@@ -691,10 +692,8 @@ int main(int argc, char *argv[])
 	purge_front_end_state();
 	resv_fini();
 	trigger_fini();
-	dir_name = slurm_get_state_save_location();
 	fed_mgr_fini();
-	assoc_mgr_fini(dir_name);
-	xfree(dir_name);
+	assoc_mgr_fini(slurmctld_conf.state_save_location);
 	reserve_port_config(NULL);
 	free_rpc_stats();
 
@@ -830,7 +829,7 @@ static void _reconfigure_slurm(void)
 		_update_cred_key();
 		set_slurmctld_state_loc();
 	}
-	slurm_sched_g_partition_change();	/* notify sched plugin */
+	gs_reconfig();
 	unlock_slurmctld(config_write_lock);
 	assoc_mgr_set_missing_uids();
 	acct_storage_g_reconfig(acct_db_conn, 0);
@@ -949,8 +948,8 @@ static void *_slurmctld_rpc_mgr(void *no_data)
 
 	/* threads to process individual RPC's are detached */
 	slurm_attr_init(&thread_attr_rpc_req);
-	if (pthread_attr_setdetachstate
-	    (&thread_attr_rpc_req, PTHREAD_CREATE_DETACHED))
+	if (pthread_attr_setdetachstate(&thread_attr_rpc_req,
+					PTHREAD_CREATE_DETACHED))
 		fatal("pthread_attr_setdetachstate %m");
 
 	/* set node_addr to bind to (NULL means any) */
@@ -1251,8 +1250,8 @@ static int _accounting_mark_all_nodes_down(char *reason)
 	time_t event_time;
 	int rc = SLURM_ERROR;
 
-	state_file = slurm_get_state_save_location();
-	xstrcat (state_file, "/node_state");
+	state_file = xstrdup_printf("%s/node_state",
+				    slurmctld_conf.state_save_location);
 	if (stat(state_file, &stat_buf)) {
 		debug("_accounting_mark_all_nodes_down: could not stat(%s) "
 		      "to record node down time", state_file);
@@ -1274,7 +1273,7 @@ static int _accounting_mark_all_nodes_down(char *reason)
 		if ((rc = clusteracct_storage_g_node_down(
 			    acct_db_conn,
 			    node_ptr, event_time,
-			    reason, slurm_get_slurm_user_id()))
+			    reason, slurmctld_conf.slurm_user_id))
 		   == SLURM_ERROR)
 			break;
 	}
@@ -1314,6 +1313,7 @@ static void _remove_qos(slurmdb_qos_rec_t *rec)
 			     part_ptr->name, rec->name);
 			part_ptr->qos_ptr = NULL;
 		}
+		list_iterator_destroy(itr);
 	}
 	unlock_slurmctld(part_write_lock);
 
@@ -1347,6 +1347,34 @@ static void _update_assoc(slurmdb_assoc_rec_t *rec)
 	}
 	list_iterator_destroy(job_iterator);
 	unlock_slurmctld(job_write_lock);
+}
+
+static void _resize_qos(void)
+{
+	ListIterator itr;
+	struct part_record *part_ptr;
+	slurmctld_lock_t part_write_lock =
+		{ NO_LOCK, NO_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK };
+
+	lock_slurmctld(part_write_lock);
+	if (part_list) {
+		itr = list_iterator_create(part_list);
+		while ((part_ptr = list_next(itr))) {
+			if (part_ptr->allow_qos) {
+				info("got count for %s of %"BITSTR_FMT, part_ptr->name,
+				     bit_size(part_ptr->allow_qos_bitstr));
+				qos_list_build(part_ptr->allow_qos,
+					       &part_ptr->allow_qos_bitstr);
+				info("now count for %s of %"BITSTR_FMT, part_ptr->name,
+				     bit_size(part_ptr->allow_qos_bitstr));
+			}
+			if (part_ptr->deny_qos)
+				qos_list_build(part_ptr->deny_qos,
+					       &part_ptr->deny_qos_bitstr);
+		}
+		list_iterator_destroy(itr);
+	}
+	unlock_slurmctld(part_write_lock);
 }
 
 static void _update_qos(slurmdb_qos_rec_t *rec)
@@ -1657,7 +1685,7 @@ static void *_slurmctld_background(void *no_data)
 		READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	/* Locks: Read config, write job, write node, read partition */
 	slurmctld_lock_t job_write_lock = {
-		READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
 	/* Locks: Write job */
 	slurmctld_lock_t job_write_lock2 = {
 		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
@@ -1778,6 +1806,7 @@ static void *_slurmctld_background(void *no_data)
 			debug2("Testing job time limits and checkpoints");
 			lock_slurmctld(job_write_lock);
 			job_time_limit();
+			job_resv_check();
 			step_checkpoint();
 			unlock_slurmctld(job_write_lock);
 		}
@@ -1987,8 +2016,6 @@ static void *_slurmctld_background(void *no_data)
 /* save_all_state - save entire slurmctld state for later recovery */
 extern void save_all_state(void)
 {
-	char *save_loc;
-
 	/* Each of these functions lock their own databases */
 	schedule_front_end_save();
 	schedule_job_save();
@@ -1997,12 +2024,9 @@ extern void save_all_state(void)
 	schedule_resv_save();
 	schedule_trigger_save();
 
-	if ((save_loc = slurm_get_state_save_location())) {
-		select_g_state_save(save_loc);
-		dump_assoc_mgr_state(save_loc);
-		fed_mgr_state_save(save_loc);
-		xfree(save_loc);
-	}
+	select_g_state_save(slurmctld_conf.state_save_location);
+	dump_assoc_mgr_state(slurmctld_conf.state_save_location);
+	fed_mgr_state_save(slurmctld_conf.state_save_location);
 }
 
 /* make sure the assoc_mgr is up and running with the most current state */
@@ -2016,6 +2040,7 @@ extern void ctld_assoc_mgr_init(slurm_trigger_callbacks_t *callbacks)
 	memset(&assoc_init_arg, 0, sizeof(assoc_init_args_t));
 	assoc_init_arg.enforce = accounting_enforce;
 	assoc_init_arg.add_license_notify = license_add_remote;
+	assoc_init_arg.resize_qos_notify = _resize_qos;
 	assoc_init_arg.remove_assoc_notify = _remove_assoc;
 	assoc_init_arg.remove_license_notify = license_remove_remote;
 	assoc_init_arg.remove_qos_notify = _remove_qos;
@@ -2315,7 +2340,7 @@ extern int optind, opterr, optopt;
  * IN argv - the command line arguments
  * IN/OUT conf_ptr - pointer to current configuration, update as needed
  */
-static void _parse_commandline(int argc, char *argv[])
+static void _parse_commandline(int argc, char **argv)
 {
 	int c = 0;
 	char *tmp_char;

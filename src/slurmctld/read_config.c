@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -144,10 +144,11 @@ static void _stat_slurm_dirs(void)
 	struct stat stat_buf;
 	char *problem_dir = NULL;
 
-	if ((stat(slurmctld_conf.plugindir, &stat_buf) == 0) &&
-	    (stat_buf.st_mode & S_IWOTH)) {
-		problem_dir = "PluginDir";
-	}
+	/*
+	 * PluginDir may have multiple values, and is checked by
+	 * _is_valid_path() instead
+	 */
+
 	if ((stat(slurmctld_conf.plugstack, &stat_buf) == 0) &&
 	    (stat_buf.st_mode & S_IWOTH)) {
 		problem_dir = "PlugStack";
@@ -298,7 +299,6 @@ static int _reset_node_bitmaps(void *x, void *arg)
 
 static int _set_share_node_bitmap(void *x, void *arg)
 {
-	bitstr_t *tmp_bits;
 	struct job_record *job_ptr = (struct job_record *) x;
 
 	if (!IS_JOB_RUNNING(job_ptr) ||
@@ -307,10 +307,7 @@ static int _set_share_node_bitmap(void *x, void *arg)
 	    (job_ptr->details->share_res != 0))
 		return 0;
 
-	tmp_bits = bit_copy(job_ptr->node_bitmap);
-	bit_not(tmp_bits);
-	bit_and(share_node_bitmap, tmp_bits);
-	FREE_NULL_BITMAP(tmp_bits);
+	bit_and_not(share_node_bitmap, job_ptr->node_bitmap);
 
 	return 0;
 }
@@ -576,7 +573,6 @@ extern void qos_list_build(char *qos, bitstr_t **qos_bits)
 
 	if (!qos) {
 		FREE_NULL_BITMAP(*qos_bits);
-		*qos_bits = NULL;
 		return;
 	}
 
@@ -984,12 +980,11 @@ int read_slurm_conf(int recover, bool reconfig)
 	g_slurm_jobcomp_init(slurmctld_conf.job_comp_loc);
 	if (slurm_sched_init() != SLURM_SUCCESS)
 		fatal("Failed to initialize sched plugin");
-	if (!reconfig && (old_preempt_mode & PREEMPT_MODE_GANG) &&
-	    (gs_init() != SLURM_SUCCESS)) {
+	if (!reconfig && (old_preempt_mode & PREEMPT_MODE_GANG)) {
 		/* gs_init() must immediately follow slurm_sched_init() */
-		fatal("Failed to initialize gang scheduler");
+		gs_init();
 	}
-	if (switch_init() != SLURM_SUCCESS)
+	if (switch_init(1) != SLURM_SUCCESS)
 		fatal("Failed to initialize switch plugin");
 
 	if (default_part_loc == NULL)
@@ -1376,12 +1371,10 @@ extern void update_feature_list(List feature_list, char *new_features,
 	/* Clear these nodes from the feature_list record,
 	 * then restore as needed */
 	feature_iter = list_iterator_create(feature_list);
-	bit_not(node_bitmap);
 	while ((feature_ptr = (node_feature_t *) list_next(feature_iter))) {
-		bit_and(feature_ptr->node_bitmap, node_bitmap);
+		bit_and_not(feature_ptr->node_bitmap, node_bitmap);
 	}
 	list_iterator_destroy(feature_iter);
-	bit_not(node_bitmap);
 
 	if (new_features) {
 		tmp_str = xstrdup(new_features);
@@ -1960,13 +1953,15 @@ static int _update_preempt(uint16_t old_preempt_mode)
 
 	if (new_preempt_mode & PREEMPT_MODE_GANG) {
 		info("Enabling gang scheduling");
-		return gs_init();
+		gs_init();
+		return SLURM_SUCCESS;
 	}
 
 	if (old_preempt_mode == PREEMPT_MODE_GANG) {
 		info("Disabling gang scheduling");
 		gs_wake_jobs();
-		return gs_fini();
+		gs_fini();
+		return SLURM_SUCCESS;
 	}
 
 	error("Invalid gang scheduling mode change");
@@ -2212,7 +2207,6 @@ static int _sync_nodes_to_active_job(struct job_record *job_ptr)
 			job_ptr->job_state = JOB_NODE_FAIL | JOB_COMPLETING;
 			build_cg_bitmap(job_ptr);
 			job_ptr->end_time = MIN(job_ptr->end_time, now);
-			job_ptr->exit_code = MAX(job_ptr->exit_code, 1);
 			job_ptr->state_reason = FAIL_DOWN_NODE;
 			xfree(job_ptr->state_desc);
 			job_completion_logger(job_ptr, false);

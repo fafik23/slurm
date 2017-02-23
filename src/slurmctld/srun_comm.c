@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,10 +46,9 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/slurmctld/agent.h"
+#include "src/slurmctld/fed_mgr.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/srun_comm.h"
-
-#define SRUN_LAUNCH_MSG 0
 
 /* Launch the srun request. Note that retry is always zero since
  * we don't want to clog the system up with messages destined for
@@ -129,6 +128,9 @@ extern void srun_allocate (uint32_t job_id)
 		msg_arg->select_jobinfo = select_g_select_jobinfo_copy(
 				job_ptr->select_jobinfo);
 		msg_arg->error_code	= SLURM_SUCCESS;
+
+		set_remote_working_response(msg_arg, job_ptr,
+					    job_ptr->origin_cluster);
 
 		_srun_agent_launch(addr, job_ptr->alloc_node,
 				   RESPONSE_RESOURCE_ALLOCATION, msg_arg,

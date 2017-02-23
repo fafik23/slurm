@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -420,8 +420,10 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("MaxCPUsPU");
 		field->len = 9;
 		field->print_routine = print_fields_uint;
-	} else if (!strncasecmp("MaxTRESPerJob",
-				object, MAX(command_len, 7))) {
+	} else if (!strncasecmp("MaxTRES",
+				object, MAX(command_len, 7)) ||
+		   !strncasecmp("MaxTRESPerJob",
+				object, MAX(command_len, 11))) {
 		field->type = PRINT_MAXT;
 		field->name = xstrdup("MaxTRES");
 		field->len = 13;
@@ -467,7 +469,9 @@ static print_field_t *_get_print_field(char *object)
 		field->len = 13;
 		field->print_routine = sacctmgr_print_tres;
 	} else if (!strncasecmp("MaxTRESPerUser", object,
-				MAX(command_len, 11))) {
+				MAX(command_len, 11)) ||
+		   !strncasecmp("MaxTRESPU", object,
+				MAX(command_len, 9))) {
 		field->type = PRINT_MAXTU;
 		field->name = xstrdup("MaxTRESPU");
 		field->len = 13;
@@ -488,9 +492,9 @@ static print_field_t *_get_print_field(char *object)
 		field->len = 9;
 		field->print_routine = print_fields_uint;
 	} else if (!strncasecmp("MaxJobsPerUser", object,
-				MAX(command_len, 8)) ||
+				MAX(command_len, 11)) ||
 		   !strncasecmp("MaxJobsPU", object,
-				MAX(command_len, 8))) {
+				MAX(command_len, 9))) {
 		field->type = PRINT_MAXJ; /* used same as MaxJobs */
 		field->name = xstrdup("MaxJobsPU");
 		field->len = 9;
@@ -908,6 +912,8 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 				cluster_rec->control_host,
 				cluster_rec->control_port,
 				cluster_rec->rpc_version);
+		} else {
+			slurmdb_destroy_update_object(update_obj);
 		}
 		FREE_NULL_LIST(update_list);
 	}
@@ -919,6 +925,7 @@ end_it:
 
 	FREE_NULL_LIST(local_assoc_list);
 	FREE_NULL_LIST(local_cluster_list);
+	slurmdb_destroy_update_object(update_obj);
 
 	return rc;
 }
@@ -936,7 +943,6 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 	slurmdb_update_object_t* update_obj = NULL;
 	slurmdb_cluster_cond_t cluster_cond;
 	int rc = SLURM_SUCCESS;
-	bool free_cluster_name = 0;
 
 	cluster_list = qos_cond->description_list;
 	qos_cond->description_list = NULL;
@@ -992,6 +998,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 			if (!rec) {
 				error("Failed to find QOS %s", qos_name);
 				rc = SLURM_ERROR;
+				slurmdb_destroy_update_object(update_obj);
 				goto end_it;
 			}
 			list_append(update_obj->objects, rec);
@@ -1005,6 +1012,8 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 				cluster_rec->control_host,
 				cluster_rec->control_port,
 				cluster_rec->rpc_version);
+		} else {
+			slurmdb_destroy_update_object(update_obj);
 		}
 		FREE_NULL_LIST(update_list);
 	}
@@ -1014,9 +1023,7 @@ end_it:
 
 	FREE_NULL_LIST(update_list);
 	FREE_NULL_LIST(local_qos_list);
-
-	if (free_cluster_name)
-		xfree(cluster_name);
+	xfree(cluster_name);
 
 	return rc;
 }

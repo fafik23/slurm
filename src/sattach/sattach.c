@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -114,7 +114,7 @@ static struct termios termdefaults;
 /**********************************************************************
  * sattach
  **********************************************************************/
-int sattach(int argc, char *argv[])
+int sattach(int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	slurm_step_layout_t *layout;
@@ -270,6 +270,7 @@ static void print_layout_info(slurm_step_layout_t *layout)
 		printf("\n");
 		free(name);
 	}
+	hostlist_destroy(nl);
 }
 
 

@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> and Kevin Tew <tew1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -214,6 +214,12 @@ void slurm_write_ctl_conf ( slurm_ctl_conf_info_msg_t * slurm_ctl_conf_ptr,
 		if (node_info_ptr->node_array[i].features != NULL)
 		        xstrfmtcat(tmp_str, " Feature=%s",
 				   node_info_ptr->node_array[i].features);
+
+		if (node_info_ptr->node_array[i].port &&
+		    node_info_ptr->node_array[i].port
+		    != slurm_ctl_conf_ptr->slurmd_port)
+		        xstrfmtcat(tmp_str, " Port=%u",
+				   node_info_ptr->node_array[i].port);
 
 		/* check for duplicate records */
 		for (crp = rp; crp != NULL; crp = crp->next) {
@@ -551,9 +557,9 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	list_append(ret_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("AcctGatherInfinibandType");
+	key_pair->name = xstrdup("AcctGatherInterconnectType");
 	key_pair->value =
-		xstrdup(slurm_ctl_conf_ptr->acct_gather_infiniband_type);
+		xstrdup(slurm_ctl_conf_ptr->acct_gather_interconnect_type);
 	list_append(ret_list, key_pair);
 
 	snprintf(tmp_str, sizeof(tmp_str), "%u sec",
@@ -1475,7 +1481,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->slurmd_plugstack);
 	list_append(ret_list, key_pair);
 
-#ifndef MULTIPLE_SLURMD
 	snprintf(tmp_str, sizeof(tmp_str), "%u",
 		 slurm_ctl_conf_ptr->slurmd_port);
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -1483,7 +1488,6 @@ extern void *slurm_ctl_conf_2_key_pairs (slurm_ctl_conf_t* slurm_ctl_conf_ptr)
 	key_pair->value = xstrdup(tmp_str);
 	list_append(ret_list, key_pair);
 
-#endif
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SlurmdSpoolDir");
 	key_pair->value = xstrdup(slurm_ctl_conf_ptr->slurmd_spooldir);
@@ -1980,7 +1984,7 @@ static void _write_key_pairs(FILE* out, void *key_pairs)
 		    !xstrcasecmp(key_pair->name, "AccountingStoreJobComment") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherEnergyType") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherFilesystemType") ||
-		    !xstrcasecmp(key_pair->name, "AcctGatherInfinibandType") ||
+		    !xstrcasecmp(key_pair->name, "AcctGatherInterconnectType") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherNodeFreq") ||
 		    !xstrcasecmp(key_pair->name, "AcctGatherProfileType") ||
 		    !xstrcasecmp(key_pair->name, "JobAcctGatherFrequency") ||

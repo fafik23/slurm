@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -73,6 +73,7 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_time.h"
+#include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -760,7 +761,7 @@ void slurm_step_launch_abort(slurm_step_ctx_t *ctx)
  */
 void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 {
-	int node_id, j, active, num_tasks;
+	int node_id, j, num_tasks;
 	slurm_msg_t req;
 	kill_tasks_msg_t msg;
 	hostlist_t hl;
@@ -770,8 +771,6 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	ret_data_info_t *ret_data_info = NULL;
 	int rc = SLURM_SUCCESS;
 	struct step_launch_state *sls = ctx->launch_state;
-
-	debug2("forward signal %d to job %u", signo, ctx->job_id);
 
 	/* common to all tasks */
 	msg.job_id      = ctx->job_id;
@@ -784,15 +783,13 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	for (node_id = 0;
 	     node_id < ctx->step_resp->step_layout->node_cnt;
 	     node_id++) {
-		active = 0;
+		bool active = false;
 		num_tasks = sls->layout->tasks[node_id];
 		for (j = 0; j < num_tasks; j++) {
-			if (bit_test(sls->tasks_started,
-				     sls->layout->tids[node_id][j]) &&
-			    !bit_test(sls->tasks_exited,
+			if (!bit_test(sls->tasks_exited,
 				      sls->layout->tids[node_id][j])) {
 				/* this one has active tasks */
-				active = 1;
+				active = true;
 				break;
 			}
 		}
@@ -815,6 +812,8 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	slurm_mutex_unlock(&sls->lock);
 
 	if (!hostlist_count(hl)) {
+		verbose("no active tasks in job %u to send signal %d",
+		        ctx->job_id, signo);
 		hostlist_destroy(hl);
 		goto nothing_left;
 	}
@@ -828,7 +827,7 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	if (ctx->step_resp->use_protocol_ver)
 		req.protocol_version = ctx->step_resp->use_protocol_ver;
 
-	debug3("sending signal %d to job %u on host %s",
+	debug2("sending signal %d to job %u on hosts %s",
 	       signo, ctx->job_id, name);
 
 	if (!(ret_list = slurm_send_recv_msgs(name, &req, 0, false))) {
@@ -970,12 +969,15 @@ static int _connect_srun_cr(char *addr)
 	unsigned int sa_len;
 	int fd, rc;
 
-#ifdef UNIX_PATH_MAX
-	if (addr && (strlen(addr) > UNIX_PATH_MAX)) {
+	if (!addr) {
+		error("%s: socket path name is NULL", __func__);
+		return -1;
+	}
+	if (strlen(addr) >= sizeof(sa.sun_path)) {
 		error("%s: socket path name too long (%s)", __func__, addr);
 		return -1;
 	}
-#endif
+
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0) {
 		error("failed creating cr socket: %m");
@@ -984,7 +986,7 @@ static int _connect_srun_cr(char *addr)
 	memset(&sa, 0, sizeof(sa));
 
 	sa.sun_family = AF_UNIX;
-	strcpy(sa.sun_path, addr);
+	strlcpy(sa.sun_path, addr, sizeof(sa.sun_path));
 	sa_len = strlen(sa.sun_path) + sizeof(sa.sun_family);
 
 	while (((rc = connect(fd, (struct sockaddr *)&sa, sa_len)) < 0) &&

@@ -89,7 +89,7 @@ License: GPL
 Group: System Environment/Base
 Source: %{name}-%{version}-%{release}.tgz
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}
-URL: http://slurm.schedmd.com/
+URL: https://slurm.schedmd.com/
 
 Requires: slurm-plugins
 
@@ -387,7 +387,6 @@ according to the Slurm
 	%{?with_cpusetdir:--with-cpusetdir=%{?with_cpusetdir}} \
 	%{?with_apbasildir:--with-apbasildir=%{?with_apbasildir}} \
 	%{?with_mysql_config:--with-mysql_config=%{?with_mysql_config}} \
-	%{?with_pg_config:--with-pg_config=%{?with_pg_config}} \
 	%{?with_ssl:--with-ssl=%{?with_ssl}} \
 	%{?with_munge:--with-munge=%{?with_munge}}\
 	%{?with_netloc:--with-netloc=%{?with_netloc}}\
@@ -399,7 +398,8 @@ according to the Slurm
 	%{?slurm_with_multiple_slurmd:--enable-multiple-slurmd} \
 	%{?slurm_with_pmix:--with-pmix=%{?with_pmix_dir}} \
 	%{?with_freeipmi:--with-freeipmi=%{?with_freeipmi}}\
-	%{?with_cflags}
+        %{?slurm_with_shared_libslurm:--with-shared-libslurm}\
+        %{?with_cflags} \
 
 %__make %{?_smp_mflags}
 
@@ -500,7 +500,6 @@ rm -f $RPM_BUILD_ROOT/lib64/security/pam_slurm_adopt.la
 rm -f $RPM_BUILD_ROOT/%{_libdir}/slurm/auth_none.so
 %endif
 %if ! %{slurm_with bluegene}
-rm -f $RPM_BUILD_ROOT/%{_libdir}/slurm/job_submit_cnode.so
 rm -f $RPM_BUILD_ROOT/%{_libdir}/slurm/libsched_if.so
 rm -f $RPM_BUILD_ROOT/%{_libdir}/slurm/libsched_if64.so
 rm -f $RPM_BUILD_ROOT/%{_libdir}/slurm/runjob_plugin.so
@@ -647,8 +646,8 @@ test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_energy_ipmi.so  &&
    echo %{_libdir}/slurm/acct_gather_energy_ipmi.so  >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_energy_rapl.so  &&
    echo %{_libdir}/slurm/acct_gather_energy_rapl.so  >> $LIST
-test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_infiniband_ofed.so &&
-   echo %{_libdir}/slurm/acct_gather_infiniband_ofed.so >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_interconnect_ofed.so &&
+   echo %{_libdir}/slurm/acct_gather_interconnect_ofed.so >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/acct_gather_profile_hdf5.so &&
    echo %{_libdir}/slurm/acct_gather_profile_hdf5.so >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/burst_buffer_cray.so        &&
@@ -803,7 +802,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_sbindir}/slurm_epilog
 %{_sbindir}/slurm_prolog
 %{_sbindir}/sfree
-%{_libdir}/slurm/job_submit_cnode.so
 %config %{_sysconfdir}/bluegene.conf.example
 %endif
 #############################################################################
@@ -844,7 +842,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/slurm/accounting_storage_slurmdbd.so
 %{_libdir}/slurm/acct_gather_filesystem_lustre.so
 %{_libdir}/slurm/acct_gather_filesystem_none.so
-%{_libdir}/slurm/acct_gather_infiniband_none.so
+%{_libdir}/slurm/acct_gather_interconnect_none.so
 %{_libdir}/slurm/acct_gather_energy_none.so
 %{_libdir}/slurm/acct_gather_profile_none.so
 %{_libdir}/slurm/burst_buffer_generic.so

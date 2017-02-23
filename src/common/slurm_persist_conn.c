@@ -6,7 +6,7 @@
  *  Written by Danny Auble da@schedmd.com, et. al.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -513,8 +513,13 @@ extern int slurm_persist_conn_open_without_init(
 	if (!persist_conn->inited)
 		persist_conn->inited = true;
 
-	if (!persist_conn->version)
+	if (!persist_conn->version) {
+		/* Set to MIN_PROTOCOL so that a higher version controller can
+		 * talk to a lower protocol version controller. When talking to
+		 * the DBD, the protocol version should be set to the current
+		 * protocol version prior to calling this. */
 		persist_conn->version = SLURM_MIN_PROTOCOL_VERSION;
+	}
 	if (persist_conn->timeout < 0)
 		persist_conn->timeout = slurm_get_msg_timeout() * 1000;
 

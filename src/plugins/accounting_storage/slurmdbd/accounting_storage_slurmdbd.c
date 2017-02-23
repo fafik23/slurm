@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -523,6 +523,8 @@ extern int acct_storage_p_close_connection(void **db_conn)
 {
 	if (db_conn)
 		*db_conn = NULL;
+
+	first = 1;
 	return slurm_close_slurmdbd_conn();
 }
 
@@ -1846,6 +1848,9 @@ extern List acct_storage_p_get_config(void *db_conn, char *config_name)
 	int rc;
 	List ret_list = NULL;
 
+	if (first)
+		init();
+
 	req.msg_type = DBD_GET_CONFIG;
 	req.data = config_name;
 	rc = slurm_send_recv_slurmdbd_msg(SLURM_PROTOCOL_VERSION, &req, &resp);
@@ -2623,6 +2628,8 @@ extern int jobacct_storage_p_job_complete(void *db_conn,
 		req.end_time    = job_ptr->end_time;
 		if (IS_JOB_REQUEUED(job_ptr))
 			req.job_state   = JOB_REQUEUE;
+		else if (IS_JOB_REVOKED(job_ptr))
+			req.job_state   = JOB_REVOKED;
 		else
 			req.job_state   = job_ptr->job_state & JOB_STATE_BASE;
 	}

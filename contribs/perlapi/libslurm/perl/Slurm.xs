@@ -460,32 +460,6 @@ slurm_allocate_resources_blocking(slurm_t self, HV *user_req, time_t timeout=0, 
 HV *
 slurm_allocation_lookup(slurm_t self, uint32_t job_id)
 	PREINIT:
-		job_alloc_info_response_msg_t *resp_msg = NULL;
-		int rc;
-	CODE:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-		rc = slurm_allocation_lookup(job_id, &resp_msg);
-		if(rc != SLURM_SUCCESS) {
-			slurm_free_job_alloc_info_response_msg(resp_msg);
-			XSRETURN_UNDEF;
-		}
-		RETVAL = newHV();
-		sv_2mortal((SV*)RETVAL);
-		rc = job_alloc_info_response_msg_to_hv(resp_msg, RETVAL);
-		slurm_free_job_alloc_info_response_msg(resp_msg);
-		if (rc < 0) {
-			XSRETURN_UNDEF;
-		}
-	OUTPUT:
-		RETVAL
-
-HV *
-slurm_allocation_lookup_lite(slurm_t self, uint32_t job_id)
-	PREINIT:
 		resource_allocation_response_msg_t *resp_msg = NULL;
 		int rc;
 	CODE:
@@ -494,7 +468,7 @@ slurm_allocation_lookup_lite(slurm_t self, uint32_t job_id)
 			      out of the mix Slurm-> doesn't work,
 			      only Slurm::
 			    */
-		rc = slurm_allocation_lookup_lite(job_id, &resp_msg);
+		rc = slurm_allocation_lookup(job_id, &resp_msg);
 		if(rc != SLURM_SUCCESS) {
 			slurm_free_resource_allocation_response_msg(resp_msg);
 			XSRETURN_UNDEF;
@@ -756,7 +730,7 @@ slurm_step_ctx_get(slurm_step_ctx_t *ctx, int ctx_key, INOUT ...)
 		job_step_create_response_msg_t *resp_msg;
 #endif
 		slurm_cred_t *cred;
-		switch_jobinfo_t *switch_info;
+		dynamic_plugin_data_t *switch_info;
 		char *tmp_str;
 		int i, tmp_int, *tmp_int_ptr;
 	CODE:
@@ -859,7 +833,7 @@ slurm_step_ctx_get(slurm_step_ctx_t *ctx, int ctx_key, INOUT ...)
 			}
 			RETVAL = slurm_step_ctx_get(ctx, ctx_key, &switch_info);
 			if (RETVAL == SLURM_SUCCESS && switch_info) {
-				sv_setref_pv(ST(2), "Slurm::switch_jobinfo_t", (void*)switch_info);
+				sv_setref_pv(ST(2), "Slurm::dynamic_plugin_data_t", (void*)switch_info);
 			} else if (RETVAL == SLURM_SUCCESS) {
 				/* the returned switch_info is NULL */
 				sv_setsv(ST(2), &PL_sv_undef);

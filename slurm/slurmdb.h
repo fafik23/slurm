@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -377,6 +377,14 @@ typedef struct {
 				 * in months by default set the
 				 * SLURMDB_PURGE_ARCHIVE bit for
 				 * archiving */
+	uint32_t purge_txn; /* purge transaction data older than this
+			     * in months by default set the
+			     * SLURMDB_PURGE_ARCHIVE bit for
+			     * archiving */
+	uint32_t purge_usage; /* purge usage data older than this
+			       * in months by default set the
+			       * SLURMDB_PURGE_ARCHIVE bit for
+			       * archiving */
 } slurmdb_archive_cond_t;
 
 typedef struct {
