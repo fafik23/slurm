@@ -2653,7 +2653,7 @@ This option may improve system responsiveness when large numbers of jobs
 initiation time of individual jobs. Also see \fBdefault_queue_depth\fR above.
 .TP
 \fBdelay_boot=#\fR
-Do not reboot nodes in order to satified this job's feature specification if
+Do not reboot nodes in order to satisfied this job's feature specification if
 the job has been eligible to run for less than this time period.
 If the job has waited for less than the specified period, it will use only
 nodes which already have the specified features.
@@ -2772,6 +2772,11 @@ priority jobs.
 It may be desirable to set this configuration parameter when there are multiple
 priorities of preemptable jobs.
 The logic to support this option is only available in the select/cons_res plugin.
+.TP
+\fBpreempt_youngest_first\fR
+If set, then the preemption sorting algorithm will be changed to sort by the
+job start times to favor preempting younger jobs over older. (Requires
+preempt/partition_prio or preempt/qos plugins.)
 .TP
 \fBnohold_on_prolog_fail\fR
 By default if the Prolog exits with a non-zero value the job is requeued in
@@ -3395,7 +3400,7 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 \fBSuspendTime\fR
 Nodes which remain idle for this number of seconds will be placed into
 power save mode by \fBSuspendProgram\fR.
-For efficient system utilization, it is recommeded that the value of
+For efficient system utilization, it is recommended that the value of
 \fBSuspendTime\fR be at least as large as the sum of \fBSuspendTimeout\fR
 plus \fBResumeTimeout\fR.
 A value of \-1 disables power save mode and is the default.
@@ -4342,6 +4347,8 @@ If user root attempts to execute a job as another user (e.g. using
 srun's \-\-uid option), this other user must be in one of groups
 identified by AllowGroups for the job to successfully execute.
 The default value is "ALL".
+When set, all partitions that a user does not have access will be hidden from
+display regardless of the settings used for PrivateData.
 \fBNOTE:\fR For performance reasons, Slurm maintains a list of user IDs
 allowed to use each partition and this is checked at job submission time.
 This list of user IDs is updated when the \fBslurmctld\fR daemon is restarted,

@@ -1533,7 +1533,7 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
  *	5) If request can't be satisfied now, execute select_g_job_test()
  *	   against the list of nodes that exist in any state (perhaps DOWN
  *	   DRAINED or ALLOCATED) to determine if the request can
- *         ever be satified.
+ *         ever be satisfied.
  */
 static int
 _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
@@ -2551,6 +2551,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->node_bitmap = NULL;
 		job_ptr->priority = 0;
 		job_ptr->state_reason = WAIT_HELD;
+		last_job_update = now;
 		goto cleanup;
 	}
 	if (select_g_job_begin(job_ptr) != SLURM_SUCCESS) {
@@ -2561,6 +2562,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->time_last_active = 0;
 		job_ptr->end_time = 0;
 		job_ptr->node_bitmap = NULL;
+		last_job_update = now;
 		goto cleanup;
 	}
 

@@ -27,9 +27,63 @@ documents those changes that are of interest to users and administrators.
     prevent jobs not explicitly requesting the reservation from using those
     reserved resources rather than forcing jobs requesting the reservation to
     use those resources in the time frame reserved.
+ -- Add NoDecay flag to QOS.
+ -- Node "OS" field expanded from "sysname" to "sysname release version" (e.g.
+    change from "Linux" to
+    "Linux 4.8.0-28-generic #28-Ubuntu SMP Sat Feb 8 09:15:00 UTC 2017").
+ -- jobcomp/elasticsearch - Add "job_name" and "wc_key" fields to stored
+    information.
+ -- jobcomp/filetxt - Add ArrayJobId, ArrayTaskId, ReservationName, Gres,
+    Account, QOS, WcKey, Cluster, SubmitTime, EligibleTime, DerivedExitCode and
+    ExitCode.
+ -- scontrol modified to report core IDs for reservation containing individual
+    cores.
 
-* Changes in Slurm 17.02.0rc2
-==============================
+* Changes in Slurm 17.02.2
+==========================
+
+* Changes in Slurm 17.02.2
+==========================
+ -- Update hyperlink to LBNL Node Health Check program.
+ -- burst_buffer/cray - Add support for line continuation.
+
+* Changes in Slurm 17.02.1-2
+============================
+ -- Replace clock_gettime with time(NULL) for very old systems without the call.
+
+* Changes in Slurm 17.02.1
+==========================
+ -- Modify pam module to work when configured NodeName and NodeHostname differ.
+ -- Update to sbatch/srun man pages to explain the "filename pattern" clearer
+ -- Add %x to sbatch/srun filename pattern to represent the job name.
+ -- job_submit/lua - Add job "bitflags" field.
+ -- Update slurm.spec file to note obsolete RPMs.
+ -- Fix deadlock scenario when dumping configuration in the slurmctld.
+ -- Remove unneeded job lock when running assoc_mgr cache.  This lock could
+    cause potential deadlock when/if TRES changed in the database and the
+    slurmctld wasn't made aware of the change.  This would be very rare.
+ -- Fix missing locks in gres logic to avoid potential memory race.
+ -- If gres is NULL on a job don't try to process it when returning detailed
+    information about a job to scontrol.
+ -- Fix print of consumed energy in sstat when no energy is being collected.
+ -- Print formatted tres string when creating/updating a reservation.
+ -- Fix issues with QOS flags Partition[Min|Max]Nodes to work correctly.
+ -- Prevent manipulation of the cpu frequency and governor for batch or
+    extern steps. This addresses an issue where the batch step would
+    inadvertently set the cpu frequency maximum to the minimum value
+    supported on the node.
+ -- Convert a slurmctd power management data structure from array to list in
+    order to eliminate the possibility of zombie child suspend/resume
+    processes.
+ -- Burst_buffer/cray - Prevent slurmctld daemon abort if "paths" operation
+    fails. Now job will be held. Update job update time when held.
+ -- Fix issues with QOS flags Partition[Min|Max]Nodes to work correctly.
+ -- Refactor slurmctld agent logic to eliminate some pthreads.
+ -- Added "SyscfgTimeout" parameter to knl.conf configuration file.
+ -- Fix for CPU binding for job steps run under a batch job.
+
+* Changes in Slurm 17.02.0
+==========================
  -- job_submit/lua - Make "immediate" parameter available.
  -- Fix srun I/O race condtion to eliminate a error message that might be
     generated if the application exits with outstanding stdin.
@@ -59,6 +113,7 @@ documents those changes that are of interest to users and administrators.
     by specifying "--uid=<uid>|-u <uid>".
  -- Changed file broadcast "offset" from 32 to 64 bits in order to support files
     over 2 GB.
+ -- slurm.spec - do not install init scripts alongside systemd service files.
 
 * Changes in Slurm 17.02.0rc1
 ==============================
@@ -280,6 +335,14 @@ documents those changes that are of interest to users and administrators.
  -- Added infrastructure for setting up federations in database and establishing
     connections between federation clusters.
 
+* Changes in Slurm 16.05.11
+===========================
+ -- burst_buffer/cray - Add support for line continuation.
+
+* Changes in Slurm 16.05.10-2
+=============================
+ -- Replace clock_gettime with time(NULL) for very old systems without the call.
+
 * Changes in Slurm 16.05.10
 ===========================
  -- Record job state as PREEMPTED instead of TIMEOUT when GraceTime is reached.
@@ -320,6 +383,18 @@ documents those changes that are of interest to users and administrators.
  -- If node boot in progress when slurmctld daemon is restarted, then allow
     sufficient time for reboot to complete and not prematurely DOWN the node as
     "Not responding".
+ -- For job resize, correct logic to build "resize" script with new values.
+    Previously the scripts were based upon the original job size.
+ -- Fix squeue to not limit the size of partition, burst_buffer, exec_host, or
+    reason to 32 chars.
+ -- Fix potential packing error when packing a NULL slurmdb_clus_res_rec_t.
+ -- Fix potential packing errors when packing a NULL slurmdb_reservation_cond_t.
+ -- Burst_buffer/cray - Prevent slurmctld daemon abort if "paths" operation
+    fails. Now job will be held. Update job update time when held.
+ -- Fix issues with QOS flags Partition[Min|Max]Nodes to work correctly.
+ -- Increase number of ResumePrograms that can be managed without leaving
+    zombie/orphan processes from 10 to 100.
+ -- Refactor slurmctld agent logic to eliminate some pthreads.
 
 * Changes in Slurm 16.05.9
 ==========================
@@ -1096,6 +1171,8 @@ documents those changes that are of interest to users and administrators.
 
 * Changes in Slurm 15.08.14
 ===========================
+ -- For job resize, correct logic to build "resize" script with new values.
+    Previously the scripts were based upon the original job size.
 
 * Changes in Slurm 15.08.13
 ===========================

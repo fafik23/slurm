@@ -80,6 +80,12 @@
 			 * threads */
 #define MAX_RETRY_CNT 2	/* Hold job if "pre_run" operation fails more than
 			 * 2 times */
+
+/* Script line types */
+#define LINE_OTHER 0
+#define LINE_BB    1
+#define LINE_DW    2
+
 /*
  * These variables are required by the burst buffer plugin interface.  If they
  * are not found in the plugin, the plugin loader will ignore it.
@@ -2582,10 +2588,14 @@ static int _parse_bb_opts(struct job_descriptor *job_desc, uint64_t *bb_size,
 	return rc;
 }
 
-/* Copy a batch job's burst_buffer options into a separate buffer */
+/* Copy a batch job's burst_buffer options into a separate buffer.
+ * merge continued lines into a single line */
 static int _xlate_batch(struct job_descriptor *job_desc)
 {
 	char *script, *save_ptr = NULL, *tok;
+	int line_type, prev_type = LINE_OTHER;
+	bool is_cont = false, has_space = false;
+	int len, rc = SLURM_SUCCESS;
 
 	xfree(job_desc->burst_buffer);
 	script = xstrdup(job_desc->script);
@@ -2593,16 +2603,47 @@ static int _xlate_batch(struct job_descriptor *job_desc)
 	while (tok) {
 		if (tok[0] != '#')
 			break;	/* Quit at first non-comment */
-		if (((tok[1] == 'B') && (tok[2] == 'B')) ||
-		    ((tok[1] == 'D') && (tok[2] == 'W'))) {
-			if (job_desc->burst_buffer)
+
+		if ((tok[1] == 'B') && (tok[2] == 'B'))
+			line_type = LINE_BB;
+		else if ((tok[1] == 'D') && (tok[2] == 'W'))
+			line_type = LINE_DW;
+		else
+			line_type = LINE_OTHER;
+
+		if (line_type == LINE_OTHER) {
+			is_cont = false;
+		} else {
+			if (is_cont) {
+				if (line_type != prev_type) {
+					/* Mixing "#DW" with "#BB", error */
+					rc =ESLURM_INVALID_BURST_BUFFER_REQUEST;
+					break;
+				}
+				tok += 3; 	/* Skip "#DW" or "#BB" */
+				while (has_space && isspace(tok[0]))
+					tok++;	/* Skip duplicate spaces */
+			} else if (job_desc->burst_buffer) {
 				xstrcat(job_desc->burst_buffer, "\n");
+			}
+			prev_type = line_type;
+
+			len = strlen(tok);
+			if (tok[len - 1] == '\\') {
+				has_space = isspace(tok[len - 2]);
+				tok[strlen(tok) - 1] = '\0';
+				is_cont = true;
+			} else {
+				is_cont = false;
+			}
 			xstrcat(job_desc->burst_buffer, tok);
 		}
 		tok = strtok_r(NULL, "\n", &save_ptr);
 	}
 	xfree(script);
-	return SLURM_SUCCESS;
+	if (rc != SLURM_SUCCESS)
+		xfree(job_desc->burst_buffer);
+	return rc;
 }
 
 /* Parse simple interactive burst_buffer options into an format identical to
@@ -3672,6 +3713,7 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 		    bb_state.bb_config.debug_flag)
 			info("%s: paths ran for %s", __func__, TIME_STR);
 		_log_script_argv(script_argv, resp_msg);
+		_free_script_argv(script_argv);
 #if 1
 		//FIXME: Cray API returning "job_file_valid True" but exit 1 in some cases
 		if ((!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) &&
@@ -3681,12 +3723,13 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 #endif
 			error("%s: paths for job %u status:%u response:%s",
 			      __func__, job_ptr->job_id, status, resp_msg);
+			xfree(resp_msg);
 			rc = ESLURM_INVALID_BURST_BUFFER_REQUEST;
+			goto fini;
 		} else {
 			_update_job_env(job_ptr, path_file);
+			xfree(resp_msg);
 		}
-		xfree(resp_msg);
-		_free_script_argv(script_argv);
 
 		/* Setup "pre_run" operation */
 		pre_run_argv = xmalloc(sizeof(char *) * 10);
@@ -3729,8 +3772,9 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 			usleep(100000);
 		}
 		slurm_attr_destroy(&pre_run_attr);
-}
+	}
 
+fini:
 	xfree(client_nodes_file_nid);
 	xfree(job_dir);
 	return rc;

@@ -633,13 +633,20 @@ extern void slurmdb_pack_clus_res_rec(void *in, uint16_t protocol_version,
 {
 	slurmdb_clus_res_rec_t *object = (slurmdb_clus_res_rec_t *)in;
 
-	if (!object) {
-		packnull(buffer);
-		pack32(NO_VAL, buffer);
-		return;
+	xassert(buffer);
+
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		if (!object) {
+			packnull(buffer);
+			pack16(NO_VAL16, buffer);
+			return;
+		}
+		packstr(object->cluster, buffer);
+		pack16(object->percent_allowed, buffer);
+	} else {
+		error("%s: protocol_version %hu not supported",
+		      __func__, protocol_version);
 	}
-	packstr(object->cluster, buffer);
-	pack16(object->percent_allowed, buffer);
 }
 
 extern int slurmdb_unpack_clus_res_rec(void **object, uint16_t protocol_version,
@@ -649,11 +656,22 @@ extern int slurmdb_unpack_clus_res_rec(void **object, uint16_t protocol_version,
 	slurmdb_clus_res_rec_t *object_ptr =
 		xmalloc(sizeof(slurmdb_clus_res_rec_t));
 
+	xassert(object);
+	xassert(buffer);
+
 	*object = object_ptr;
 
 	slurmdb_init_clus_res_rec(object_ptr, 0);
-	safe_unpackstr_xmalloc(&object_ptr->cluster, &uint32_tmp, buffer);
-	safe_unpack16(&object_ptr->percent_allowed, buffer);
+
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&object_ptr->cluster, &uint32_tmp,
+				       buffer);
+		safe_unpack16(&object_ptr->percent_allowed, buffer);
+	} else {
+		error("%s: protocol_version %hu not supported",
+		      __func__, protocol_version);
+		goto unpack_error;
+	}
 
 	return SLURM_SUCCESS;
 
@@ -935,6 +953,8 @@ extern void slurmdb_pack_federation_rec(void *in, uint16_t protocol_version,
 	slurmdb_cluster_rec_t *tmp_cluster = NULL;
 	slurmdb_federation_rec_t *object = (slurmdb_federation_rec_t *)in;
 
+	xassert(buffer);
+
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		if (!object) {
 			packnull(buffer);
@@ -960,6 +980,9 @@ extern void slurmdb_pack_federation_rec(void *in, uint16_t protocol_version,
 			}
 			list_iterator_destroy(itr);
 		}
+	} else {
+		error("%s: protocol_version %hu not supported.",
+		      __func__, protocol_version);
 	}
 }
 
@@ -972,6 +995,9 @@ extern int slurmdb_unpack_federation_rec(void **object,
 	slurmdb_cluster_rec_t *tmp_cluster = NULL;
 	slurmdb_federation_rec_t *object_ptr =
 		xmalloc(sizeof(slurmdb_federation_rec_t));
+
+	xassert(object);
+	xassert(buffer);
 
 	*object = object_ptr;
 
@@ -996,6 +1022,10 @@ extern int slurmdb_unpack_federation_rec(void **object,
 					    tmp_cluster);
 			}
 		}
+	} else {
+		error("%s: protocol_version %hu is not supported.",
+		      __func__, protocol_version);
+		goto unpack_error;
 	}
 
 	return SLURM_SUCCESS;
@@ -4626,8 +4656,8 @@ extern void slurmdb_pack_reservation_cond(void *in, uint16_t protocol_version,
 	if (!object) {
 		pack32((uint32_t)NO_VAL, buffer);
 		pack16(0, buffer);
-		pack32((uint16_t)NO_VAL, buffer);
-		pack32((uint16_t)NO_VAL, buffer);
+		pack32(NO_VAL, buffer);
+		pack32(NO_VAL, buffer);
 		packnull(buffer);
 		pack_time(0, buffer);
 		pack_time(0, buffer);

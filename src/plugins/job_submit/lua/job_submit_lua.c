@@ -333,6 +333,16 @@ static int _job_rec_field(const struct job_record *job_ptr,
 			lua_pushnumber (L, (uint16_t)NO_VAL);
 	} else if (!xstrcmp(name, "partition")) {
 		lua_pushstring (L, job_ptr->partition);
+	} else if (!xstrcmp(name, "pn_min_cpus")) {
+		if (job_ptr->details)
+			lua_pushnumber (L, job_ptr->details->pn_min_cpus);
+		else
+			lua_pushnumber (L, NO_VAL);
+	} else if (!xstrcmp(name, "pn_min_memory")) {
+		if (job_ptr->details)
+			lua_pushnumber (L, job_ptr->details->pn_min_memory);
+		else
+			lua_pushnumber (L, NO_VAL64);
 	} else if (!xstrcmp(name, "priority")) {
 		lua_pushnumber (L, job_ptr->priority);
 	} else if (!xstrcmp(name, "qos")) {
@@ -659,6 +669,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->array_inx);
 	} else if (!xstrcmp(name, "begin_time")) {
 		lua_pushnumber (L, job_desc->begin_time);
+	} else if (!xstrcmp(name, "bitflags")) {
+		lua_pushnumber (L, job_desc->bitflags);
 	} else if (!xstrcmp(name, "boards_per_node")) {
 		lua_pushnumber (L, job_desc->boards_per_node);
 	} else if (!xstrcmp(name, "burst_buffer")) {
@@ -859,6 +871,8 @@ static int _set_job_req_field(lua_State *L)
 			job_desc->array_inx = xstrdup(value_str);
 	} else if (!xstrcmp(name, "begin_time")) {
 		job_desc->begin_time = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "bitflags")) {
+		job_desc->bitflags = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "burst_buffer")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->burst_buffer);
@@ -1271,6 +1285,20 @@ static void _register_lua_slurm_output_functions (void)
 	lua_setfield (L, -2, "NO_VAL16");
 	lua_pushnumber (L, (uint8_t) NO_VAL);
 	lua_setfield (L, -2, "NO_VAL8");
+
+	/*
+	 * job_desc bitflags
+	 */
+	lua_pushnumber (L, GRES_ENFORCE_BIND);
+	lua_setfield (L, -2, "GRES_ENFORCE_BIND");
+	lua_pushnumber (L, KILL_INV_DEP);
+	lua_setfield (L, -2, "KILL_INV_DEP");
+	lua_pushnumber (L, NO_KILL_INV_DEP);
+	lua_setfield (L, -2, "NO_KILL_INV_DEP");
+	lua_pushnumber (L, SPREAD_JOB);
+	lua_setfield (L, -2, "SPREAD_JOB");
+	lua_pushnumber (L, USE_MIN_NODES);
+	lua_setfield (L, -2, "USE_MIN_NODES");
 
 	lua_setglobal (L, "slurm");
 

@@ -775,10 +775,16 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 			   (unsigned long) time_limit * 60);
 	}
 
+	if (job_ptr->name && job_ptr->name[0])
+		xstrfmtcat(buffer, ",\"job_name\":\"%s\"", job_ptr->name);
+
 	if (job_ptr->resv_name && job_ptr->resv_name[0]) {
 		xstrfmtcat(buffer, ",\"reservation_name\":\"%s\"",
 			   job_ptr->resv_name);
 	}
+
+	if (job_ptr->wckey && job_ptr->wckey[0])
+		xstrfmtcat(buffer, ",\"wc_key\":\"%s\"", job_ptr->wckey);
 
 	if (job_ptr->gres_req && job_ptr->gres_req[0]) {
 		xstrfmtcat(buffer, ",\"gres_req\":\"%s\"", job_ptr->gres_req);

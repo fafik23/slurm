@@ -10,13 +10,12 @@
 START_TEST(invalid_protocol)
 {
 	int rc;
-	slurmdb_cluster_rec_t *rec = xmalloc(sizeof(slurmdb_cluster_rec_t));
+	slurmdb_cluster_rec_t *rec = NULL;
 	Buf buf = init_buf(1024);
-
 
 	rc = slurmdb_unpack_user_rec((void **)&rec, 0, buf);
 	ck_assert_int_eq(rc, SLURM_ERROR);
-	xfree(rec);
+
 	free_buf(buf);
 }
 END_TEST
@@ -153,16 +152,16 @@ Suite* suite(void)
 
 int main(void)
 {
-    int number_failed;
-    SRunner* sr = srunner_create(suite());
+	int number_failed;
+	SRunner* sr = srunner_create(suite());
 
-    //srunner_set_fork_status(sr, CK_NOFORK);
+	//srunner_set_fork_status(sr, CK_NOFORK);
 
-    srunner_run_all(sr, CK_VERBOSE);
-    //srunner_run_all(sr, CK_NORMAL);
-    number_failed = srunner_ntests_failed(sr);
-    srunner_free(sr);
+	srunner_run_all(sr, CK_VERBOSE);
+	//srunner_run_all(sr, CK_NORMAL);
+	number_failed = srunner_ntests_failed(sr);
+	srunner_free(sr);
 
-    return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 

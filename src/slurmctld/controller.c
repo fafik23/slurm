@@ -454,6 +454,7 @@ int main(int argc, char **argv)
 	if (switch_g_slurmctld_init() != SLURM_SUCCESS )
 		fatal( "failed to initialize switch plugin");
 	config_power_mgr();
+	agent_init();
 	if (node_features_g_node_power() && !power_save_test()) {
 		fatal("PowerSave required with NodeFeatures plugin, "
 		      "but not fully configured (SuspendProgram, "
@@ -1104,7 +1105,7 @@ static void *_service_connection(void *arg)
 				       sizeof(addr_buf));
 		error("slurm_receive_msg [%s]: %m", addr_buf);
 		/* close the new socket */
-		slurm_close(conn->newsockfd);
+		close(conn->newsockfd);
 		goto cleanup;
 	}
 
@@ -1118,8 +1119,7 @@ static void *_service_connection(void *arg)
 		slurmctld_req(&msg, conn);
 	}
 
-	if ((conn->newsockfd >= 0) &&
-	    (slurm_close(conn->newsockfd) < 0))
+	if ((conn->newsockfd >= 0) && (close(conn->newsockfd) < 0))
 		error ("close(%d): %m",  conn->newsockfd);
 
 cleanup:
@@ -1879,7 +1879,7 @@ static void *_slurmctld_background(void *no_data)
 		}
 
 		/* Process any pending agent work */
-		agent_retry(RPC_RETRY_INTERVAL, true);
+		agent_trigger(RPC_RETRY_INTERVAL, true);
 
 		group_time  = slurmctld_conf.group_info & GROUP_TIME_MASK;
 		if (group_time &&
@@ -2734,9 +2734,6 @@ static void *_assoc_cache_mgr(void *no_data)
 	slurmctld_lock_t job_write_lock =
 		{ NO_LOCK, WRITE_LOCK, READ_LOCK, WRITE_LOCK, NO_LOCK };
 
-	if (!running_cache)
-		lock_slurmctld(job_write_lock);
-
 	while (running_cache == 1) {
 		slurm_mutex_lock(&assoc_cache_mutex);
 		slurm_cond_wait(&assoc_cache_cond, &assoc_cache_mutex);
@@ -2747,24 +2744,20 @@ static void *_assoc_cache_mgr(void *no_data)
 			slurm_mutex_unlock(&assoc_cache_mutex);
 			return NULL;
 		}
-		lock_slurmctld(job_write_lock);
+		/* Make sure not to have job_write_lock or assoc_mgr locks when
+		 * refresh_lists is called or you may get deadlock.
+		 */
 		assoc_mgr_refresh_lists(acct_db_conn, 0);
-		if (running_cache)
-			unlock_slurmctld(job_write_lock);
-		else if (g_tres_count != slurmctld_tres_cnt) {
-			/* This has to be done outside of the job write lock.
-			 * This should only happen in very rare situations
-			 * where we have state, but the database some how has
-			 * changed out from under us. */
-			unlock_slurmctld(job_write_lock);
+		if (g_tres_count != slurmctld_tres_cnt) {
 			info("TRES in database does not match cache "
 			     "(%u != %u).  Updating...",
 			     g_tres_count, slurmctld_tres_cnt);
 			_init_tres();
-			lock_slurmctld(job_write_lock);
 		}
 		slurm_mutex_unlock(&assoc_cache_mutex);
 	}
+
+	lock_slurmctld(job_write_lock);
 
 	if (!job_list) {
 		/* This could happen in rare occations, it doesn't
@@ -2772,6 +2765,7 @@ static void *_assoc_cache_mgr(void *no_data)
 		 * will be in sync.
 		 */
 		debug2("No job list yet");
+		unlock_slurmctld(job_write_lock);
 		goto handle_parts;
 	}
 
