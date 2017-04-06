@@ -452,6 +452,7 @@ int main(int argc, char **argv)
 	if (switch_g_slurmctld_init() != SLURM_SUCCESS )
 		fatal( "failed to initialize switch plugin");
 	config_power_mgr();
+	agent_init();
 	if (node_features_g_node_power() && !power_save_test()) {
 		fatal("PowerSave required with NodeFeatures plugin, "
 		      "but not fully configured (SuspendProgram, "
@@ -533,21 +534,6 @@ int main(int argc, char **argv)
 			trigger_primary_ctld_res_op();
 		}
 
-		/*
-		 * create attached thread to process RPCs
-		 * Create before registering so that the controller can listen
-		 * to any updates from the dbd at startup.
-		 */
-		server_thread_incr();
-		slurm_attr_init(&thread_attr);
-		while (pthread_create(&slurmctld_config.thread_id_rpc,
-				      &thread_attr, _slurmctld_rpc_mgr,
-				      NULL)) {
-			error("pthread_create error %m");
-			sleep(1);
-		}
-		slurm_attr_destroy(&thread_attr);
-
 		clusteracct_storage_g_register_ctld(
 			acct_db_conn,
 			slurmctld_conf.slurmctld_port);
@@ -569,6 +555,19 @@ int main(int argc, char **argv)
 			fatal( "failed to initialize power management plugin");
 		if (slurm_mcs_init() != SLURM_SUCCESS)
 			fatal("failed to initialize mcs plugin");
+
+		/*
+		 * create attached thread to process RPCs
+		 */
+		server_thread_incr();
+		slurm_attr_init(&thread_attr);
+		while (pthread_create(&slurmctld_config.thread_id_rpc,
+				      &thread_attr, _slurmctld_rpc_mgr,
+				      NULL)) {
+			error("pthread_create error %m");
+			sleep(1);
+		}
+		slurm_attr_destroy(&thread_attr);
 
 		/*
 		 * create attached thread for signal handling
@@ -1311,6 +1310,7 @@ static void _remove_qos(slurmdb_qos_rec_t *rec)
 			     part_ptr->name, rec->name);
 			part_ptr->qos_ptr = NULL;
 		}
+		list_iterator_destroy(itr);
 	}
 	unlock_slurmctld(part_write_lock);
 
@@ -1344,6 +1344,34 @@ static void _update_assoc(slurmdb_assoc_rec_t *rec)
 	}
 	list_iterator_destroy(job_iterator);
 	unlock_slurmctld(job_write_lock);
+}
+
+static void _resize_qos(void)
+{
+	ListIterator itr;
+	struct part_record *part_ptr;
+	slurmctld_lock_t part_write_lock =
+		{ NO_LOCK, NO_LOCK, NO_LOCK, WRITE_LOCK, NO_LOCK };
+
+	lock_slurmctld(part_write_lock);
+	if (part_list) {
+		itr = list_iterator_create(part_list);
+		while ((part_ptr = list_next(itr))) {
+			if (part_ptr->allow_qos) {
+				info("got count for %s of %"BITSTR_FMT, part_ptr->name,
+				     bit_size(part_ptr->allow_qos_bitstr));
+				qos_list_build(part_ptr->allow_qos,
+					       &part_ptr->allow_qos_bitstr);
+				info("now count for %s of %"BITSTR_FMT, part_ptr->name,
+				     bit_size(part_ptr->allow_qos_bitstr));
+			}
+			if (part_ptr->deny_qos)
+				qos_list_build(part_ptr->deny_qos,
+					       &part_ptr->deny_qos_bitstr);
+		}
+		list_iterator_destroy(itr);
+	}
+	unlock_slurmctld(part_write_lock);
 }
 
 static void _update_qos(slurmdb_qos_rec_t *rec)
@@ -1775,6 +1803,7 @@ static void *_slurmctld_background(void *no_data)
 			debug2("Testing job time limits and checkpoints");
 			lock_slurmctld(job_write_lock);
 			job_time_limit();
+			job_resv_check();
 			step_checkpoint();
 			unlock_slurmctld(job_write_lock);
 		}
@@ -1847,7 +1876,7 @@ static void *_slurmctld_background(void *no_data)
 		}
 
 		/* Process any pending agent work */
-		agent_retry(RPC_RETRY_INTERVAL, true);
+		agent_trigger(RPC_RETRY_INTERVAL, true);
 
 		group_time  = slurmctld_conf.group_info & GROUP_TIME_MASK;
 		if (group_time &&
@@ -2008,6 +2037,7 @@ extern void ctld_assoc_mgr_init(slurm_trigger_callbacks_t *callbacks)
 	memset(&assoc_init_arg, 0, sizeof(assoc_init_args_t));
 	assoc_init_arg.enforce = accounting_enforce;
 	assoc_init_arg.add_license_notify = license_add_remote;
+	assoc_init_arg.resize_qos_notify = _resize_qos;
 	assoc_init_arg.remove_assoc_notify = _remove_assoc;
 	assoc_init_arg.remove_license_notify = license_remove_remote;
 	assoc_init_arg.remove_qos_notify = _remove_qos;
@@ -2701,9 +2731,6 @@ static void *_assoc_cache_mgr(void *no_data)
 	slurmctld_lock_t job_write_lock =
 		{ NO_LOCK, WRITE_LOCK, READ_LOCK, WRITE_LOCK, NO_LOCK };
 
-	if (!running_cache)
-		lock_slurmctld(job_write_lock);
-
 	while (running_cache == 1) {
 		slurm_mutex_lock(&assoc_cache_mutex);
 		slurm_cond_wait(&assoc_cache_cond, &assoc_cache_mutex);
@@ -2714,24 +2741,20 @@ static void *_assoc_cache_mgr(void *no_data)
 			slurm_mutex_unlock(&assoc_cache_mutex);
 			return NULL;
 		}
-		lock_slurmctld(job_write_lock);
+		/* Make sure not to have job_write_lock or assoc_mgr locks when
+		 * refresh_lists is called or you may get deadlock.
+		 */
 		assoc_mgr_refresh_lists(acct_db_conn, 0);
-		if (running_cache)
-			unlock_slurmctld(job_write_lock);
-		else if (g_tres_count != slurmctld_tres_cnt) {
-			/* This has to be done outside of the job write lock.
-			 * This should only happen in very rare situations
-			 * where we have state, but the database some how has
-			 * changed out from under us. */
-			unlock_slurmctld(job_write_lock);
+		if (g_tres_count != slurmctld_tres_cnt) {
 			info("TRES in database does not match cache "
 			     "(%u != %u).  Updating...",
 			     g_tres_count, slurmctld_tres_cnt);
 			_init_tres();
-			lock_slurmctld(job_write_lock);
 		}
 		slurm_mutex_unlock(&assoc_cache_mutex);
 	}
+
+	lock_slurmctld(job_write_lock);
 
 	if (!job_list) {
 		/* This could happen in rare occations, it doesn't
@@ -2739,6 +2762,7 @@ static void *_assoc_cache_mgr(void *no_data)
 		 * will be in sync.
 		 */
 		debug2("No job list yet");
+		unlock_slurmctld(job_write_lock);
 		goto handle_parts;
 	}
 

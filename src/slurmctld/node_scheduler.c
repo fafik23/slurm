@@ -456,7 +456,7 @@ extern void set_job_alias_list(struct job_record *job_ptr)
  * IN job_ptr - pointer to terminating job (already in some COMPLETING state)
  * IN timeout - true if job exhausted time limit, send REQUEST_KILL_TIMELIMIT
  *	RPC instead of REQUEST_TERMINATE_JOB
- * IN suspended - true if job was already suspended (node's job_run_cnt
+ * IN suspended - true if job was already suspended (node's run_job_cnt
  *	already decremented);
  * IN preempted - true if job is being preempted
  */
@@ -944,11 +944,8 @@ extern void filter_by_node_mcs(struct job_record *job_ptr, int mcs_select,
 	struct node_record *node_ptr;
 	int i;
 
-	if (mcs_select != 1)
-		return;
-
 	/* Need to filter out any nodes allocated with other mcs */
-	if (job_ptr->mcs_label != NULL) {
+	if (job_ptr->mcs_label && (mcs_select == 1)) {
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
 			/* if there is a mcs_label -> OK if it's the same */
@@ -1010,7 +1007,7 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
 		  uint32_t min_nodes, uint32_t max_nodes, uint32_t req_nodes,
 		  bool test_only, List *preemptee_job_list, bool can_reboot)
 {
-	uint32_t saved_min_nodes, saved_job_min_nodes;
+	uint32_t saved_min_nodes, saved_job_min_nodes, saved_job_num_tasks;
 	bitstr_t *saved_req_node_bitmap = NULL;
 	bitstr_t *inactive_bitmap = NULL;
 	uint32_t saved_min_cpus, saved_req_nodes;
@@ -1189,8 +1186,14 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
 			feature_bitmap = NULL;
 			min_nodes = feat_ptr->count;
 			req_nodes = feat_ptr->count;
+			saved_job_num_tasks = job_ptr->details->num_tasks;
 			job_ptr->details->min_nodes = feat_ptr->count;
 			job_ptr->details->min_cpus = feat_ptr->count;
+			if (job_ptr->details->ntasks_per_node &&
+			    job_ptr->details->num_tasks) {
+				job_ptr->details->num_tasks = min_nodes *
+					job_ptr->details->ntasks_per_node;
+			}
 			FREE_NULL_LIST(*preemptee_job_list);
 			job_ptr->details->pn_min_memory = orig_req_mem;
 			if (sort_again) {
@@ -1204,6 +1207,7 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
 					preemptee_candidates,
 					preemptee_job_list, false,
 					exc_core_bitmap, resv_overlap);
+			job_ptr->details->num_tasks = saved_job_num_tasks;
 			if (job_ptr->details->pn_min_memory) {
 				if (job_ptr->details->pn_min_memory <
 				    smallest_min_mem)
@@ -1536,7 +1540,7 @@ _get_req_features(struct node_set *node_set_ptr, int node_set_size,
  *	5) If request can't be satisfied now, execute select_g_job_test()
  *	   against the list of nodes that exist in any state (perhaps DOWN
  *	   DRAINED or ALLOCATED) to determine if the request can
- *         ever be satified.
+ *         ever be satisfied.
  */
 static int
 _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
@@ -2050,7 +2054,7 @@ _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 }
 
 static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
-			  int *error_code)
+			  int *error_code, uint32_t preemptor)
 {
 	ListIterator iter;
 	struct job_record *job_ptr;
@@ -2066,12 +2070,14 @@ static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
 			job_cnt++;
 			if (!kill_pending)
 				continue;
-			if (slurm_job_check_grace(job_ptr) == SLURM_SUCCESS)
+			if (slurm_job_check_grace(job_ptr, preemptor)
+			    == SLURM_SUCCESS)
 				continue;
 			rc = job_signal(job_ptr->job_id, SIGKILL, 0, 0, true);
 			if (rc == SLURM_SUCCESS) {
-				info("preempted job %u has been killed",
-				     job_ptr->job_id);
+				info("preempted job %u has been killed to "
+				     "reclaim resources for job %u",
+				     job_ptr->job_id, preemptor);
 			}
 		} else if (mode == PREEMPT_MODE_CHECKPOINT) {
 			job_cnt++;
@@ -2090,8 +2096,9 @@ static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
 						    (uint16_t) NO_VAL);
 			}
 			if (rc == SLURM_SUCCESS) {
-				info("preempted job %u has been checkpointed",
-				     job_ptr->job_id);
+				info("preempted job %u has been checkpointed to"
+				     " reclaim resources for job %u",
+				     job_ptr->job_id, preemptor);
 			}
 		} else if (mode == PREEMPT_MODE_REQUEUE) {
 			job_cnt++;
@@ -2099,13 +2106,15 @@ static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
 				continue;
 			rc = job_requeue(0, job_ptr->job_id, NULL, true, 0);
 			if (rc == SLURM_SUCCESS) {
-				info("preempted job %u has been requeued",
-				     job_ptr->job_id);
+				info("preempted job %u has been requeued to "
+				     "reclaim resources for job %u",
+				     job_ptr->job_id, preemptor);
 			}
 		} else if ((mode == PREEMPT_MODE_SUSPEND) &&
 			   (slurmctld_conf.preempt_mode & PREEMPT_MODE_GANG)) {
-			debug("preempted job %u suspended by gang scheduler",
-			      job_ptr->job_id);
+			debug("preempted job %u suspended by gang scheduler "
+			      "to reclaim resources for job %u",
+			      job_ptr->job_id, preemptor);
 		} else if (mode == PREEMPT_MODE_OFF) {
 			error("%s: Invalid preempt_mode %u for job %u",
 			      __func__, mode, job_ptr->job_id);
@@ -2114,7 +2123,7 @@ static void _preempt_jobs(List preemptee_job_list, bool kill_pending,
 
 		if (rc != SLURM_SUCCESS) {
 			if ((mode != PREEMPT_MODE_CANCEL)
-			    && (slurm_job_check_grace(job_ptr)
+			    && (slurm_job_check_grace(job_ptr, preemptor)
 				== SLURM_SUCCESS))
 				continue;
 
@@ -2423,7 +2432,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 			 * do not cancel or requeue any more jobs yet */
 			kill_pending = false;
 		}
-		_preempt_jobs(preemptee_job_list, kill_pending, &error_code);
+		_preempt_jobs(preemptee_job_list, kill_pending, &error_code,
+			      job_ptr->job_id);
 		if ((error_code == ESLURM_NODES_BUSY) &&
 		    (detail_ptr->preempt_start_time == 0)) {
   			detail_ptr->preempt_start_time = now;
@@ -2556,6 +2566,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->node_bitmap = NULL;
 		job_ptr->priority = 0;
 		job_ptr->state_reason = WAIT_HELD;
+		last_job_update = now;
 		goto cleanup;
 	}
 	if (select_g_job_begin(job_ptr) != SLURM_SUCCESS) {
@@ -2566,6 +2577,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->time_last_active = 0;
 		job_ptr->end_time = 0;
 		job_ptr->node_bitmap = NULL;
+		last_job_update = now;
 		goto cleanup;
 	}
 
@@ -2634,6 +2646,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->job_state |= JOB_POWER_UP_NODE;
 	if (configuring || IS_JOB_POWER_UP_NODE(job_ptr) ||
 	    !bit_super_set(job_ptr->node_bitmap, avail_node_bitmap)) {
+		/* This handles nodes explicitly requesting node reboot */
 		job_ptr->job_state |= JOB_CONFIGURING;
 	}
 

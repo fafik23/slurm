@@ -641,21 +641,19 @@ static void _throttle_fini(int *active_rpc_cnt)
  * _fill_ctld_conf - make a copy of current slurm configuration
  *	this is done with locks set so the data can change at other times
  * OUT conf_ptr - place to copy configuration to
+ *
+ * NOTE: Read config, job, partition, fed needs to be locked before hand
  */
 static void _fill_ctld_conf(slurm_ctl_conf_t * conf_ptr)
 {
 	slurm_ctl_conf_t *conf;
 	char *licenses_used;
 	uint32_t next_job_id;
-	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 
 	/* Do before config lock */
 	licenses_used = get_licenses_used();
 
-	lock_slurmctld(job_write_lock);
 	next_job_id   = get_next_job_id(true);
-	unlock_slurmctld(job_write_lock);
 
 	conf = slurm_conf_lock();
 
@@ -1249,10 +1247,13 @@ static void _slurm_rpc_allocate_resources(slurm_msg_t * msg)
 		if (slurm_send_node_msg(msg->conn_fd, &response_msg) < 0)
 			_kill_job_on_msg_fail(job_ptr->job_id);
 
-		slurm_free_resource_allocation_response_msg_members(&alloc_msg);
-
 		schedule_job_save();	/* has own locks */
 		schedule_node_save();	/* has own locks */
+
+		if (!alloc_msg.node_cnt) /* didn't get an allocation */
+			queue_job_scheduler();
+
+		slurm_free_resource_allocation_response_msg_members(&alloc_msg);
 	} else {	/* allocate error */
 		if (do_unlock) {
 			unlock_slurmctld(job_write_lock);
@@ -1275,9 +1276,9 @@ static void _slurm_rpc_dump_conf(slurm_msg_t * msg)
 	slurm_msg_t response_msg;
 	last_update_msg_t *last_time_msg = (last_update_msg_t *) msg->data;
 	slurm_ctl_conf_info_msg_t config_tbl;
-	/* Locks: Read config, partition*/
+	/* Locks: Read config, job, partition, fed */
 	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
+		READ_LOCK, READ_LOCK, NO_LOCK, READ_LOCK, READ_LOCK };
 	uid_t uid = g_slurm_auth_get_uid(msg->auth_cred,
 					 slurmctld_config.auth_info);
 
@@ -3271,7 +3272,7 @@ static void _slurm_rpc_shutdown_controller_immediate(slurm_msg_t * msg)
 /* _slurm_rpc_step_complete - process step completion RPC to note the
  *      completion of a job step on at least some nodes.
  *	If the job step is complete, it may
- *	represent the termination of an entire job */
+ *	represent the termination of an entire job step */
 static void _slurm_rpc_step_complete(slurm_msg_t *msg, bool running_composite)
 {
 	static int active_rpc_cnt = 0;
@@ -3657,7 +3658,7 @@ send_msg:
  */
 static void _slurm_rpc_update_job(slurm_msg_t * msg)
 {
-	int error_code;
+	int error_code = SLURM_SUCCESS;
 	DEF_TIMERS;
 	job_desc_msg_t *job_desc_msg = (job_desc_msg_t *) msg->data;
 	/* Locks: Write job, read node, read partition */
@@ -3668,18 +3669,56 @@ static void _slurm_rpc_update_job(slurm_msg_t * msg)
 
 	START_TIMER;
 	debug2("Processing RPC: REQUEST_UPDATE_JOB from uid=%d", uid);
+	/* job_desc_msg->user_id is set when the uid has been overriden with
+	 * -u <uid> or --uid=<uid>. NO_VAL is default. Verify the request has
+	 * come from an admin */
+	if (job_desc_msg->user_id != NO_VAL) {
+		if (!validate_super_user(uid)) {
+			error_code = ESLURM_USER_ID_MISSING;
+			error("Security violation, REQUEST_UPDATE_JOB RPC from uid=%d",
+			      uid);
+			/* Send back the error message for this case because
+			 * update_job also sends back an error message */
+			slurm_send_rc_msg(msg, error_code);
+		} else {
+			/* override uid allowed */
+			uid = job_desc_msg->user_id;
+		}
+	}
 
-	/* do RPC call */
-	dump_job_desc(job_desc_msg);
-	/* Insure everything that may be written to database is lower case */
-	xstrtolower(job_desc_msg->account);
-	xstrtolower(job_desc_msg->wckey);
-	lock_slurmctld(job_write_lock);
-	if (job_desc_msg->job_id_str)
-		error_code = update_job_str(msg, uid);
-	else
-		error_code = update_job(msg, uid);
-	unlock_slurmctld(job_write_lock);
+	if (error_code == SLURM_SUCCESS) {
+		int db_inx_max_cnt = 5, i=0;
+		/* do RPC call */
+		dump_job_desc(job_desc_msg);
+		/* Insure everything that may be written to database is lower
+		 * case */
+		xstrtolower(job_desc_msg->account);
+		xstrtolower(job_desc_msg->wckey);
+		error_code = ESLURM_JOB_SETTING_DB_INX;
+		while (error_code == ESLURM_JOB_SETTING_DB_INX) {
+			lock_slurmctld(job_write_lock);
+			/* Use UID provided by scontrol. May be overridden with
+			 * -u <uid>  or --uid=<uid> */
+			if (job_desc_msg->job_id_str)
+				error_code = update_job_str(msg, uid);
+			else
+				error_code = update_job(msg, uid);
+			unlock_slurmctld(job_write_lock);
+			if (error_code == ESLURM_JOB_SETTING_DB_INX) {
+				if (i >= db_inx_max_cnt) {
+					info("%s: can't update job, waited %d seconds for job %s to get a db_index, but it hasn't happened yet.  Giving up and letting the user know.",
+					      __func__, db_inx_max_cnt,
+					      job_desc_msg->job_id_str);
+					slurm_send_rc_msg(msg, error_code);
+					break;
+				}
+				i++;
+				debug("%s: We cannot update job %s at the moment, we are setting the db index, waiting",
+				      __func__, job_desc_msg->job_id_str);
+				sleep(1);
+			}
+		}
+	}
 	END_TIMER2("_slurm_rpc_update_job");
 
 	/* return result */

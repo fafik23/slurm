@@ -270,6 +270,7 @@ static void *_set_db_inx_thread(void *no_data)
 		 * later in this function. */
 		lock_slurmctld(job_read_lock);	/* USE READ LOCK, SEE ABOVE */
 		if (!job_list) {
+			unlock_slurmctld(job_read_lock);
 			slurm_mutex_unlock(&db_inx_lock);
 			error("_set_db_inx_thread: No job list, waiting");
 			sleep(1);
@@ -332,7 +333,6 @@ static void *_set_db_inx_thread(void *no_data)
 			dbd_list_msg_t send_msg, *got_msg;
 			int rc = SLURM_SUCCESS;
 			bool reset = 0;
-
 			memset(&send_msg, 0, sizeof(dbd_list_msg_t));
 
 			send_msg.my_list = local_job_list;
@@ -523,6 +523,8 @@ extern int acct_storage_p_close_connection(void **db_conn)
 {
 	if (db_conn)
 		*db_conn = NULL;
+
+	first = 1;
 	return slurm_close_slurmdbd_conn();
 }
 
@@ -1845,6 +1847,9 @@ extern List acct_storage_p_get_config(void *db_conn, char *config_name)
 	dbd_list_msg_t *got_msg;
 	int rc;
 	List ret_list = NULL;
+
+	if (first)
+		init();
 
 	req.msg_type = DBD_GET_CONFIG;
 	req.data = config_name;

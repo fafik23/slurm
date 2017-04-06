@@ -69,10 +69,11 @@
 ** Define slurm-specific aliases for use by plugins, see slurm_xlator.h
 ** for details.
  */
-strong_alias(slurmdbd_free_list_msg,	slurmdb_slurmdbd_free_list_msg);
-strong_alias(slurmdbd_free_usage_msg,	slurmdb_slurmdbd_free_usage_msg);
-strong_alias(slurmdbd_free_id_rc_msg,	slurmdb_slurmdbd_free_id_rc_msg);
-
+strong_alias(slurmdbd_defs_init,        slurm_slurmdbd_defs_init);
+strong_alias(slurmdbd_defs_fini,        slurm_slurmdbd_defs_fini);
+strong_alias(slurmdbd_free_list_msg,	slurm_slurmdbd_free_list_msg);
+strong_alias(slurmdbd_free_usage_msg,	slurm_slurmdbd_free_usage_msg);
+strong_alias(slurmdbd_free_id_rc_msg,	slurm_slurmdbd_free_id_rc_msg);
 
 #define DBD_MAGIC		0xDEAD3219
 #define MAX_AGENT_QUEUE		10000
@@ -254,7 +255,6 @@ extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
 	int rc = SLURM_SUCCESS;
 	Buf buffer;
 
-	xassert(slurmdbd_conn);
 	xassert(req);
 	xassert(resp);
 
@@ -265,14 +265,14 @@ extern int slurm_send_recv_slurmdbd_msg(uint16_t rpc_version,
 	halt_agent = 1;
 	slurm_mutex_lock(&slurmdbd_lock);
 	halt_agent = 0;
-	if (slurmdbd_conn->fd < 0) {
+	if (!slurmdbd_conn || slurmdbd_conn->fd < 0) {
 		/* Either slurm_open_slurmdbd_conn() was not executed or
 		 * the connection to Slurm DBD has been closed */
 		if (req->msg_type == DBD_GET_CONFIG)
 			_open_slurmdbd_conn(0);
 		else
 			_open_slurmdbd_conn(1);
-		if (slurmdbd_conn->fd < 0) {
+		if (!slurmdbd_conn || slurmdbd_conn->fd < 0) {
 			rc = SLURM_ERROR;
 			goto end_it;
 		}
@@ -441,6 +441,7 @@ static void _open_slurmdbd_conn(bool need_db)
 	}
 	slurmdbd_shutdown = 0;
 	slurmdbd_conn->shutdown = &slurmdbd_shutdown;
+	slurmdbd_conn->version  = SLURM_PROTOCOL_VERSION;
 
 	xfree(slurmdbd_conn->rem_host);
 	slurmdbd_conn->rem_host = slurm_get_accounting_storage_host();

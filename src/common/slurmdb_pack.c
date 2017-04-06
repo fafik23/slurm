@@ -589,7 +589,7 @@ extern void slurmdb_pack_clus_res_rec(void *in, uint16_t protocol_version,
 
 	if (!object) {
 		packnull(buffer);
-		pack32(NO_VAL, buffer);
+		pack16((uint16_t)NO_VAL, buffer);
 		return;
 	}
 	packstr(object->cluster, buffer);
@@ -4719,8 +4719,8 @@ extern void slurmdb_pack_reservation_cond(void *in, uint16_t protocol_version,
 	if (!object) {
 		pack32((uint32_t)NO_VAL, buffer);
 		pack16(0, buffer);
-		pack32((uint16_t)NO_VAL, buffer);
-		pack32((uint16_t)NO_VAL, buffer);
+		pack32(NO_VAL, buffer);
+		pack32(NO_VAL, buffer);
 		packnull(buffer);
 		pack_time(0, buffer);
 		pack_time(0, buffer);

@@ -327,6 +327,12 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Waiting for burst buffer"				},
 	{ ESLURM_PARTITION_DOWN,
 	  "Partition in DOWN state"				},
+	{ ESLURM_DUPLICATE_GRES,
+	  "Duplicate generic resource (gres) specification"	},
+	{ ESLURM_JOB_SETTING_DB_INX,
+	  "Job update not available right now, the DB index is being set, try again in a bit" },
+	{ ESLURM_RSV_ALREADY_STARTED,
+	  "Reservation already started"	},
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,

@@ -414,7 +414,7 @@ char *slurm_get_state_save_location(void);
  * returns the TmpFS configuration parameter from slurmctld_conf object
  * RET char *    - tmp_fs, MUST be xfreed by caller
  */
-extern char *slurm_get_tmp_fs(void);
+extern char *slurm_get_tmp_fs(char *node_name);
 
 /* slurm_get_auth_type
  * returns the authentication type from slurmctld_conf object
@@ -893,7 +893,7 @@ char *slurm_get_job_container_plugin(void);
 
 /* slurm_get_slurmd_spooldir
  * RET slurmd_spooldir name, must be xfreed by caller */
-char *slurm_get_slurmd_spooldir(void);
+char *slurm_get_slurmd_spooldir(char *node_name);
 
 /* slurm_get_layouts
  * RET comma seperated list of layouts in a string, must be xfreed by caller

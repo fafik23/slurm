@@ -80,6 +80,8 @@
 	((_X->job_state & JOB_STATE_BASE) == JOB_NODE_FAIL)
 #define IS_JOB_DEADLINE(_X)		\
 	((_X->job_state & JOB_STATE_BASE) == JOB_DEADLINE)
+#define IS_JOB_OOM(_X)		\
+	((_X->job_state & JOB_STATE_BASE) == JOB_OOM)
 #define IS_JOB_POWER_UP_NODE(_X)	\
 	(_X->job_state & JOB_POWER_UP_NODE)
 
@@ -910,6 +912,8 @@ typedef struct composite_msg {
  * from getting the MPIRUN_PARTITION at that time. It is needed for
  * the job epilog. */
 
+#define SIG_OOM		253	/* Dummy signal value for out of memory
+				 * (OOM) notification */
 #define SIG_UME		992	/* Dummy signal value for uncorrectable memory
 				 * error (UME) notification */
 #define SIG_REQUEUED	993	/* Dummy signal value to job requeue */
@@ -1115,9 +1119,9 @@ enum compress_type {
 
 typedef struct file_bcast_msg {
 	char *fname;		/* name of the destination file */
-	uint16_t block_no;	/* block number of this data */
-	uint16_t last_block;	/* last block of bcast if set */
-	uint16_t force;		/* replace existing file if set */
+	uint32_t block_no;	/* block number of this data */
+	uint16_t last_block;	/* last block of bcast if set (flag) */
+	uint16_t force;		/* replace existing file if set (flag) */
 	uint16_t compress;	/* compress file if set, use compress_type */
 	uint16_t modes;		/* access rights for destination file */
 	uint32_t uid;		/* owner for destination file */
@@ -1127,7 +1131,7 @@ typedef struct file_bcast_msg {
 	time_t mtime;		/* last modification time for dest file */
 	sbcast_cred_t *cred;	/* credential for the RPC */
 	uint32_t block_len;	/* length of this data block */
-	uint32_t block_offset;	/* offset for this data block */
+	uint64_t block_offset;	/* offset for this data block */
 	uint32_t uncomp_len;	/* uncompressed length of this data block */
 	char *block;		/* data for this block */
 	uint64_t file_size;	/* file size */

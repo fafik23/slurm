@@ -1,5 +1,5 @@
 RELEASE NOTES FOR SLURM VERSION 17.02
-24 January 2017
+23 February 2017
 
 IMPORTANT NOTES:
 THE MAXJOBID IS NOW 67,108,863. ANY PRE-EXISTING JOBS WILL CONTINUE TO RUN BUT
@@ -29,6 +29,12 @@ of Slurm will result in loss of state information.
 If using SPANK plugins that use the Slurm APIs, they should be recompiled when
 upgrading Slurm to a new major release.
 
+NOTE: systemd services files are installed automatically, but not enabled.
+      You will need to manually enable them on the appropriate systems:
+      - Controller: systemctl enable slurmctld
+      - Database: systemctl enable slurmdbd
+      - Compute Nodes: systemctl enable slurmd
+
 NOTE: If you are not using Munge, but are using the "service" scripts to
       start Slurm daemons, then you will need to remove this check from the
       etc/slurm*service scripts.
@@ -36,6 +42,10 @@ NOTE: If you are not using Munge, but are using the "service" scripts to
 NOTE: If you are upgrading with any jobs from 14.03 or earlier
       (i.e. quick upgrade from 14.03 -> 15.08 -> 17.02) you will need
       to wait until after those jobs are gone before you upgrade to 17.02.
+
+NOTE: If you interact with any memory values in a job_submit plugin, you will
+      need to test against NO_VAL64 instead of NO_VAL, and change your printf
+      format as well.
 
 HIGHLIGHTS
 ==========
@@ -60,7 +70,7 @@ HIGHLIGHTS
     the same time as your slurmdbd to prevent roll over of this variable as
     it is 32 bit previous versions of Slurm.
  -- All memory values (in MB) are now 64 bit. Previously, nodes with more than
-    of memory would not schedule or enforce memory limits correctly.
+    2 TB of memory would not schedule or enforce memory limits correctly.
  -- Removed AIX, BlueGene/L and BlueGene/P support.
  -- Removed sched/wiki and sched/wiki2 plugins and associated code.
  -- Added PrologFlags=Serial to disable concurrent execution of prolog/epilog
@@ -72,11 +82,12 @@ RPMBUILD CHANGES
     the files will now be part of the main Slurm packages.
  -- Replace sjstat, seff and sjobexit RPM packages with a single "contribs"
     package.
+ -- Prevent installation of both init scripts and systemd service files.
+    Note that systemd services are not automatically enabled at this time,
+    unlike the init scripts which were automatically enabled with chkconfig.
 
 CONFIGURATION FILE CHANGES (see man appropriate man page for details)
 =====================================================================
- -- CRAY systems only: TaskPlugins must list task/cgroup before task/cray in
-    order for the cgroup files to be created before task/cray runs.
  -- Added new "TRESWeights" configuration parameter to "NodeName" line for
     calculating how busy a node is. Currently only used for federation
     configurations.
@@ -95,6 +106,7 @@ CONFIGURATION FILE CHANGES (see man appropriate man page for details)
  -- Added "PrologFlags" option of "Serial" to disable concurrent launch of
     Prolog and Epilog scripts.
  -- Removed "SchedulerRootFilter" configuration parameter.
+ -- Added "SyscfgTimeout" parameter to knl.conf configuration file.
 
 COMMAND CHANGES (see man pages for details)
 ===========================================
@@ -150,6 +162,10 @@ OTHER CHANGES
  -- Added the ability to purge transactions from the database.
  -- Added the ability to purge rolled up usage from the database.
  -- Added new mcs/account plugin.
+ -- job_submit/lua - remove access to internal reservation job_run_cnt and
+    job_pend_cnt fields.
+ -- Increased maximum file size supported by sbcast from 2 GB (32-bit integer
+    to 64-bits).
 
 API CHANGES
 ===========
@@ -162,6 +178,8 @@ Memory conversion to uint64_t in: job_descriptor, job_info, node_info,
 Variables converted are: actual_real_mem, def_mem_per_cpu, free_mem,
 	max_mem_per_cpu, mem_spec_limit, pn_min_memory, real_memory, req_mem.
 In slurm_step_io_fds_t: changed "in" to "input".
+In file_bcast_msg_t: changed block_no from uint16_t to uint32_t, changed
+	block_offset uint32_t to uint64_t.
 
 Added members to the following struct definitions
 =================================================

@@ -157,6 +157,7 @@ static void	_get_gres_cnt(gres_node_state_t *gres_data, char *orig_config,
 			      int gres_name_colon_len);
 static uint64_t	_get_tot_gres_cnt(uint32_t plugin_id, uint64_t *set_cnt);
 static int	_gres_find_id(void *x, void *key);
+static int	_gres_find_job_name_type_id(void *x, void *key);
 static void	_gres_job_list_delete(void *list_element);
 static bool	_is_gres_cnt_zero(char *config);
 static int	_job_alloc(void *job_gres_data, void *node_gres_data,
@@ -249,6 +250,16 @@ static int _gres_find_id(void *x, void *key)
 	uint32_t *plugin_id = (uint32_t *)key;
 	gres_state_t *state_ptr = (gres_state_t *) x;
 	if (state_ptr->plugin_id == *plugin_id)
+		return 1;
+	return 0;
+}
+
+static int _gres_find_job_name_type_id(void *x, void *key)
+{
+	uint32_t *gres_name_type_id = (uint32_t *)key;
+	gres_state_t *state_ptr = (gres_state_t *) x;
+	gres_job_state_t *gres_data_ptr = (gres_job_state_t *)state_ptr->gres_data;
+	if (gres_data_ptr->gres_name_type_id == *gres_name_type_id)
 		return 1;
 	return 0;
 }
@@ -1706,7 +1717,7 @@ extern int gres_gresid_to_gresname(uint32_t gres_id, char* gres_name,
 	return rc;
 }
 
-extern int _node_config_validate(char *node_name, char *orig_config,
+static int _node_config_validate(char *node_name, char *orig_config,
 				 char **new_config, gres_state_t *gres_ptr,
 				 uint16_t fast_schedule, char **reason_down,
 				 slurm_gres_context_t *context_ptr)
@@ -2950,6 +2961,17 @@ static int _job_state_validate(char *config, gres_job_state_t **gres_data,
 		gres_ptr = xmalloc(sizeof(gres_job_state_t));
 		gres_ptr->gres_cnt_alloc = cnt;
 		gres_ptr->type_model = type;
+
+		if (type) {
+			/* set the gres name+type id to check for duplicates
+			 * later */
+			char *gres_name_type = xstrdup_printf(
+				"%s:%s", config, type);
+			gres_ptr->gres_name_type_id = _build_id(gres_name_type);
+			xfree(gres_name_type);
+		} else
+			gres_ptr->gres_name_type_id = context_ptr->plugin_id;
+
 		type = NULL;
 
 		*gres_data = gres_ptr;
@@ -2975,18 +2997,18 @@ static bool _is_gres_cnt_zero(char *config)
 
 /*
  * Given a job's requested gres configuration, validate it and build a gres list
- * IN req_config - job request's gres input string
+ * IN req_config - job request's gres input string, modifiable to remove gres
  * OUT gres_list - List of Gres records for this job to track usage
- * RET SLURM_SUCCESS or ESLURM_INVALID_GRES
+ * RET SLURM_SUCCESS, ESLURM_INVALID_GRES, or ESLURM_DUPLICATE_GRES
  */
-extern int gres_plugin_job_state_validate(char *req_config, List *gres_list)
+extern int gres_plugin_job_state_validate(char **req_config, List *gres_list)
 {
-	char *tmp_str, *tok, *last = NULL;
-	int i, rc, rc2;
+	char *tmp_str, *tok, *last = NULL, *new_req_config = NULL;
+	int i, rc;
 	gres_state_t *gres_ptr;
 	gres_job_state_t *job_gres_data;
 
-	if ((req_config == NULL) || (req_config[0] == '\0')) {
+	if (!req_config || (*req_config == NULL) || (*req_config[0] == '\0')) {
 		*gres_list = NULL;
 		return SLURM_SUCCESS;
 	}
@@ -2996,20 +3018,32 @@ extern int gres_plugin_job_state_validate(char *req_config, List *gres_list)
 
 	slurm_mutex_lock(&gres_context_lock);
 
-	tmp_str = xstrdup(req_config);
+	tmp_str = *req_config;
 	tok = strtok_r(tmp_str, ",", &last);
 	while (tok && (rc == SLURM_SUCCESS)) {
-		rc2 = SLURM_ERROR;
+		rc = SLURM_ERROR;
 		for (i = 0; i < gres_context_cnt; i++) {
 			job_gres_data = NULL;
-			rc2 = _job_state_validate(tok, &job_gres_data,
-						  &gres_context[i]);
-			if (rc2 != SLURM_SUCCESS)
+			rc = _job_state_validate(tok, &job_gres_data,
+						 &gres_context[i]);
+			if (rc != SLURM_SUCCESS)
 				continue;
-			if (job_gres_data == NULL)    /* Name match, count=0 */
-				break;
 			if (*gres_list == NULL)
 				*gres_list = list_create(_gres_job_list_delete);
+			if (job_gres_data == NULL)    /* Name match, count=0 */
+				continue;
+			else if (list_find_first(
+					 *gres_list,
+					 _gres_find_job_name_type_id,
+					 &job_gres_data->gres_name_type_id)) {
+				/* duplicate gres */
+				rc = ESLURM_DUPLICATE_GRES;
+				xfree(job_gres_data);
+				break;
+			}
+			if (new_req_config != NULL)
+			    xstrcat(new_req_config, ",");
+			xstrcat(new_req_config, tok);
 			gres_ptr = xmalloc(sizeof(gres_state_t));
 			gres_ptr->plugin_id = gres_context[i].plugin_id;
 			gres_ptr->gres_data = job_gres_data;
@@ -3017,8 +3051,11 @@ extern int gres_plugin_job_state_validate(char *req_config, List *gres_list)
 			break;		/* processed it */
 		}
 		if ((i >= gres_context_cnt) && _is_gres_cnt_zero(tok))
-			rc2 = SLURM_SUCCESS;
-		if (rc2 != SLURM_SUCCESS) {
+			rc = SLURM_SUCCESS;
+		if (rc == ESLURM_DUPLICATE_GRES) {
+			info("Duplicate gres job specification %s", tok);
+			break;
+		} else if (rc != SLURM_SUCCESS) {
 			info("Invalid gres job specification %s", tok);
 			rc = ESLURM_INVALID_GRES;
 			break;
@@ -3027,7 +3064,9 @@ extern int gres_plugin_job_state_validate(char *req_config, List *gres_list)
 	}
 	slurm_mutex_unlock(&gres_context_lock);
 
-	xfree(tmp_str);
+	xfree(*req_config);
+	*req_config = new_req_config;
+
 	return rc;
 }
 
@@ -3892,6 +3931,7 @@ extern void gres_plugin_job_clear(List job_gres_list)
 		return;
 
 	(void) gres_plugin_init();
+	slurm_mutex_lock(&gres_context_lock);
 	job_gres_iter = list_iterator_create(job_gres_list);
 	while ((job_gres_ptr = (gres_state_t *) list_next(job_gres_iter))) {
 		job_state_ptr = (gres_job_state_t *) job_gres_ptr->gres_data;
@@ -3911,6 +3951,7 @@ extern void gres_plugin_job_clear(List job_gres_list)
 		job_state_ptr->node_cnt = 0;
 	}
 	list_iterator_destroy(job_gres_iter);
+	slurm_mutex_unlock(&gres_context_lock);
 }
 
 static int _job_alloc(void *job_gres_data, void *node_gres_data,
@@ -4768,6 +4809,7 @@ extern uint64_t gres_plugin_get_job_value_by_type(List job_gres_list,
 	if (job_gres_list == NULL)
 		return NO_VAL64;
 
+	slurm_mutex_lock(&gres_context_lock);
 	gres_name_type_id = _build_id(gres_name_type);
 	gres_val = NO_VAL64;
 
@@ -4780,6 +4822,8 @@ extern uint64_t gres_plugin_get_job_value_by_type(List job_gres_list,
 		}
 	}
 	list_iterator_destroy(job_gres_iter);
+
+	slurm_mutex_unlock(&gres_context_lock);
 
 	return gres_val;
 }
@@ -6434,6 +6478,8 @@ extern void gres_build_job_details(List job_gres_list,
 			for (j = 0; j < my_gres_cnt; j++) {
 				if (j >= job_gres_data->node_cnt)
 					break;	/* node count mismatch */
+				if (job_gres_data->gres_bit_alloc[j] == NULL)
+					continue;
 				if (my_gres_details[j])
 					sep1 = ",";
 				else

@@ -1216,7 +1216,7 @@ static char *_run_script(char *cmd_path, char **script_argv, int *status)
 			} else if (i < 0) {
 				if (errno == EAGAIN)
 					continue;
-				error("%s: read(%s): %m", __func__, capmc_path);
+				error("%s: read(%s): %m", __func__, cmd_path);
 				break;
 			} else {
 				resp_offset += i;
@@ -1876,6 +1876,7 @@ static void _check_node_status(void)
 		xfree(resp_msg);
 		return;
 	}
+	xfree(resp_msg);
 
 	FREE_NULL_BITMAP(capmc_node_bitmap);
 	capmc_node_bitmap = bit_alloc(100000);

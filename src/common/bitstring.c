@@ -133,6 +133,7 @@ strong_alias(bit_nset_max_count,slurm_bit_nset_max_count);
 strong_alias(bit_rotate_copy,	slurm_bit_rotate_copy);
 strong_alias(bit_rotate,	slurm_bit_rotate);
 strong_alias(bit_fmt,		slurm_bit_fmt);
+strong_alias(bit_fmt_full,	slurm_bit_fmt_full);
 strong_alias(bit_unfmt,		slurm_bit_unfmt);
 strong_alias(bitfmt2int,	slurm_bitfmt2int);
 strong_alias(bit_fmt_hexmask,	slurm_bit_fmt_hexmask);
@@ -632,6 +633,23 @@ bit_and_not(bitstr_t *b1, bitstr_t *b2)
 }
 
 /*
+ * b1 &= ~b2
+ * b1 (IN/OUT)
+ * b2 (IN)
+ */
+void bit_and_not(bitstr_t *b1, bitstr_t *b2)
+{
+	bitoff_t bit;
+
+	_assert_bitstr_valid(b1);
+	_assert_bitstr_valid(b2);
+	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+
+	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
+		b1[_bit_word(bit)] &= ~b2[_bit_word(bit)];
+}
+
+/*
  * b1 = ~b1		one's complement
  *   b1 (IN/OUT)	first bitmap
  */
@@ -1030,6 +1048,44 @@ char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 /* 		str[0] = '['; */
 /* 		strcat(str, "]"); */
 /* 	}  */
+	return str;
+}
+
+/*
+ * Convert to range string format, e.g. 0-5,42 with no length restriction
+ */
+char *bit_fmt_full(bitstr_t *b)
+{
+	int32_t count = 0, word;
+	bitoff_t start, bit;
+	char *str = NULL, *comma = "";
+	_assert_bitstr_valid(b);
+
+	for (bit = 0; bit < _bitstr_bits(b); ) {
+		word = _bit_word(bit);
+		if (b[word] == 0) {
+			bit += sizeof(bitstr_t)*8;
+			continue;
+		}
+
+		if (bit_test(b, bit)) {
+			count++;
+			start = bit;
+			while (bit+1 < _bitstr_bits(b) && bit_test(b, bit+1)) {
+				bit++;
+				count++;
+			}
+			if (bit == start)	/* add single bit position */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"",
+					   comma, start);
+			else 			/* add bit position range */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"-%"BITSTR_FMT,
+					   comma, start, bit);
+			comma = ",";
+		}
+		bit++;
+	}
+
 	return str;
 }
 

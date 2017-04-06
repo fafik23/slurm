@@ -285,6 +285,8 @@ static int _job_rec_field(const struct job_record *job_ptr,
 		lua_pushnil (L);
 	} else if (!xstrcmp(name, "account")) {
 		lua_pushstring (L, job_ptr->account);
+	} else if (!xstrcmp(name, "admin_comment")) {
+		lua_pushstring (L, job_ptr->admin_comment);
 	} else if (!xstrcmp(name, "burst_buffer")) {
 		lua_pushstring (L, job_ptr->burst_buffer);
 	} else if (!xstrcmp(name, "comment")) {
@@ -333,6 +335,16 @@ static int _job_rec_field(const struct job_record *job_ptr,
 			lua_pushnumber (L, (uint16_t)NO_VAL);
 	} else if (!xstrcmp(name, "partition")) {
 		lua_pushstring (L, job_ptr->partition);
+	} else if (!xstrcmp(name, "pn_min_cpus")) {
+		if (job_ptr->details)
+			lua_pushnumber (L, job_ptr->details->pn_min_cpus);
+		else
+			lua_pushnumber (L, NO_VAL);
+	} else if (!xstrcmp(name, "pn_min_memory")) {
+		if (job_ptr->details)
+			lua_pushnumber (L, job_ptr->details->pn_min_memory);
+		else
+			lua_pushnumber (L, NO_VAL64);
 	} else if (!xstrcmp(name, "priority")) {
 		lua_pushnumber (L, job_ptr->priority);
 	} else if (!xstrcmp(name, "qos")) {
@@ -457,10 +469,6 @@ static int _resv_field(const slurmctld_resv_t *resv_ptr,
 		lua_pushboolean(L, resv_ptr->full_nodes);
 	} else if (!xstrcmp(name, "flags_set_node")) {
 		lua_pushboolean(L, resv_ptr->flags_set_node);
-	} else if (!xstrcmp(name, "job_pend_cnt")) {
-		lua_pushnumber(L, resv_ptr->job_pend_cnt);
-	} else if (!xstrcmp(name, "job_run_cnt")) {
-		lua_pushnumber(L, resv_ptr->job_run_cnt);
 	} else if (!xstrcmp(name, "licenses")) {
 		lua_pushstring(L, resv_ptr->licenses);
 	} else if (!xstrcmp(name, "node_cnt")) {
@@ -657,12 +665,16 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->account);
 	} else if (!xstrcmp(name, "acctg_freq")) {
 		lua_pushstring (L, job_desc->acctg_freq);
+	} else if (!xstrcmp(name, "admin_comment")) {
+		lua_pushstring (L, job_desc->admin_comment);
 	} else if (!xstrcmp(name, "alloc_node")) {
 		lua_pushstring (L, job_desc->alloc_node);
 	} else if (!xstrcmp(name, "array_inx")) {
 		lua_pushstring (L, job_desc->array_inx);
 	} else if (!xstrcmp(name, "begin_time")) {
 		lua_pushnumber (L, job_desc->begin_time);
+	} else if (!xstrcmp(name, "bitflags")) {
+		lua_pushnumber (L, job_desc->bitflags);
 	} else if (!xstrcmp(name, "boards_per_node")) {
 		lua_pushnumber (L, job_desc->boards_per_node);
 	} else if (!xstrcmp(name, "burst_buffer")) {
@@ -705,6 +717,8 @@ static int _get_job_req_field(const struct job_descriptor *job_desc,
 		lua_pushstring (L, job_desc->gres);
 	} else if (!xstrcmp(name, "group_id")) {
 		lua_pushnumber (L, job_desc->group_id);
+	} else if (!xstrcmp(name, "immediate")) {
+		lua_pushnumber (L, job_desc->immediate);
 	} else if (!xstrcmp(name, "licenses")) {
 		lua_pushstring (L, job_desc->licenses);
 	} else if (!xstrcmp(name, "mail_type")) {
@@ -854,6 +868,11 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->acctg_freq);
 		if (strlen(value_str))
 			job_desc->acctg_freq = xstrdup(value_str);
+	} else if (!xstrcmp(name, "admin_comment")) {
+		value_str = luaL_checkstring(L, 3);
+		xfree(job_desc->admin_comment);
+		if (strlen(value_str))
+			job_desc->admin_comment = xstrdup(value_str);
 	} else if (!xstrcmp(name, "array_inx")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->array_inx);
@@ -861,6 +880,8 @@ static int _set_job_req_field(lua_State *L)
 			job_desc->array_inx = xstrdup(value_str);
 	} else if (!xstrcmp(name, "begin_time")) {
 		job_desc->begin_time = luaL_checknumber(L, 3);
+	} else if (!xstrcmp(name, "bitflags")) {
+		job_desc->bitflags = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "burst_buffer")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->burst_buffer);
@@ -912,6 +933,8 @@ static int _set_job_req_field(lua_State *L)
 		xfree(job_desc->gres);
 		if (strlen(value_str))
 			job_desc->gres = xstrdup(value_str);
+	} else if (!xstrcmp(name, "immediate")) {
+		job_desc->immediate = luaL_checknumber(L, 3);
 	} else if (!xstrcmp(name, "licenses")) {
 		value_str = luaL_checkstring(L, 3);
 		xfree(job_desc->licenses);
@@ -1271,6 +1294,20 @@ static void _register_lua_slurm_output_functions (void)
 	lua_setfield (L, -2, "NO_VAL16");
 	lua_pushnumber (L, (uint8_t) NO_VAL);
 	lua_setfield (L, -2, "NO_VAL8");
+
+	/*
+	 * job_desc bitflags
+	 */
+	lua_pushnumber (L, GRES_ENFORCE_BIND);
+	lua_setfield (L, -2, "GRES_ENFORCE_BIND");
+	lua_pushnumber (L, KILL_INV_DEP);
+	lua_setfield (L, -2, "KILL_INV_DEP");
+	lua_pushnumber (L, NO_KILL_INV_DEP);
+	lua_setfield (L, -2, "NO_KILL_INV_DEP");
+	lua_pushnumber (L, SPREAD_JOB);
+	lua_setfield (L, -2, "SPREAD_JOB");
+	lua_pushnumber (L, USE_MIN_NODES);
+	lua_setfield (L, -2, "USE_MIN_NODES");
 
 	lua_setglobal (L, "slurm");
 

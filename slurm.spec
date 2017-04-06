@@ -16,7 +16,6 @@
 # --with cray_alps   %_with_cray_alps     1     build for a Cray system with ALPS
 # --with cray_network %_with_cray_network 1     build for a non-Cray system with a Cray network
 # --without debug    %_without_debug      1     don't compile with debugging symbols
-# --with pmix        %_with_pmix          1     build pmix support
 # --with lua         %_with_lua           1     build Slurm lua bindings (proctrack only for now)
 # --without munge    %_without_munge      path  don't build auth-munge RPM
 # --with mysql       %_with_mysql         1     require mysql/mariadb support
@@ -46,7 +45,6 @@
 %slurm_without_opt cray_network
 %slurm_without_opt salloc_background
 %slurm_without_opt multiple_slurmd
-%slurm_without_opt pmix
 
 # These options are only here to force there to be these on the build.
 # If they are not set they will still be compiled if the packages exist.
@@ -346,6 +344,7 @@ Includes the Slurm proctrack/lua and job_submit/lua plugin
 Summary: Perl tool to print Slurm job state information
 Group: Development/System
 Requires: slurm
+Obsoletes: slurm-sjobexit slurm-sjstat slurm-seff
 %description contribs
 seff is a mail program used directly by the Slurm daemons. On completion of a
 job, wait for it's accounting information to be available and include that
@@ -397,7 +396,7 @@ according to the Slurm
 	%{?slurm_with_salloc_background:--enable-salloc-background} \
 	%{!?slurm_with_readline:--without-readline} \
 	%{?slurm_with_multiple_slurmd:--enable-multiple-slurmd} \
-	%{?slurm_with_pmix:--with-pmix=%{?with_pmix_dir}} \
+	%{?slurm_with_pmix:--with-pmix=%{?slurm_with_pmix}} \
 	%{?with_freeipmi:--with-freeipmi=%{?with_freeipmi}}\
 	%{?with_cflags}
 
@@ -420,17 +419,16 @@ rm -rf "$RPM_BUILD_ROOT"
 DESTDIR="$RPM_BUILD_ROOT" %__make install
 DESTDIR="$RPM_BUILD_ROOT" %__make install-contrib
 
-if [ -d /etc/init.d ]; then
+if [ -d /usr/lib/systemd/system ]; then
+   install -D -m644 etc/slurmctld.service $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmctld.service
+   install -D -m644 etc/slurmd.service    $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmd.service
+   install -D -m644 etc/slurmdbd.service  $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmdbd.service
+elif [ -d /etc/init.d ]; then
    install -D -m755 etc/init.d.slurm    $RPM_BUILD_ROOT/etc/init.d/slurm
    install -D -m755 etc/init.d.slurmdbd $RPM_BUILD_ROOT/etc/init.d/slurmdbd
    mkdir -p "$RPM_BUILD_ROOT/usr/sbin"
    ln -s ../../etc/init.d/slurm    $RPM_BUILD_ROOT/usr/sbin/rcslurm
    ln -s ../../etc/init.d/slurmdbd $RPM_BUILD_ROOT/usr/sbin/rcslurmdbd
-fi
-if [ -d /usr/lib/systemd/system ]; then
-   install -D -m644 etc/slurmctld.service $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmctld.service
-   install -D -m644 etc/slurmd.service    $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmd.service
-   install -D -m644 etc/slurmdbd.service  $RPM_BUILD_ROOT/usr/lib/systemd/system/slurmdbd.service
 fi
 
 # Do not package Slurm's version of libpmi on Cray systems.
@@ -666,6 +664,12 @@ test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/launch_aprun.so             &&
    echo %{_libdir}/slurm/launch_aprun.so             >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/mpi_mvapich.so              &&
    echo %{_libdir}/slurm/mpi_mvapich.so              >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/mpi_pmix.so                 &&
+   echo %{_libdir}/slurm/mpi_pmix.so                 >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/mpi_pmix_v1.so              &&
+   echo %{_libdir}/slurm/mpi_pmix_v1.so              >> $LIST
+test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/mpi_pmix_v2.so              &&
+   echo %{_libdir}/slurm/mpi_pmix_v2.so              >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/node_features_knl_cray.so   &&
    echo %{_libdir}/slurm/node_features_knl_cray.so   >> $LIST
 test -f $RPM_BUILD_ROOT/%{_libdir}/slurm/node_features_knl_generic.so &&
@@ -881,9 +885,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/slurm/mpi_pmi2.so
 %endif
 %{_libdir}/slurm/mpi_none.so
-%if %{slurm_with pmix}
-%{_libdir}/slurm/mpi_pmix.so
-%endif
 %{_libdir}/slurm/power_none.so
 %{_libdir}/slurm/preempt_job_prio.so
 %{_libdir}/slurm/preempt_none.so
@@ -992,7 +993,9 @@ rm -rf $RPM_BUILD_ROOT
 if [ -x /sbin/ldconfig ]; then
     /sbin/ldconfig %{_libdir}
     if [ $1 = 1 ]; then
-	[ -x /sbin/chkconfig ] && /sbin/chkconfig --add slurm
+	if [ -x /etc/init.d/slurm ]; then
+	    [ -x /sbin/chkconfig ] && /sbin/chkconfig --add slurm
+        fi
     fi
 fi
 
@@ -1025,7 +1028,9 @@ fi
 
 %postun
 if [ "$1" -gt 1 ]; then
-    /etc/init.d/slurm condrestart
+    if [ -x /etc/init.d/slurmdbd ]; then
+        /etc/init.d/slurm condrestart
+    fi
 elif [ "$1" -eq 0 ]; then
     if [ -x /sbin/ldconfig ]; then
 	/sbin/ldconfig %{_libdir}
@@ -1037,7 +1042,9 @@ fi
 
 %postun slurmdbd
 if [ "$1" -gt 1 ]; then
-    /etc/init.d/slurmdbd condrestart
+    if [ -x /etc/init.d/slurmdbd ]; then
+        /etc/init.d/slurm condrestart
+    fi
 fi
 
 #############################################################################

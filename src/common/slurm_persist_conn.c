@@ -513,8 +513,13 @@ extern int slurm_persist_conn_open_without_init(
 	if (!persist_conn->inited)
 		persist_conn->inited = true;
 
-	if (!persist_conn->version)
+	if (!persist_conn->version) {
+		/* Set to MIN_PROTOCOL so that a higher version controller can
+		 * talk to a lower protocol version controller. When talking to
+		 * the DBD, the protocol version should be set to the current
+		 * protocol version prior to calling this. */
 		persist_conn->version = SLURM_MIN_PROTOCOL_VERSION;
+	}
 	if (persist_conn->timeout < 0)
 		persist_conn->timeout = slurm_get_msg_timeout() * 1000;
 
@@ -886,11 +891,12 @@ extern Buf slurm_persist_recv_msg(slurm_persist_conn_t *persist_conn)
 	return buffer;
 
 endit:
-	/* Close it since we abondoned it.  If the connection does still exist
+	/* Close it since we abandoned it.  If the connection does still exist
 	 * on the other end we can't rely on it after this point since we didn't
 	 * listen long enough for this response.
 	 */
-	if (persist_conn->flags & PERSIST_FLAG_RECONNECT)
+	if (!(*persist_conn->shutdown) &&
+	    persist_conn->flags & PERSIST_FLAG_RECONNECT)
 		slurm_persist_conn_reopen(persist_conn, true);
 
 	return NULL;

@@ -134,6 +134,9 @@ typedef struct gres_job_state {
 	 * gres_bit_step_alloc is a subset of gres_bit_alloc */
 	bitstr_t **gres_bit_step_alloc;
 	uint64_t  *gres_cnt_step_alloc;
+
+	/* key for searches with name and type */
+	uint32_t gres_name_type_id;
 } gres_job_state_t;
 
 /* Gres job step state as used by slurmctld daemon */
@@ -420,7 +423,7 @@ extern int gres_plugin_job_count(List gres_list, int arr_len,
  * OUT gres_list - List of Gres records for this job to track usage
  * RET SLURM_SUCCESS or ESLURM_INVALID_GRES
  */
-extern int gres_plugin_job_state_validate(char *req_config, List *gres_list);
+extern int gres_plugin_job_state_validate(char **req_config, List *gres_list);
 
 /*
  * Create a (partial) copy of a job's gres state for job binding

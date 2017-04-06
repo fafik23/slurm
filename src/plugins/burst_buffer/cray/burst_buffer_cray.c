@@ -53,6 +53,7 @@
 #include "slurm/slurm.h"
 
 #include "src/common/assoc_mgr.h"
+#include "src/common/bitstring.h"
 #include "src/common/fd.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
@@ -79,6 +80,12 @@
 			 * threads */
 #define MAX_RETRY_CNT 2	/* Hold job if "pre_run" operation fails more than
 			 * 2 times */
+
+/* Script line types */
+#define LINE_OTHER 0
+#define LINE_BB    1
+#define LINE_DW    2
+
 /*
  * These variables are required by the burst buffer plugin interface.  If they
  * are not found in the plugin, the plugin loader will ignore it.
@@ -1122,6 +1129,7 @@ static void _set_assoc_mgr_ptrs(bb_alloc_t *bb_alloc)
  */
 static void _load_state(bool init_config)
 {
+	static bool first_run = true;
 	burst_buffer_pool_t *pool_ptr;
 	bb_configs_t *configs;
 	bb_instances_t *instances;
@@ -1130,13 +1138,14 @@ static void _load_state(bool init_config)
 	bb_alloc_t *bb_alloc;
 	struct job_record *job_ptr;
 	int num_configs = 0, num_instances = 0, num_pools = 0, num_sessions = 0;
-	int i, j;
+	int i, j, pools_inx;
 	char *end_ptr = NULL;
 	time_t now = time(NULL);
 	uint32_t timeout;
 	assoc_mgr_lock_t assoc_locks = { READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
 					 NO_LOCK, NO_LOCK, NO_LOCK };
 	bool found_pool;
+	bitstr_t *pools_bitmap;
 
 	slurm_mutex_lock(&bb_state.bb_mutex);
 	if (bb_state.bb_config.other_timeout)
@@ -1155,6 +1164,7 @@ static void _load_state(bool init_config)
 		return;
 	}
 
+	pools_bitmap = bit_alloc(bb_state.bb_config.pool_cnt + num_pools);
 	slurm_mutex_lock(&bb_state.bb_mutex);
 	if (!bb_state.bb_config.default_pool && (num_pools > 0)) {
 		info("%s: Setting DefaultPool to %s", __func__, pools[0].id);
@@ -1171,9 +1181,6 @@ static void _load_state(bool init_config)
 			bb_state.unfree_space = pools[i].quantity -
 						pools[i].free;
 			bb_state.unfree_space *= pools[i].granularity;
-
-			/* Everything else is an alternate pool */
-			bb_state.bb_config.pool_cnt = 0;
 			continue;
 		}
 
@@ -1186,6 +1193,10 @@ static void _load_state(bool init_config)
 			}
 		}
 		if (!found_pool) {
+			if (!first_run) {
+				info("%s: Newly reported pool %s",
+				     __func__, pools[i].id);
+			}
 			bb_state.bb_config.pool_ptr
 				= xrealloc(bb_state.bb_config.pool_ptr,
 					   sizeof(burst_buffer_pool_t) *
@@ -1196,13 +1207,28 @@ static void _load_state(bool init_config)
 			bb_state.bb_config.pool_cnt++;
 		}
 
+		pools_inx = pool_ptr - bb_state.bb_config.pool_ptr;
+		bit_set(pools_bitmap, pools_inx);
 		pool_ptr->total_space = pools[i].quantity *
 					pools[i].granularity;
 		pool_ptr->granularity = pools[i].granularity;
 		pool_ptr->unfree_space = pools[i].quantity - pools[i].free;
 		pool_ptr->unfree_space *= pools[i].granularity;
 	}
+
+	pool_ptr = bb_state.bb_config.pool_ptr;
+	for (j = 0; j < bb_state.bb_config.pool_cnt; j++, pool_ptr++) {
+		if (bit_test(pools_bitmap, j) || (pool_ptr->total_space == 0))
+			continue;
+		error("%s: Pool %s no longer reported by system, setting size to zero",
+		      __func__,  pool_ptr->name);
+		pool_ptr->total_space  = 0;
+		pool_ptr->used_space   = 0;
+		pool_ptr->unfree_space = 0;
+	}
+	first_run = false;
 	slurm_mutex_unlock(&bb_state.bb_mutex);
+	FREE_NULL_BITMAP(pools_bitmap);
 	_bb_free_pools(pools, num_pools);
 
 	/*
@@ -1327,8 +1353,12 @@ static int _write_nid_file(char *file_name, char *node_list, uint32_t job_id)
 			continue;
 		/* Copy significant digits and separator */
 		while (sep[i]) {
+			if (sep[i] == ',') {
+				buf[j++] = '\n';
+				break;
+			}
 			buf[j++] = sep[i];
-			if ((sep[i] == '-') || (sep[i] == ','))
+			if (sep[i] == '-')
 				break;
 			i++;
 		}
@@ -2573,10 +2603,14 @@ static int _parse_bb_opts(struct job_descriptor *job_desc, uint64_t *bb_size,
 	return rc;
 }
 
-/* Copy a batch job's burst_buffer options into a separate buffer */
+/* Copy a batch job's burst_buffer options into a separate buffer.
+ * merge continued lines into a single line */
 static int _xlate_batch(struct job_descriptor *job_desc)
 {
 	char *script, *save_ptr = NULL, *tok;
+	int line_type, prev_type = LINE_OTHER;
+	bool is_cont = false, has_space = false;
+	int len, rc = SLURM_SUCCESS;
 
 	xfree(job_desc->burst_buffer);
 	script = xstrdup(job_desc->script);
@@ -2584,16 +2618,47 @@ static int _xlate_batch(struct job_descriptor *job_desc)
 	while (tok) {
 		if (tok[0] != '#')
 			break;	/* Quit at first non-comment */
-		if (((tok[1] == 'B') && (tok[2] == 'B')) ||
-		    ((tok[1] == 'D') && (tok[2] == 'W'))) {
-			if (job_desc->burst_buffer)
+
+		if ((tok[1] == 'B') && (tok[2] == 'B'))
+			line_type = LINE_BB;
+		else if ((tok[1] == 'D') && (tok[2] == 'W'))
+			line_type = LINE_DW;
+		else
+			line_type = LINE_OTHER;
+
+		if (line_type == LINE_OTHER) {
+			is_cont = false;
+		} else {
+			if (is_cont) {
+				if (line_type != prev_type) {
+					/* Mixing "#DW" with "#BB", error */
+					rc =ESLURM_INVALID_BURST_BUFFER_REQUEST;
+					break;
+				}
+				tok += 3; 	/* Skip "#DW" or "#BB" */
+				while (has_space && isspace(tok[0]))
+					tok++;	/* Skip duplicate spaces */
+			} else if (job_desc->burst_buffer) {
 				xstrcat(job_desc->burst_buffer, "\n");
+			}
+			prev_type = line_type;
+
+			len = strlen(tok);
+			if (tok[len - 1] == '\\') {
+				has_space = isspace(tok[len - 2]);
+				tok[strlen(tok) - 1] = '\0';
+				is_cont = true;
+			} else {
+				is_cont = false;
+			}
 			xstrcat(job_desc->burst_buffer, tok);
 		}
 		tok = strtok_r(NULL, "\n", &save_ptr);
 	}
 	xfree(script);
-	return SLURM_SUCCESS;
+	if (rc != SLURM_SUCCESS)
+		xfree(job_desc->burst_buffer);
+	return rc;
 }
 
 /* Parse simple interactive burst_buffer options into an format identical to
@@ -3666,6 +3731,7 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 		    bb_state.bb_config.debug_flag)
 			info("%s: paths ran for %s", __func__, TIME_STR);
 		_log_script_argv(script_argv, resp_msg);
+		_free_script_argv(script_argv);
 #if 1
 		//FIXME: Cray API returning "job_file_valid True" but exit 1 in some cases
 		if ((!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) &&
@@ -3675,12 +3741,13 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 #endif
 			error("%s: paths for job %u status:%u response:%s",
 			      __func__, job_ptr->job_id, status, resp_msg);
+			xfree(resp_msg);
 			rc = ESLURM_INVALID_BURST_BUFFER_REQUEST;
+			goto fini;
 		} else {
 			_update_job_env(job_ptr, path_file);
+			xfree(resp_msg);
 		}
-		xfree(resp_msg);
-		_free_script_argv(script_argv);
 
 		/* Setup "pre_run" operation */
 		pre_run_argv = xmalloc(sizeof(char *) * 10);
@@ -3723,8 +3790,9 @@ extern int bb_p_job_begin(struct job_record *job_ptr)
 			usleep(100000);
 		}
 		slurm_attr_destroy(&pre_run_attr);
-}
+	}
 
+fini:
 	xfree(client_nodes_file_nid);
 	xfree(job_dir);
 	return rc;
@@ -3752,6 +3820,9 @@ static void _kill_job(struct job_record *job_ptr, bool hold_job)
 
 static void *_start_pre_run(void *x)
 {
+	/* Locks: read job */
+	slurmctld_lock_t job_read_lock = {
+		NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 	/* Locks: write job */
 	slurmctld_lock_t job_write_lock = {
 		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
@@ -3763,8 +3834,23 @@ static void *_start_pre_run(void *x)
 	struct job_record *job_ptr;
 	bool run_kill_job = false;
 	uint32_t timeout;
-	bool hold_job = false;
+	bool hold_job = false, nodes_ready = false;
 	DEF_TIMERS;
+
+	/* Wait for node boot to complete */
+	while (!nodes_ready) {
+		lock_slurmctld(job_read_lock);
+		job_ptr = find_job_record(pre_run_args->job_id);
+		if (!job_ptr || IS_JOB_COMPLETED(job_ptr)) {
+			unlock_slurmctld(job_read_lock);
+			return NULL;
+		}
+		if (test_job_nodes_ready(job_ptr))
+			nodes_ready = true;
+		unlock_slurmctld(job_read_lock);
+		if (!nodes_ready)
+			sleep(60);
+	}
 
 	if (pre_run_args->timeout)
 		timeout = pre_run_args->timeout * 1000;

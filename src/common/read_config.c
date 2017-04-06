@@ -1590,11 +1590,12 @@ static void _push_to_hashtbls(char *alias, char *hostname,
 	/* Ensure only one instance of each NodeName */
 	p = node_to_host_hashtbl[alias_idx];
 	while (p) {
-		if (xstrcmp(p->alias, alias)==0) {
-			if (front_end)
+		if (xstrcmp(p->alias, alias) == 0) {
+			if (front_end) {
 				fatal("Frontend not configured correctly "
 				      "in slurm.conf.  See man slurm.conf "
 				      "look for frontendname.");
+			}
 			fatal("Duplicated NodeName %s in the config file",
 			      p->alias);
 			return;
@@ -1830,7 +1831,6 @@ static int _register_front_ends(slurm_conf_frontend_t *front_end_ptr)
 
 	while ((hostname = hostlist_shift(hostname_list))) {
 		address = hostlist_shift(address_list);
-
 		_push_to_hashtbls(hostname, hostname, address,
 				  front_end_ptr->port, 1, 1, 1, 1, 1, 1,
 				  NULL, 0, 0);
@@ -4187,15 +4187,8 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 
 	/* see above for switch_type, order dependent */
 
-	if (!s_p_get_string(&conf->task_plugin, "TaskPlugin", hashtbl)) {
+	if (!s_p_get_string(&conf->task_plugin, "TaskPlugin", hashtbl))
 		conf->task_plugin = xstrdup(DEFAULT_TASK_PLUGIN);
-	} else {
-		char *cray_ptr = strstr(conf->task_plugin, "cray");
-		char *cgroup_ptr = strstr(conf->task_plugin, "cgroup");
-		if (cray_ptr && (!cgroup_ptr || (cgroup_ptr > cray_ptr)))
-			fatal("TaskPlugin: task/cgroup must preceed task/cray");
-	}
-
 #ifdef HAVE_FRONT_END
 	if (xstrcmp(conf->task_plugin, "task/none")) {
 		error("On FrontEnd systems TaskPlugin=task/none is required");
