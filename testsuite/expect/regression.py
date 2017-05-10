@@ -60,6 +60,7 @@ def main(argv=None):
                       action='callback', callback=test_parser,
                       help='comma or space separated string of tests to include')
     parser.add_option('-k', '--keep-logs', action='store_true', default=False)
+    parser.add_option('-s', '--stop-on-first-fail', action='store_true', default=False)
     (options, args) = parser.parse_args(args=argv)
 
     # Sanity check
@@ -139,6 +140,8 @@ def main(argv=None):
             print "Log  : \n", errlog
             testlog.close()
             os.rename(testlog_name, testlog_name+'.failed')
+            if options.stop_on_first_fail:
+                break
         sys.stdout.flush()
 
     end_time = time.time()
