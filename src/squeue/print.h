@@ -93,6 +93,8 @@ int job_format_add_function(List list, int width, bool right_justify,
 	job_format_add_function(list,wid,right,suffix,_print_job_burst_buffer)
 #define job_format_add_burst_buffer_state(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_burst_buffer_state)
+#define job_format_add_cluster_name(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix,_print_job_cluster_name)
 #define job_format_add_core_spec(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_core_spec)
 #define job_format_add_delay_boot(list,wid,right,suffix) \
@@ -193,6 +195,9 @@ int job_format_add_function(List list, int width, bool right_justify,
 	job_format_add_function(list,wid,right,suffix,_print_job_exc_node_inx)
 #define job_format_add_features(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_features)
+#define job_format_add_cluster_features(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix, \
+				_print_job_cluster_features)
 #define job_format_add_account(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_account)
 #define job_format_add_dependency(list,wid,right,suffix) \
@@ -241,11 +246,18 @@ int job_format_add_function(List list, int width, bool right_justify,
 #define job_format_add_fed_origin_raw(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix, \
 				_print_job_fed_origin_raw)
-#define job_format_add_fed_siblings(list,wid,right,suffix) \
-	job_format_add_function(list,wid,right,suffix, _print_job_fed_siblings)
-#define job_format_add_fed_siblings_raw(list,wid,right,suffix) \
+#define job_format_add_fed_siblings_active(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix, \
-				_print_job_fed_siblings_raw)
+				_print_job_fed_siblings_active)
+#define job_format_add_fed_siblings_active_raw(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix, \
+				_print_job_fed_siblings_active_raw)
+#define job_format_add_fed_siblings_viable(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix, \
+				_print_job_fed_siblings_viable)
+#define job_format_add_fed_siblings_viable_raw(list,wid,right,suffix) \
+	job_format_add_function(list,wid,right,suffix, \
+				_print_job_fed_siblings_viable_raw)
 #define job_format_add_max_cpus(list,wid,right,suffix) \
 	job_format_add_function(list,wid,right,suffix,_print_job_max_cpus)
 #define job_format_add_max_nodes(list,wid,right,suffix) \
@@ -310,6 +322,8 @@ int _print_job_burst_buffer(job_info_t * job, int width, bool right_justify,
 			    char* suffix);
 int _print_job_burst_buffer_state(job_info_t * job, int width,
 				  bool right_justify, char* suffix);
+int _print_job_cluster_name(job_info_t * job, int width, bool right,
+			    char* suffix);
 int _print_job_core_spec(job_info_t * job, int width, bool right_justify,
 			 char* suffix);
 int _print_job_delay_boot(job_info_t * job, int width, bool right_justify,
@@ -405,6 +419,8 @@ int _print_job_exc_node_inx(job_info_t * job, int width, bool right_justify,
 			    char* suffix);
 int _print_job_features(job_info_t * job, int width, bool right_justify,
 			char* suffix);
+int _print_job_cluster_features(job_info_t * job, int width, bool right_justify,
+				char* suffix);
 int _print_job_account(job_info_t * job, int width, bool right_justify,
 		       char* suffix);
 int _print_job_dependency(job_info_t * job, int width, bool right_justify,
@@ -449,10 +465,14 @@ int _print_job_fed_origin(job_info_t * job, int width, bool right_justify,
 			  char* suffix);
 int _print_job_fed_origin_raw(job_info_t * job, int width, bool right_justify,
 			      char* suffix);
-int _print_job_fed_siblings(job_info_t * job, int width, bool right_justify,
-			    char* suffix);
-int _print_job_fed_siblings_raw(job_info_t * job, int width, bool right_justify,
-				char* suffix);
+int _print_job_fed_siblings_active(job_info_t * job, int width,
+				   bool right_justify, char* suffix);
+int _print_job_fed_siblings_active_raw(job_info_t * job, int width,
+				       bool right_justify, char* suffix);
+int _print_job_fed_siblings_viable(job_info_t * job, int width,
+				   bool right_justify, char* suffix);
+int _print_job_fed_siblings_viable_raw(job_info_t * job, int width,
+				       bool right_justify, char* suffix);
 int _print_job_max_cpus(job_info_t * job, int width, bool right_justify,
 			char* suffix);
 int _print_job_max_nodes(job_info_t * job, int width, bool right_justify,
@@ -507,6 +527,8 @@ int step_format_add_function(List list, int width, bool right_justify,
 			     char * suffix,
 		int (*function) (job_step_info_t *, int, bool, char *));
 
+#define step_format_add_cluster_name(list,wid,right,suffix) \
+	step_format_add_function(list,wid,right,suffix,_print_step_cluster_name)
 #define step_format_add_id(list,wid,right,suffix) \
 	step_format_add_function(list,wid,right,suffix,_print_step_id)
 #define step_format_add_partition(list,wid,right,suffix) \
@@ -569,6 +591,8 @@ int step_format_add_function(List list, int width, bool right_justify,
 /*****************************************************************************
  * Step Line Print Functions
  *****************************************************************************/
+int _print_step_cluster_name(job_step_info_t * step, int width,
+			     bool right_justify, char *suffix);
 int _print_step_id(job_step_info_t * step, int width, bool right_justify,
 		   char *suffix);
 int _print_step_partition(job_step_info_t * step, int width,

@@ -807,21 +807,29 @@ next_part:		part_ptr = (struct part_record *)
 		if (job_ptr->qos_id) {
 			slurmdb_assoc_rec_t *assoc_ptr =
 				(slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
+			assoc_mgr_lock_t locks = {
+				READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+				NO_LOCK, NO_LOCK, NO_LOCK };
+
+			assoc_mgr_lock(&locks);
 			if (assoc_ptr &&
-			    !bit_test(assoc_ptr->usage->valid_qos,
-				      job_ptr->qos_id) &&
+			    ((job_ptr->qos_id >= g_qos_count) ||
+			     !bit_test(assoc_ptr->usage->valid_qos,
+				       job_ptr->qos_id)) &&
 			    !job_ptr->limit_set.qos) {
 				info("sched: JobId=%u has invalid QOS",
 					job_ptr->job_id);
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason = FAIL_QOS;
 				last_job_update = now;
+				assoc_mgr_unlock(&locks);
 				continue;
 			} else if (job_ptr->state_reason == FAIL_QOS) {
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason = WAIT_NO_REASON;
 				last_job_update = now;
 			}
+			assoc_mgr_unlock(&locks);
 		}
 
 		if ((job_ptr->state_reason == WAIT_QOS_JOB_LIMIT)
@@ -1690,23 +1698,31 @@ next_task:
 		}
 		if (job_ptr->qos_id) {
 			slurmdb_assoc_rec_t *assoc_ptr;
+			assoc_mgr_lock_t locks = {
+				READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+				NO_LOCK, NO_LOCK, NO_LOCK };
+
+			assoc_mgr_lock(&locks);
 			assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
 			if (assoc_ptr
 			    && (accounting_enforce & ACCOUNTING_ENFORCE_QOS)
-			    && !bit_test(assoc_ptr->usage->valid_qos,
-					 job_ptr->qos_id)
+			    && ((job_ptr->qos_id >= g_qos_count) ||
+				!bit_test(assoc_ptr->usage->valid_qos,
+					  job_ptr->qos_id))
 			    && !job_ptr->limit_set.qos) {
 				debug("sched: JobId=%u has invalid QOS",
 				      job_ptr->job_id);
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason = FAIL_QOS;
 				last_job_update = now;
+				assoc_mgr_unlock(&locks);
 				continue;
 			} else if (job_ptr->state_reason == FAIL_QOS) {
 				xfree(job_ptr->state_desc);
 				job_ptr->state_reason = WAIT_NO_REASON;
 				last_job_update = now;
 			}
+			assoc_mgr_unlock(&locks);
 		}
 
 		deadline_time_limit = 0;
@@ -2073,7 +2089,8 @@ extern void sort_job_queue(List job_queue)
 }
 
 /* Note this differs from the ListCmpF typedef since we want jobs sorted
- *	in order of decreasing priority then by increasing job id */
+ * in order of decreasing priority then submit time and the by increasing
+ * job id */
 extern int sort_job_queue2(void *x, void *y)
 {
 	job_queue_rec_t *job_rec1 = *(job_queue_rec_t **) x;
@@ -2132,7 +2149,17 @@ extern int sort_job_queue2(void *x, void *y)
 	if (p1 > p2)
 		return -1;
 
-	/* If the priorities are the same sort by increasing job id's */
+	/* If the priorities are the same sort by submission time */
+	if (job_rec1->job_ptr->details && job_rec2->job_ptr->details) {
+		if (job_rec1->job_ptr->details->submit_time >
+		    job_rec2->job_ptr->details->submit_time)
+			return 1;
+		if (job_rec2->job_ptr->details->submit_time >
+		    job_rec1->job_ptr->details->submit_time)
+			return -1;
+	}
+
+	/* If the submission times are the same sort by increasing job id's */
 	if (job_rec1->array_task_id == NO_VAL)
 		job_id1 = job_rec1->job_id;
 	else
@@ -2482,10 +2509,11 @@ static void _depend_list2str(struct job_record *job_ptr, bool set_or_flag)
 	if (job_ptr->details == NULL)
 		return;
 
+	xfree(job_ptr->details->dependency);
+
 	if (job_ptr->details->depend_list == NULL
 		|| list_count(job_ptr->details->depend_list) == 0)
 		return;
-	xfree(job_ptr->details->dependency);
 
 	depend_iter = list_iterator_create(job_ptr->details->depend_list);
 	while ((dep_ptr = list_next(depend_iter))) {
@@ -2763,10 +2791,7 @@ static char *_xlate_array_dep(char *new_depend)
 		return NULL;	/* No job array expressions */
 
 	if (max_array_size == NO_VAL) {
-		slurm_ctl_conf_t *conf;
-		conf = slurm_conf_lock();
-		max_array_size = conf->max_array_sz;
-		slurm_conf_unlock();
+		max_array_size = slurmctld_conf.max_array_sz;
 	}
 
 	for (i = 0; new_depend[i]; i++) {
@@ -3015,7 +3040,7 @@ extern int update_job_dependency(struct job_record *job_ptr, char *new_depend)
 				job_ptr->gres = xstrdup(dep_job_ptr->gres);
 				FREE_NULL_LIST(job_ptr->gres_list);
 				gres_plugin_job_state_validate(
-					job_ptr->gres, &job_ptr->gres_list);
+					&job_ptr->gres, &job_ptr->gres_list);
 				assoc_mgr_lock(&locks);
 				gres_set_job_tres_cnt(job_ptr->gres_list,
 						      job_ptr->details ?
@@ -3506,9 +3531,9 @@ static char **_build_env(struct job_record *job_ptr, bool is_epilog)
 		}
 	}
 
-	if (slurmctld_cluster_name) {
+	if (slurmctld_conf.cluster_name) {
 		setenvf(&my_env, "SLURM_CLUSTER_NAME", "%s",
-			slurmctld_cluster_name);
+			slurmctld_conf.cluster_name);
 	}
 
 	setenvf(&my_env, "SLURM_JOB_GID", "%u", job_ptr->group_id);

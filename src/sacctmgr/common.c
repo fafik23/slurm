@@ -292,6 +292,11 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Event");
 		field->len = 7;
 		field->print_routine = print_fields_str;
+	} else if (!strncasecmp("Features", object, MAX(command_len, 3))) {
+		field->type = PRINT_FEATURES;
+		field->name = xstrdup("Features");
+		field->len = 20;
+		field->print_routine = print_fields_char_list;
 	} else if (!strncasecmp("Federation", object, MAX(command_len, 3))) {
 		field->type = PRINT_FEDERATION;
 		field->name = xstrdup("Federation");
@@ -880,6 +885,8 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 						      cluster, account,
 						      user);
 						rc = SLURM_ERROR;
+						slurmdb_destroy_update_object(
+							update_obj);
 						goto end_it;
 					}
 					list_append(update_obj->objects, rec);
@@ -898,6 +905,8 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 					      "database",
 					      cluster, account);
 					rc = SLURM_ERROR;
+					slurmdb_destroy_update_object(
+						update_obj);
 					goto end_it;
 				}
 				list_append(update_obj->objects, rec);
@@ -915,6 +924,7 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 		} else {
 			slurmdb_destroy_update_object(update_obj);
 		}
+		update_obj = NULL;
 		FREE_NULL_LIST(update_list);
 	}
 end_it:
@@ -925,7 +935,6 @@ end_it:
 
 	FREE_NULL_LIST(local_assoc_list);
 	FREE_NULL_LIST(local_cluster_list);
-	slurmdb_destroy_update_object(update_obj);
 
 	return rc;
 }
@@ -1814,6 +1823,17 @@ extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc)
 
 }
 
+static int _print_cluster_features(void *object, void *arg)
+{
+	char *feature = (char *)object;
+	if (feature[0] == '+' || feature[0] == '-')
+		printf("  Feature     %c= %s\n", feature[0], feature + 1);
+	else
+		printf("  Feature       = %s\n", feature);
+
+	return SLURM_SUCCESS;
+}
+
 extern void sacctmgr_print_cluster(slurmdb_cluster_rec_t *cluster)
 {
 	if (!cluster)
@@ -1824,6 +1844,15 @@ extern void sacctmgr_print_cluster(slurmdb_cluster_rec_t *cluster)
 	if (cluster->classification)
 		printf("  Classification = %s\n",
 		       get_classification_str(cluster->classification));
+
+	if (cluster->fed.feature_list) {
+		if (!list_count(cluster->fed.feature_list))
+			printf("  Feature     = \n");
+		else
+			list_for_each(cluster->fed.feature_list,
+				      _print_cluster_features, NULL);
+	}
+
 	if (cluster->fed.name)
 		printf("  Federation     = %s\n", cluster->fed.name);
 	if (cluster->fed.state != NO_VAL) {

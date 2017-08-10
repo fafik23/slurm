@@ -91,6 +91,10 @@ scontrol_load_job(job_info_msg_t ** job_buffer_pptr, uint32_t job_id)
 		if (detail_flag > 1)
 			show_flags |= SHOW_DETAIL2;
 	}
+	if (local_flag)
+		show_flags |= SHOW_LOCAL;
+	if (sibling_flag)
+		show_flags |= SHOW_SIBLING;
 
 	if (old_job_info_ptr) {
 		if (last_show_flags != show_flags)
@@ -188,7 +192,7 @@ scontrol_print_completing (void)
 	 * from job's node_inx to node table to work */
 	/*if (all_flag)		Always set this flag */
 	show_flags |= SHOW_ALL;
-	error_code = scontrol_load_nodes (&node_info_msg, show_flags);
+	error_code = scontrol_load_nodes(&node_info_msg, show_flags);
 	if (error_code) {
 		exit_code = 1;
 		if (quiet_flag != 1)
@@ -198,11 +202,12 @@ scontrol_print_completing (void)
 
 	/* Scan the jobs for completing state */
 	job_info = job_info_msg->job_array;
-	for (i=0; i<job_info_msg->record_count; i++) {
+	for (i = 0; i < job_info_msg->record_count; i++) {
 		if (job_info[i].job_state & JOB_COMPLETING)
 			scontrol_print_completing_job(&job_info[i],
 						      node_info_msg);
 	}
+	slurm_free_node_info_msg(node_info_msg);
 }
 
 extern void
@@ -398,6 +403,8 @@ scontrol_print_step (char *job_step_id_str)
 
 	if (all_flag)
 		show_flags |= SHOW_ALL;
+	if (local_flag)
+		show_flags |= SHOW_LOCAL;
 
 	if ((old_job_step_info_ptr) && (last_job_id == job_id) &&
 	    (last_array_id == array_id) && (last_step_id == step_id)) {
@@ -480,7 +487,7 @@ static int _parse_jobid(const char *jobid_str, uint32_t *out_jobid)
 	long jobid;
 
 	job = xstrdup(jobid_str);
-	ptr = index(job, '.');
+	ptr = xstrchr(job, '.');
 	if (ptr != NULL) {
 		*ptr = '\0';
 	}
@@ -504,7 +511,7 @@ static int _parse_stepid(const char *jobid_str, uint32_t *out_stepid)
 	long stepid;
 
 	job = xstrdup(jobid_str);
-	ptr = index(job, '.');
+	ptr = xstrchr(job, '.');
 	if (ptr == NULL) {
 		/* did not find a period, so no step ID in this string */
 		xfree(job);
@@ -827,7 +834,7 @@ static int _blocks_dealloc(void)
 	}
 
 	if (error_code) {
-		error("slurm_load_partitions: %s",
+		error("slurm_load_block_info: %s",
 		      slurm_strerror(slurm_get_errno()));
 		return -1;
 	}

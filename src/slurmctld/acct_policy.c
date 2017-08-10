@@ -135,7 +135,7 @@ static int _get_tres_state_reason(int tres_pos, int unk_reason)
 			break;
 		}
 		break;
-	case TRES_ARRAY_ENEGRY:
+	case TRES_ARRAY_ENERGY:
 		switch (unk_reason) {
 		case WAIT_ASSOC_GRP_UNK:
 			return WAIT_ASSOC_GRP_ENERGY;
@@ -517,6 +517,14 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 	case ACCT_POLICY_JOB_BEGIN:
 		qos_ptr->usage->grp_used_jobs++;
 		for (i=0; i<slurmctld_tres_cnt; i++) {
+			/* tres_alloc_cnt for ENERGY is currently after the
+			 * fact, so don't add it here or you will get underflows
+			 * when you remove it.  If this ever changes this will
+			 * have to be moved to a new TRES ARRAY probably.
+			 */
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
+
 			used_limits->tres[i] += job_ptr->tres_alloc_cnt[i];
 			used_limits_a->tres[i] += job_ptr->tres_alloc_cnt[i];
 
@@ -546,6 +554,8 @@ static void _qos_adjust_limit_usage(int type, struct job_record *job_ptr,
 		}
 
 		for (i=0; i<slurmctld_tres_cnt; i++) {
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
 			if (job_ptr->tres_alloc_cnt[i] >
 			    qos_ptr->usage->grp_used_tres[i]) {
 				qos_ptr->usage->grp_used_tres[i] = 0;
@@ -624,9 +634,12 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		priority_g_job_end(job_ptr);
 	else if (type == ACCT_POLICY_JOB_BEGIN) {
 		uint64_t time_limit_secs = (uint64_t)job_ptr->time_limit * 60;
-		for (i=0; i<slurmctld_tres_cnt; i++)
+		for (i=0; i<slurmctld_tres_cnt; i++) {
+			if (i == TRES_ARRAY_ENERGY)
+				continue;
 			used_tres_run_secs[i] =
 				job_ptr->tres_alloc_cnt[i] * time_limit_secs;
+		}
 	} else if (((type == ACCT_POLICY_ADD_SUBMIT) ||
 		    (type == ACCT_POLICY_REM_SUBMIT)) &&
 		   job_ptr->array_recs && job_ptr->array_recs->task_cnt)
@@ -659,6 +672,9 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 		case ACCT_POLICY_JOB_BEGIN:
 			assoc_ptr->usage->used_jobs++;
 			for (i=0; i<slurmctld_tres_cnt; i++) {
+				if (i == TRES_ARRAY_ENERGY)
+					continue;
+
 				assoc_ptr->usage->grp_used_tres[i] +=
 					job_ptr->tres_alloc_cnt[i];
 				assoc_ptr->usage->grp_used_tres_run_secs[i] +=
@@ -684,6 +700,8 @@ static void _adjust_limit_usage(int type, struct job_record *job_ptr)
 				       assoc_ptr->acct);
 
 			for (i=0; i<slurmctld_tres_cnt; i++) {
+				if (i == TRES_ARRAY_ENERGY)
+					continue;
 				if (job_ptr->tres_alloc_cnt[i] >
 				    assoc_ptr->usage->grp_used_tres[i]) {
 					assoc_ptr->usage->grp_used_tres[i] = 0;
@@ -1043,9 +1061,12 @@ static bool _validate_tres_time_limits(
  *                        (tres_limit_array - curr_usage),
  *                        return TRES_USAGE_REQ_NOT_SAFE_WITH_USAGE
  *                        curr_usage will be 0 when not passed
- * IN - tres_usage - TRES (already used) optional; see tres_req_cnt section
+ * IN - tres_usage - TRES (currently running if curr_usage is set, already used
+ *                   otherwise) optional; This value is used primarily only if
+ *                   safe_limits is true.  It will be added to tres_req_cnt to
+ *                   count as extra time to observe, see tres_req_cnt section
  *                   above for tres_usage interaction
- * IN - curr_usage - TRES (currently running) optional; when set, check if:
+ * IN - curr_usage - TRES (already used) optional; when set, check if:
  *                   1) curr_usage > tres_limit_array
  *                      return TRES_USAGE_CUR_EXCEEDS_LIMIT
  *                   2) when safe_limits is true, see tres_req_cnt section
@@ -1804,7 +1825,7 @@ static int _qos_job_runnable_post_select(struct job_record *job_ptr,
 	tres_usage = _validate_tres_usage_limits_for_qos(
 		&tres_pos, qos_ptr->grp_tres_mins_ctld,
 		qos_out_ptr->grp_tres_mins_ctld, job_tres_time_limit,
-		tres_usage_mins, tres_run_mins, job_ptr->limit_set.tres,
+		tres_run_mins, tres_usage_mins, job_ptr->limit_set.tres,
 		safe_limits);
 	switch (tres_usage) {
 	case TRES_USAGE_CUR_EXCEEDS_LIMIT:
@@ -2376,6 +2397,8 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 	memset(used_tres_run_secs, 0, sizeof(used_tres_run_secs));
 	memset(new_used_tres_run_secs, 0, sizeof(new_used_tres_run_secs));
 	for (i=0; i<slurmctld_tres_cnt; i++) {
+		if (i == TRES_ARRAY_ENERGY)
+			continue;
 		used_tres_run_secs[i] =
 			job_ptr->tres_alloc_cnt[i] * time_limit_secs;
 		new_used_tres_run_secs[i] =
@@ -2756,7 +2779,7 @@ end_it:
 }
 
 /*
- * Determine of the specified job can execute right now or is currently
+ * Determine if the specified job can execute right now or is currently
  * blocked by an association or QOS limit. Does not re-validate job state.
  */
 extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
@@ -2776,7 +2799,7 @@ extern bool acct_policy_job_runnable_state(struct job_record *job_ptr)
 }
 
 /*
- * acct_policy_job_runnable_pre_select - Determine of the specified
+ * acct_policy_job_runnable_pre_select - Determine if the specified
  *	job can execute right now or not depending upon accounting
  *	policy (e.g. running job limit for this association). If the
  *	association limits prevent the job from ever running (lowered
@@ -3108,8 +3131,8 @@ extern bool acct_policy_job_runnable_post_select(
 		tres_usage = _validate_tres_usage_limits_for_assoc(
 			&tres_pos, assoc_ptr->grp_tres_mins_ctld,
 			qos_rec.grp_tres_mins_ctld,
-			job_tres_time_limit, tres_usage_mins,
-			tres_run_mins, job_ptr->limit_set.tres,
+			job_tres_time_limit, tres_run_mins,
+			tres_usage_mins, job_ptr->limit_set.tres,
 			safe_limits);
 		switch (tres_usage) {
 		case TRES_USAGE_CUR_EXCEEDS_LIMIT:
@@ -3585,7 +3608,7 @@ extern int acct_policy_update_pending_job(struct job_record *job_ptr)
 }
 
 /*
- * acct_policy_job_runnable - Determine of the specified job has timed
+ * acct_policy_job_runnable - Determine if the specified job has timed
  *	out based on it's QOS or association.
  */
 extern bool acct_policy_job_time_out(struct job_record *job_ptr)
@@ -3632,10 +3655,14 @@ extern bool acct_policy_job_time_out(struct job_record *job_ptr)
 	/* find out how many cpu minutes this job has been
 	 * running for. We add 1 here to make it so we can check for
 	 * just > instead of >= in our checks */
-	for (i=0; i<slurmctld_tres_cnt; i++)
+	for (i=0; i<slurmctld_tres_cnt; i++) {
+		if (i == TRES_ARRAY_ENERGY)
+			continue;
+
 		if (job_ptr->tres_alloc_cnt[i])
 			job_tres_usage_mins[i] =
 				(time_delta * job_ptr->tres_alloc_cnt[i]) + 1;
+	}
 
 	/* check the first QOS setting it's values in the qos_rec */
 	if (qos_ptr_1 && !_qos_job_time_out(job_ptr, qos_ptr_1,

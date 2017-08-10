@@ -57,6 +57,7 @@ HIGHLIGHTS
     switch_jobinfo_t with dynamic_plugin_data_t in interface calls in
     order to pass switch information between clusters with different switch
     types.
+ -- Changed default ProctrackType to cgroup.
 
 RPMBUILD CHANGES
 ================
@@ -78,11 +79,28 @@ Changed members of the following structs
 
 Added members to the following struct definitions
 =================================================
+In slurmbdb_cluster_fed_t: Added feature_list to hold cluster features.
+In job_desc_msg_t: Added cluster_features for passing cluster features to
+	controller.
+		   Renamed fed_siblings to fed_siblings_active.
+		   Added fed_siblings_viable.
+In job_info_t: Added cluster_features for passing back a job's cluster features
+	from the controller.
+               Renamed fed_siblings[_str] fed_siblings_active[_str]
+	       Added fed_siblings_viable[_str].
+In struct job_details: Added cluster_features to hold requestsed cluster
+	features.
+In job_fed_details_t: Rename siblings to siblings_active.
+		      Added siblings_viable.
+In job_info_request_msg: Added job_ids to be able to request job info for
+		       specific jobs.
+In job_step_kill_msg_t: Added sibling string to remove active sibling job.
 
 Added the following struct definitions
 ======================================
 In job_alloc_info_msg_t: add req_cluster to indicate where the request is coming
 	from.
+Added reroute_msg_t to route a message to a different cluster.
 
 Removed members from the following struct definitions
 =====================================================
@@ -92,6 +110,7 @@ Changed the following enums and #defines
 
 Added the following API's
 =========================
+Added slurm_kill_job_msg: to send prepared job_step_kill_msg_t.
 
 Changed the following API's
 ============================

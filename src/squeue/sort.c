@@ -48,12 +48,14 @@
 
 /* If you want "linux12" to sort before "linux2", then set PURE_ALPHA_SORT */
 #define PURE_ALPHA_SORT 0
+#define CLUSTER_NAME_LEN 7
 
 static bool reverse_order;
 
 static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2, void *v1, void *v2);
 static void _get_step_info_from_void(job_step_info_t **j1, job_step_info_t **j2, void *v1, void *v2);
 static int _sort_job_by_batch_host(void *void1, void *void2);
+static int _sort_job_by_cluster_name(void *void1, void *void2);
 static int _sort_job_by_gres(void *void1, void *void2);
 static int _sort_job_by_group_id(void *void1, void *void2);
 static int _sort_job_by_group_name(void *void1, void *void2);
@@ -81,6 +83,7 @@ static int _sort_job_by_user_id(void *void1, void *void2);
 static int _sort_job_by_user_name(void *void1, void *void2);
 static int _sort_job_by_reservation(void *void1, void *void2);
 
+static int _sort_step_by_cluster_name(void *void1, void *void2);
 static int _sort_step_by_gres(void *void1, void *void2);
 static int _sort_step_by_id(void *void1, void *void2);
 static int _sort_step_by_node_list(void *void1, void *void2);
@@ -113,7 +116,17 @@ void sort_job_list(List job_list)
 		if ((i > 0) && (params.sort[i-1] == '-'))
 			reverse_order = true;
 
-		if (params.sort[i] == 'B')
+		if ((CLUSTER_NAME_LEN <= (i + 1)) &&
+		    !strncasecmp(params.sort + (i - CLUSTER_NAME_LEN + 1),
+				 "cluster", CLUSTER_NAME_LEN))
+		{
+			if ((CLUSTER_NAME_LEN <= i) &&
+			    (params.sort[i - CLUSTER_NAME_LEN] == '-'))
+				reverse_order = true;
+
+			list_sort(job_list, _sort_job_by_cluster_name);
+			i -= CLUSTER_NAME_LEN - 1;
+		} else if (params.sort[i] == 'B')
 			list_sort(job_list, _sort_job_by_batch_host);
 		else if (params.sort[i] == 'b')
 			list_sort(job_list, _sort_job_by_gres);
@@ -209,7 +222,16 @@ void sort_step_list(List step_list)
 		if ((i > 0) && (params.sort[i-1] == '-'))
 			reverse_order = true;
 
-		if      (params.sort[i] == 'b')
+		if ((CLUSTER_NAME_LEN <= (i + 1)) &&
+		    !strncasecmp(params.sort + (i - CLUSTER_NAME_LEN + 1),
+				 "cluster", CLUSTER_NAME_LEN)) {
+			if ((CLUSTER_NAME_LEN <= i) &&
+			    (params.sort[i - CLUSTER_NAME_LEN] == '-'))
+				reverse_order = true;
+
+			list_sort(step_list, _sort_step_by_cluster_name);
+			i -= CLUSTER_NAME_LEN - 1;
+		} else if (params.sort[i] == 'b')
 			list_sort(step_list, _sort_step_by_gres);
 		else if (params.sort[i] == 'i')
 			list_sort(step_list, _sort_step_by_id);
@@ -303,6 +325,21 @@ static int _sort_job_by_batch_host(void *void1, void *void2)
 	if (job2->batch_host)
 		val2 = job2->batch_host;
 	diff = xstrcmp(val1, val2);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_job_by_cluster_name(void *void1, void *void2)
+{
+	int diff;
+	job_info_t *job1;
+	job_info_t *job2;
+
+	_get_job_info_from_void(&job1, &job2, void1, void2);
+
+	diff = xstrcmp(job1->cluster, job2->cluster);
 
 	if (reverse_order)
 		diff = -diff;
@@ -829,6 +866,21 @@ static int _sort_job_by_reservation(void *void1, void *void2)
 /*****************************************************************************
  * Local Step Sort Functions
  *****************************************************************************/
+static int _sort_step_by_cluster_name(void *void1, void *void2)
+{
+	int diff;
+	job_step_info_t *step1;
+	job_step_info_t *step2;
+
+	_get_step_info_from_void(&step1, &step2, void1, void2);
+
+	diff = xstrcmp(step1->cluster, step2->cluster);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
 static int _sort_step_by_gres(void *void1, void *void2)
 {
 	int diff;

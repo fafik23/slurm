@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  federation_info.c - functions dealing with Federations in the controller.
  *****************************************************************************
- *  Copyright (C) 2016 SchedMD LLC.
+ *  Copyright (C) 2016-2017 SchedMD LLC.
  *  Written by Brian Christiansen <brian@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
@@ -61,7 +61,8 @@ extern int slurm_load_federation(void **fed_pptr)
 	req_msg.msg_type = REQUEST_FED_INFO;
 	req_msg.data     = NULL;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -104,9 +105,7 @@ extern void slurm_print_federation(void *ptr)
 
 	slurmdb_federation_rec_t *fed = (slurmdb_federation_rec_t *)ptr;
 
-	xassert(fed);
-
-	if (!fed->name)
+	if (!fed || !fed->name)
 		return;
 
 	fed_flag_str = slurmdb_federation_flags_str(fed->flags);
@@ -121,17 +120,24 @@ extern void slurm_print_federation(void *ptr)
 	list_sort(fed->cluster_list, (ListCmpF)_sort_clusters_by_name);
 	itr = list_iterator_create(fed->cluster_list);
 
-	/* Display local Cluster*/
+	/* Display local Cluster */
 	while ((cluster = list_next(itr))) {
 		if (!xstrcmp(cluster->name, cluster_name)) {
+			char *features =
+				slurm_char_list_to_xstr(
+						cluster->fed.feature_list);
 			char *tmp_str =
 				slurmdb_cluster_fed_states_str(
 						cluster->fed.state);
-			printf("%-*s %s:%s:%d ID:%d FedState:%s Weight:%d\n",
+
+			printf("%-*s %s:%s:%d ID:%d FedState:%s Weight:%d Features:%s\n",
 			       left_col_size, "Self:", cluster->name,
 			       cluster->control_host, cluster->control_port,
 			       cluster->fed.id, (tmp_str ? tmp_str : ""),
-			       cluster->fed.weight);
+			       cluster->fed.weight,
+			       features ? features : "");
+
+			xfree(features);
 		}
 	}
 
@@ -139,22 +145,35 @@ extern void slurm_print_federation(void *ptr)
 	list_iterator_reset(itr);
 	while ((cluster = list_next(itr))) {
 		char *tmp_str = NULL;
+		char *features = NULL;
 
 		if (!xstrcmp(cluster->name, cluster_name))
 			continue;
 
+		features = slurm_char_list_to_xstr(cluster->fed.feature_list);
 		tmp_str = slurmdb_cluster_fed_states_str(cluster->fed.state);
-		printf("%-*s %s:%s:%d ID:%d FedState:%s Weight:%d "
-		       "PersistConnSend/Recv:%s/%s\n",
+		printf("%-*s %s:%s:%d ID:%d FedState:%s Weight:%d Features:%s PersistConnSend/Recv:%s/%s\n",
 		       left_col_size, "Sibling:", cluster->name,
 		       cluster->control_host, cluster->control_port,
 		       cluster->fed.id, (tmp_str ? tmp_str : ""),
 		       cluster->fed.weight,
+		       features ? features : "",
 		       cluster->fed.send ? "Yes" : "No",
 		       cluster->fed.recv ? "Yes" : "No");
+
+		xfree(features);
 	}
 
 	list_iterator_destroy(itr);
 	xfree(cluster_name);
 	xfree(fed_flag_str);
+}
+
+/*
+ * slurm_destroy_federation_rec - Release memory allocated by
+ *				  slurm_load_federation()
+ */
+extern void slurm_destroy_federation_rec(void *fed)
+{
+	slurmdb_destroy_federation_rec(fed);
 }

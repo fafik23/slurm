@@ -46,13 +46,14 @@ extern slurmdb_cluster_rec_t    *fed_mgr_cluster_rec;
 extern int       fed_mgr_add_sibling_conn(slurm_persist_conn_t *persist_conn,
 					  char **out_buffer);
 extern char     *fed_mgr_cluster_ids_to_names(uint64_t cluster_ids);
-extern int       fed_mgr_fini();
+extern int       fed_mgr_fini(void);
 extern uint32_t  fed_mgr_get_cluster_id(uint32_t id);
 extern char     *fed_mgr_get_cluster_name(uint32_t id);
+extern slurmdb_cluster_rec_t *fed_mgr_get_cluster_by_id(uint32_t id);
+extern slurmdb_cluster_rec_t *fed_mgr_get_cluster_by_name(char *sib_name);
 extern uint32_t  fed_mgr_get_job_id(uint32_t orig);
 extern uint32_t  fed_mgr_get_local_id(uint32_t id);
 extern int       fed_mgr_init(void *db_conn);
-extern bool      fed_mgr_is_active();
 extern int       fed_mgr_is_origin_job(struct job_record *job_ptr);
 extern bool      fed_mgr_is_tracker_only_job(struct job_record *job_ptr);
 extern int       fed_mgr_job_allocate(slurm_msg_t *msg,
@@ -77,10 +78,20 @@ extern int       fed_mgr_job_revoke(struct job_record *job_ptr,
 extern int       fed_mgr_job_revoke_sibs(struct job_record *job_ptr);
 extern int       fed_mgr_job_start(struct job_record *job_ptr,
 				   uint32_t cluster_id, time_t start_time);
+extern int       fed_mgr_remove_active_sibling(uint32_t job_id, char *sib_name);
 extern int       fed_mgr_sib_will_run(slurm_msg_t *msg,
 				      job_desc_msg_t *job_desc, uid_t uid,
 				      will_run_response_msg_t **resp);
 extern slurmdb_federation_rec_t *fed_mgr_state_load(char *state_save_location);
 extern int       fed_mgr_state_save(char *state_save_location);
+extern int       fed_mgr_sync(const char *sib_name);
+extern int       fed_mgr_update_job(job_desc_msg_t *job_specs,
+				    uint64_t update_sibs);
+extern int       fed_mgr_update_job_clusters(struct job_record *job_ptr,
+					     char *spec_clusters);
+extern int       fed_mgr_update_job_cluster_features(struct job_record *job_ptr,
+						     char *req_features);
 extern int       fed_mgr_update_feds(slurmdb_update_object_t *update);
+extern int       fed_mgr_validate_cluster_features(char *spec_features,
+						   uint64_t *cluster_bitmap);
 #endif /* _SLURM_FED_MGR_H */

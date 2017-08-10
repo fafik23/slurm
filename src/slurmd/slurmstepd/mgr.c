@@ -315,7 +315,12 @@ static uint32_t _get_exit_code(stepd_step_rec_t *job)
 			step_rc = job->task[i]->estatus;
 			break;
 		}
-		step_rc = MAX(step_complete.step_rc, job->task[i]->estatus);
+		if ((job->task[i]->estatus & 0xff) == SIG_OOM) {
+			step_rc = job->task[i]->estatus;
+		} else if ((step_rc  & 0xff) != SIG_OOM) {
+			step_rc = MAX(step_complete.step_rc,
+				      job->task[i]->estatus);
+		}
 	}
 	/* If we killed all the tasks by cmd give at least one return
 	   code. */
@@ -688,12 +693,10 @@ _send_exit_msg(stepd_step_rec_t *job, uint32_t *tid, int n, int status)
 
 	msg.task_id_list	= tid;
 	msg.num_tasks		= n;
-	/* FIXME: Add oom_error field to the RPC in version 17.11. For now,
-	 * pack SIG_OOM code into top 16 bits of 32-bit return_code field */
 	if (job->oom_error)
-		msg.return_code		= (status & 0xffffff00) + SIG_OOM;
+		msg.return_code = SIG_OOM;
 	else
-		msg.return_code		= status;
+		msg.return_code = status;
 	msg.job_id		= job->jobid;
 	msg.step_id		= job->stepid;
 	slurm_msg_t_init(&resp);
@@ -803,7 +806,10 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	msg.job_step_id = job->stepid;
 	msg.range_first = first;
 	msg.range_last = last;
-	msg.step_rc = step_complete.step_rc;
+	if (job->oom_error)
+		msg.step_rc = SIG_OOM;
+	else
+		msg.step_rc = step_complete.step_rc;
 	msg.jobacct = jobacctinfo_create(NULL);
 	/************* acct stuff ********************/
 	if (!acct_sent) {
@@ -871,7 +877,8 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	/* Retry step complete RPC send to slurmctld indefinitely.
 	 * Prevent orphan job step if slurmctld is down */
 	i = 1;
-	while (slurm_send_recv_controller_rc_msg(&req, &rc) < 0) {
+	while (slurm_send_recv_controller_rc_msg(&req, &rc,
+						 working_cluster_rec) < 0) {
 		if (i++ == 1) {
 			slurm_get_ip_str(&step_complete.parent_addr, &port,
 					 ip_buf, sizeof(ip_buf));
@@ -2274,7 +2281,7 @@ static int _drain_node(char *reason)
 	req_msg.msg_type = REQUEST_UPDATE_NODE;
 	req_msg.data = &update_node_msg;
 
-	if (slurm_send_only_controller_msg(&req_msg) < 0)
+	if (slurm_send_only_controller_msg(&req_msg, working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	return SLURM_SUCCESS;
@@ -2374,7 +2381,10 @@ _send_complete_batch_script_msg(stepd_step_rec_t *job, int err, int status)
 	}
 
 	req.job_id	= job->jobid;
-	req.job_rc      = status;
+	if (job->oom_error)
+		req.job_rc = SIG_OOM;
+	else
+		req.job_rc = status;
 	req.jobacct	= job->jobacct;
 	req.node_name	= job->node_name;
 	req.slurm_rc	= err;
@@ -2389,8 +2399,8 @@ _send_complete_batch_script_msg(stepd_step_rec_t *job, int err, int status)
 	/* Note: these log messages don't go to slurmd.log from here */
 	for (i = 0; i <= MAX_RETRY; i++) {
 		if (msg_to_ctld) {
-			msg_rc = slurm_send_recv_controller_rc_msg(&req_msg,
-								   &rc);
+			msg_rc = slurm_send_recv_controller_rc_msg(&req_msg, &rc,
+							working_cluster_rec);
 		} else {
 			/* Send msg to slurmd, which forwards to slurmctld and
 			 * may get a new job to launch */

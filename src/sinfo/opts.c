@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2017 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>, Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -44,6 +44,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "slurm/slurmdb.h"
 #include "src/common/xstring.h"
 #include "src/common/proc_args.h"
 
@@ -51,9 +52,10 @@
 #include "src/sinfo/sinfo.h"
 
 /* getopt_long options, integers but not characters */
-#define OPT_LONG_HELP   0x100
-#define OPT_LONG_USAGE  0x101
-#define OPT_LONG_HIDE	0x102
+#define OPT_LONG_HELP      0x100
+#define OPT_LONG_USAGE     0x101
+#define OPT_LONG_HIDE      0x102
+#define OPT_LONG_LOCAL     0x103
 #define OPT_LONG_NOCONVERT 0x104
 
 /* FUNCTIONS */
@@ -91,13 +93,16 @@ extern void parse_command_line(int argc, char **argv)
 		{"bg",        no_argument,       0, 'b'},
 		{"dead",      no_argument,       0, 'd'},
 		{"exact",     no_argument,       0, 'e'},
-		{"noheader",  no_argument,       0, 'h'},
+		{"help",      no_argument,       0, OPT_LONG_HELP},
+		{"hide",      no_argument,       0, OPT_LONG_HIDE},
 		{"iterate",   required_argument, 0, 'i'},
+		{"local",     no_argument,       0, OPT_LONG_LOCAL},
 		{"long",      no_argument,       0, 'l'},
 		{"cluster",   required_argument, 0, 'M'},
 		{"clusters",  required_argument, 0, 'M'},
 		{"nodes",     required_argument, 0, 'n'},
-                {"noconvert", no_argument,       0, OPT_LONG_NOCONVERT},
+		{"noconvert", no_argument,       0, OPT_LONG_NOCONVERT},
+		{"noheader",  no_argument,       0, 'h'},
 		{"Node",      no_argument,       0, 'N'},
 		{"format",    required_argument, 0, 'o'},
 		{"Format",    required_argument, 0, 'O'},
@@ -108,11 +113,9 @@ extern void parse_command_line(int argc, char **argv)
 		{"sort",      required_argument, 0, 'S'},
 		{"states",    required_argument, 0, 't'},
 		{"reservation",no_argument,      0, 'T'},
+		{"usage",     no_argument,       0, OPT_LONG_USAGE},
 		{"verbose",   no_argument,       0, 'v'},
 		{"version",   no_argument,       0, 'V'},
-		{"help",      no_argument,       0, OPT_LONG_HELP},
-		{"usage",     no_argument,       0, OPT_LONG_USAGE},
-		{"hide",      no_argument,       0, OPT_LONG_HIDE},
 		{NULL,        0,                 0, 0}
 	};
 
@@ -121,6 +124,9 @@ extern void parse_command_line(int argc, char **argv)
 	if (getenv("SINFO_ALL")) {
 		env_a_set = true;
 		params.all_flag = true;
+	}
+	if (getenv("SINFO_LOCAL")) {
+		params.local = true;
 	}
 	if ( ( env_val = getenv("SINFO_PARTITION") ) ) {
 		env_p_set = true;
@@ -217,7 +223,8 @@ extern void parse_command_line(int argc, char **argv)
 			if (hostlist_count(host_list) == 1) {
 				params.node_name_single = true;
 				xfree(params.nodes);
-				params.nodes = hostlist_deranged_string_xmalloc(host_list);
+				params.nodes =
+				    hostlist_deranged_string_xmalloc(host_list);
 			} else
 				params.node_name_single = false;
 			hostlist_destroy(host_list);
@@ -281,6 +288,9 @@ extern void parse_command_line(int argc, char **argv)
 		case OPT_LONG_HIDE:
 			params.all_flag = false;
 			break;
+		case OPT_LONG_LOCAL:
+			params.local = true;
+			break;
 		}
 	}
 
@@ -291,6 +301,20 @@ extern void parse_command_line(int argc, char **argv)
 	}
 
 	params.cluster_flags = slurmdb_setup_cluster_flags();
+
+	if (!params.clusters && !params.local) {
+		void *ptr = NULL;
+		char *cluster_name = slurm_get_cluster_name();
+		if (slurm_load_federation(&ptr) ||
+		    !cluster_in_federation(ptr, cluster_name)) {
+			/* Not in federation */
+			params.local = true;
+			slurm_destroy_federation_rec(ptr);
+		} else {
+			params.fed = (slurmdb_federation_rec_t *) ptr;
+		}
+		xfree(cluster_name);
+	}
 
 	if ( params.format == NULL ) {
 		if ( params.summarize ) {
@@ -314,6 +338,12 @@ extern void parse_command_line(int argc, char **argv)
 		} else if ((env_val = getenv ("SINFO_FORMAT"))) {
 			params.format = xstrdup(env_val);
 
+
+		} else if (params.fed) {
+			params.part_field_flag = true;	/* compute size later */
+			params.format = params.long_output ?
+			  "%9P %8V %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N" :
+			  "%9P %8V %.5a %.10l %.6D %.6t %N";
 		} else {
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
@@ -798,6 +828,11 @@ _parse_format( char* format )
 					    field_size,
 					    right_justify,
 					    suffix);
+		} else if (field[0] == 'V') {
+			format_add_cluster_name(params.format_list,
+						field_size,
+						right_justify,
+						suffix);
 		} else if (field[0] == 'w') {
 			params.match_flags.weight_flag = true;
 			format_add_weight( params.format_list,
@@ -889,6 +924,11 @@ static int _parse_long_format (char* format_long)
 					  field_size,
 					  right_justify,
 					  suffix );
+		} else if (!xstrcasecmp(token, "cluster")) {
+			format_add_cluster_name(params.format_list,
+						field_size,
+						right_justify,
+						suffix);
 		} else if (!xstrcasecmp(token, "cpus")) {
 			params.match_flags.cpus_flag = true;
 			format_add_cpus( params.format_list,
@@ -1307,7 +1347,7 @@ static void _usage( void )
 {
 	printf("\
 Usage: sinfo [-abdelNRrsTv] [-i seconds] [-t states] [-p partition] [-n nodes]\n\
-             [-S fields] [-o format] [-O Format]\n");
+             [-S fields] [-o format] [-O Format] [--local]\n");
 }
 
 static void _help( void )
@@ -1322,6 +1362,7 @@ Usage: sinfo [OPTIONS]\n\
   -h, --noheader             no headers on output\n\
   --hide                     do not show hidden or non-accessible partitions\n\
   -i, --iterate=seconds      specify an iteration period\n\
+      --local                show only local cluster in a federation\n\
   -l, --long                 long output - displays more information\n\
   -M, --clusters=names       clusters to issue commands to.\n\
                              NOTE: SlurmDBD must be up.\n\

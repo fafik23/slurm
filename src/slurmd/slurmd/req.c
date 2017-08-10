@@ -924,7 +924,7 @@ _forkexec_slurmstepd(uint16_t type, void *req,
 		}
 
 		/*
-		 * Just incase we (or someone we are linking to)
+		 * Just in case we (or someone we are linking to)
 		 * opened a file and didn't do a close on exec.  This
 		 * is needed mostly to protect us against libs we link
 		 * to that don't set the flag as we should already be
@@ -1472,14 +1472,11 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 		job_env.user_name = req->user_name;
 		rc =  _run_prolog(&job_env, req->cred);
 		if (rc) {
-			int term_sig, exit_status;
-			if (WIFSIGNALED(rc)) {
-				exit_status = 0;
+			int term_sig = 0, exit_status = 0;
+			if (WIFSIGNALED(rc))
 				term_sig    = WTERMSIG(rc);
-			} else {
+			else if (WIFEXITED(rc))
 				exit_status = WEXITSTATUS(rc);
-				term_sig    = 0;
-			}
 			error("[job %u] prolog failed status=%d:%d",
 			      req->job_id, exit_status, term_sig);
 			errnum = ESLURMD_PROLOG_FAILED;
@@ -1871,7 +1868,8 @@ static void _notify_slurmctld_prolog_fini(
 	req_msg.msg_type= REQUEST_COMPLETE_PROLOG;
 	req_msg.data	= &req;
 
-	if ((slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0) ||
+	if ((slurm_send_recv_controller_rc_msg(&req_msg, &rc,
+					       working_cluster_rec) < 0) ||
 	    (rc != SLURM_SUCCESS))
 		error("Error sending prolog completion notification: %m");
 }
@@ -2078,14 +2076,11 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		error("Error starting prolog: %m");
 	}
 	if (rc) {
-		int term_sig, exit_status;
-		if (WIFSIGNALED(rc)) {
-			exit_status = 0;
+		int term_sig = 0, exit_status = 0;
+		if (WIFSIGNALED(rc))
 			term_sig    = WTERMSIG(rc);
-		} else {
+		else if (WIFEXITED(rc))
 			exit_status = WEXITSTATUS(rc);
-			term_sig    = 0;
-		}
 		error("[job %u] prolog start failed status=%d:%d",
 		      req->job_id, exit_status, term_sig);
 		rc = ESLURMD_PROLOG_FAILED;
@@ -2125,14 +2120,11 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		rc = _run_prolog(&job_env, req->cred);
 
 		if (rc) {
-			int term_sig, exit_status;
-			if (WIFSIGNALED(rc)) {
-				exit_status = 0;
+			int term_sig = 0, exit_status = 0;
+			if (WIFSIGNALED(rc))
 				term_sig    = WTERMSIG(rc);
-			} else {
+			else if (WIFEXITED(rc))
 				exit_status = WEXITSTATUS(rc);
-				term_sig    = 0;
-			}
 			error("[job %u] prolog failed status=%d:%d",
 			      req->job_id, exit_status, term_sig);
 			rc = ESLURMD_PROLOG_FAILED;
@@ -2247,14 +2239,11 @@ _rpc_batch_job(slurm_msg_t *msg, bool new_msg)
 		rc = _run_prolog(&job_env, req->cred);
 		xfree(job_env.resv_id);
 		if (rc) {
-			int term_sig, exit_status;
-			if (WIFSIGNALED(rc)) {
-				exit_status = 0;
+			int term_sig = 0, exit_status = 0;
+			if (WIFSIGNALED(rc))
 				term_sig    = WTERMSIG(rc);
-			} else {
+			else if (WIFEXITED(rc))
 				exit_status = WEXITSTATUS(rc);
-				term_sig    = 0;
-			}
 			error("[job %u] prolog failed status=%d:%d",
 			      req->job_id, exit_status, term_sig);
 			_prolog_error(req, rc);
@@ -2467,7 +2456,8 @@ _launch_job_fail(uint32_t job_id, uint32_t slurm_rc)
 		resp_msg.data = &req_msg;
 	}
 
-	rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc);
+	rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc,
+						   working_cluster_rec);
 	if ((resp_msg.msg_type == REQUEST_JOB_REQUEUE) &&
 	    ((rc == ESLURM_DISABLED) || (rc == ESLURM_BATCH_ONLY))) {
 		info("Could not launch job %u and not able to requeue it, "
@@ -2489,7 +2479,8 @@ _launch_job_fail(uint32_t job_id, uint32_t slurm_rc)
 		comp_msg.jobacct = NULL; /* unused */
 		resp_msg.msg_type = REQUEST_COMPLETE_BATCH_SCRIPT;
 		resp_msg.data = &comp_msg;
-		rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc);
+		rpc_rc = slurm_send_recv_controller_rc_msg(&resp_msg, &rc,
+							   working_cluster_rec);
 	}
 
 	return rpc_rc;
@@ -2511,7 +2502,8 @@ _abort_step(uint32_t job_id, uint32_t step_id)
 	resp.jobacct      = jobacctinfo_create(NULL);
 	resp_msg.msg_type = REQUEST_STEP_COMPLETE;
 	resp_msg.data     = &resp;
-	rc2 = slurm_send_recv_controller_rc_msg(&resp_msg, &rc);
+	rc2 = slurm_send_recv_controller_rc_msg(&resp_msg, &rc,
+						working_cluster_rec);
 	/* Note: we are ignoring the RPC return code */
 	jobacctinfo_destroy(resp.jobacct);
 	return rc2;
@@ -2707,16 +2699,16 @@ _cancel_step_mem_limit(uint32_t job_id, uint32_t step_id)
 	notify_req.message     = "Exceeded job memory limit";
 	msg.msg_type    = REQUEST_JOB_NOTIFY;
 	msg.data        = &notify_req;
-	slurm_send_only_controller_msg(&msg);
+	slurm_send_only_controller_msg(&msg, working_cluster_rec);
 
 	memset(&kill_req, 0, sizeof(job_step_kill_msg_t));
 	kill_req.job_id      = job_id;
 	kill_req.job_step_id = step_id;
 	kill_req.signal      = SIGKILL;
-	kill_req.flags       = (uint16_t) 0;
+	kill_req.flags       = KILL_OOM;
 	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
 	msg.data        = &kill_req;
-	slurm_send_only_controller_msg(&msg);
+	slurm_send_only_controller_msg(&msg, working_cluster_rec);
 }
 
 /* Enforce job memory limits here in slurmd. Step memory limits are
@@ -3325,7 +3317,8 @@ _rpc_step_complete_aggr(slurm_msg_t *msg)
 		slurm_msg_t req;
 		_setup_step_complete_msg(&req, msg->data);
 
-		while (slurm_send_recv_controller_rc_msg(&req, &rc) < 0) {
+		while (slurm_send_recv_controller_rc_msg(&req, &rc,
+						working_cluster_rec) < 0) {
 			error("Unable to send step complete, "
 			      "trying again in a minute: %m");
 		}
@@ -4649,7 +4642,8 @@ _epilog_complete(uint32_t jobid, int rc)
 
 		/* Note: No return code to message, slurmctld will resend
 		 * TERMINATE_JOB request if message send fails */
-		if (slurm_send_only_controller_msg(&msg) < 0) {
+		if (slurm_send_only_controller_msg(&msg, working_cluster_rec)
+		    < 0) {
 			error("Unable to send epilog complete message: %m");
 			ret = SLURM_ERROR;
 		} else {
@@ -5208,14 +5202,11 @@ _rpc_terminate_batch_job(uint32_t job_id, uint32_t user_id, char *node_name)
 	/* NOTE: We lack the job's SPANK environment variables */
 	rc = _run_epilog(&job_env);
 	if (rc) {
-		int term_sig, exit_status;
-		if (WIFSIGNALED(rc)) {
-			exit_status = 0;
+		int term_sig = 0, exit_status = 0;
+		if (WIFSIGNALED(rc))
 			term_sig    = WTERMSIG(rc);
-		} else {
+		else if (WIFEXITED(rc))
 			exit_status = WEXITSTATUS(rc);
-			term_sig    = 0;
-		}
 		error("[job %u] epilog failed status=%d:%d",
 		      job_id, exit_status, term_sig);
 	} else
@@ -5303,8 +5294,8 @@ _rpc_complete_batch(slurm_msg_t *msg)
 			slurm_msg_t_init(&req_msg);
 			req_msg.msg_type = msg_type;
 			req_msg.data	 = msg->data;
-			msg_rc = slurm_send_recv_controller_msg(
-				&req_msg, &resp_msg);
+			msg_rc = slurm_send_recv_controller_msg(&req_msg,
+						&resp_msg, working_cluster_rec);
 
 			if (msg_rc == SLURM_SUCCESS)
 				break;
@@ -5537,14 +5528,11 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	xfree(job_env.resv_id);
 
 	if (rc) {
-		int term_sig, exit_status;
-		if (WIFSIGNALED(rc)) {
-			exit_status = 0;
+		int term_sig = 0, exit_status = 0;
+		if (WIFSIGNALED(rc))
 			term_sig    = WTERMSIG(rc);
-		} else {
+		else if (WIFEXITED(rc))
 			exit_status = WEXITSTATUS(rc);
-			term_sig    = 0;
-		}
 		error("[job %u] epilog failed status=%d:%d",
 		      req->job_id, exit_status, term_sig);
 		rc = ESLURMD_EPILOG_FAILED;
@@ -5976,7 +5964,7 @@ static void *_prolog_timer(void *x)
 	notify_req.message	= srun_msg;
 	msg.msg_type	= REQUEST_JOB_NOTIFY;
 	msg.data	= &notify_req;
-	slurm_send_only_controller_msg(&msg);
+	slurm_send_only_controller_msg(&msg, working_cluster_rec);
 	return NULL;
 }
 
@@ -6332,17 +6320,11 @@ static int
 _add_starting_step(uint16_t type, void *req)
 {
 	starting_step_t *starting_step;
-	int rc = SLURM_SUCCESS;
 
 	/* Add the step info to a list of starting processes that
 	   cannot reliably be contacted. */
-	slurm_mutex_lock(&conf->starting_steps_lock);
 	starting_step = xmalloc(sizeof(starting_step_t));
-	if (!starting_step) {
-		error("%s failed to allocate memory", __func__);
-		rc = SLURM_FAILURE;
-		goto fail;
-	}
+
 	switch (type) {
 	case LAUNCH_BATCH_JOB:
 		starting_step->job_id =
@@ -6362,21 +6344,15 @@ _add_starting_step(uint16_t type, void *req)
 		break;
 	default:
 		error("%s called with an invalid type: %u", __func__, type);
-		rc = SLURM_FAILURE;
 		xfree(starting_step);
-		goto fail;
+		return SLURM_FAILURE;
 	}
 
-	if (!list_append(conf->starting_steps, starting_step)) {
-		error("%s failed to allocate memory for list", __func__);
-		rc = SLURM_FAILURE;
-		xfree(starting_step);
-		goto fail;
-	}
-
-fail:
+	slurm_mutex_lock(&conf->starting_steps_lock);
+	list_append(conf->starting_steps, starting_step);
 	slurm_mutex_unlock(&conf->starting_steps_lock);
-	return rc;
+
+	return SLURM_SUCCESS;
 }
 
 
@@ -6513,20 +6489,11 @@ static void _add_job_running_prolog(uint32_t job_id)
 	uint32_t *job_running_prolog;
 
 	/* Add the job to a list of jobs whose prologs are running */
-	slurm_mutex_lock(&conf->prolog_running_lock);
 	job_running_prolog = xmalloc(sizeof(uint32_t));
-	if (!job_running_prolog) {
-		error("_add_job_running_prolog failed to allocate memory");
-		goto fail;
-	}
-
 	*job_running_prolog = job_id;
-	if (!list_append(conf->prolog_running_jobs, job_running_prolog)) {
-		error("_add_job_running_prolog failed to append job to list");
-		xfree(job_running_prolog);
-	}
 
-fail:
+	slurm_mutex_lock(&conf->prolog_running_lock);
+	list_append(conf->prolog_running_jobs, job_running_prolog);
 	slurm_mutex_unlock(&conf->prolog_running_lock);
 }
 

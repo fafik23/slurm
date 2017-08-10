@@ -246,11 +246,6 @@ EXTRA_DIST = \
 	test7.5.prog.c			\
 	test7.6				\
 	test7.6.prog.c			\
-	test7.7				\
-	test7.7.crypto.c		\
-	test7.7.prog.c			\
-	test7.8				\
-	test7.8.prog.c			\
 	test7.9				\
 	test7.9.prog.c			\
 	test7.10			\
@@ -289,9 +284,6 @@ EXTRA_DIST = \
 	test8.4.prog.c			\
 	test8.5				\
 	test8.6				\
-	test8.7				\
-	test8.7.crypto.c		\
-	test8.7.prog.c			\
 	test8.8				\
 	test8.9				\
 	test8.10			\
@@ -538,7 +530,7 @@ EXTRA_DIST = \
 	inc21.30.17			\
 	inc21.34.1			\
 	inc21.34.2			\
-	inc21.34_test			\
+	inc21.34_tests			\
 	test22.1			\
 	inc22.1.1                       \
 	inc22.1.2                       \
@@ -617,7 +609,9 @@ EXTRA_DIST = \
 	test37.2			\
 	test37.3			\
 	test37.4			\
-	test37.5
+	test37.5			\
+	test37.6			\
+	test37.7
 
 distclean-local:
 	rm -rf *error *output

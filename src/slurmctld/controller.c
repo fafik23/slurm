@@ -116,7 +116,6 @@
 #include "src/slurmctld/trigger_mgr.h"
 
 
-#define CRED_LIFE         60	/* Job credential lifetime in seconds */
 #define DEFAULT_DAEMONIZE 1	/* Run as daemon by default if set */
 #define DEFAULT_RECOVER   1	/* Default state recovery on restart
 				 * 0 = use no saved state information
@@ -170,7 +169,6 @@ uint32_t cluster_cpus = 0;
 time_t	last_proc_req_start = 0;
 bool	ping_nodes_now = false;
 int	sched_interval = 60;
-char *	slurmctld_cluster_name = NULL; /* name of cluster */
 slurmctld_config_t slurmctld_config;
 diag_stats_t slurmctld_diag_stats;
 int	slurmctld_primary = 1;
@@ -274,7 +272,7 @@ int main(int argc, char **argv)
 
 	/* Verify clustername from conf matches value in spool dir
 	 * exit if inconsistent to protect state files from corruption.
-	 * This needs to be done before we kill the old one just incase we
+	 * This needs to be done before we kill the old one just in case we
 	 * fail. */
 	create_clustername_file = _verify_clustername();
 
@@ -352,10 +350,6 @@ int main(int argc, char **argv)
 	if (xsignal_block(controller_sigarray) < 0)
 		error("Unable to block signals");
 
-	/* This needs to be copied for other modules to access the
-	 * memory, it will report 'HashBase' if it is not duped
-	 */
-	slurmctld_cluster_name = xstrdup(slurmctld_conf.cluster_name);
 	association_based_accounting =
 		slurm_get_is_association_based_accounting();
 	accounting_enforce = slurmctld_conf.accounting_storage_enforce;
@@ -367,13 +361,9 @@ int main(int argc, char **argv)
 	}
 
 	if (accounting_enforce && !association_based_accounting) {
-		slurm_ctl_conf_t *conf = slurm_conf_lock();
-		conf->track_wckey = false;
-		conf->accounting_storage_enforce = 0;
 		accounting_enforce = 0;
 		slurmctld_conf.track_wckey = false;
 		slurmctld_conf.accounting_storage_enforce = 0;
-		slurm_conf_unlock();
 
 		error("You can not have AccountingStorageEnforce "
 		      "set for AccountingStorageType='%s'",
@@ -387,8 +377,8 @@ int main(int argc, char **argv)
 	callbacks.db_fail     = trigger_primary_db_fail;
 	callbacks.db_resumed  = trigger_primary_db_res_op;
 
-	info("%s version %s started on cluster %s",
-	     slurm_prog_name, SLURM_VERSION_STRING, slurmctld_cluster_name);
+	info("%s version %s started on cluster %s", slurm_prog_name,
+	     SLURM_VERSION_STRING, slurmctld_conf.cluster_name);
 
 	if ((error_code = gethostname_short(node_name_short, MAX_SLURM_NAME)))
 		fatal("getnodename_short error %s", slurm_strerror(error_code));
@@ -422,13 +412,6 @@ int main(int argc, char **argv)
 		xfree(sched_params);
 #endif
 	}
-
-
-	/* Not used in creator
-	 *
-	 * slurm_cred_ctx_set(slurmctld_config.cred_ctx,
-	 *                    SLURM_CRED_OPT_EXPIRY_WINDOW, CRED_LIFE);
-	 */
 
 	/*
 	 * Initialize plugins.
@@ -515,7 +498,7 @@ int main(int argc, char **argv)
 		if (!acct_db_conn) {
 			acct_db_conn = acct_storage_g_get_connection(
 						&callbacks, 0, false,
-						slurmctld_cluster_name);
+						slurmctld_conf.cluster_name);
 			/* We only send in a variable the first time
 			 * we call this since we are setting up static
 			 * variables inside the function sending a
@@ -535,21 +518,6 @@ int main(int argc, char **argv)
 		    (slurmctld_primary == 1)) {
 			trigger_primary_ctld_res_op();
 		}
-
-		/*
-		 * create attached thread to process RPCs
-		 * Create before registering so that the controller can listen
-		 * to any updates from the dbd at startup.
-		 */
-		server_thread_incr();
-		slurm_attr_init(&thread_attr);
-		while (pthread_create(&slurmctld_config.thread_id_rpc,
-				      &thread_attr, _slurmctld_rpc_mgr,
-				      NULL)) {
-			error("pthread_create error %m");
-			sleep(1);
-		}
-		slurm_attr_destroy(&thread_attr);
 
 		clusteracct_storage_g_register_ctld(
 			acct_db_conn,
@@ -572,6 +540,19 @@ int main(int argc, char **argv)
 			fatal( "failed to initialize power management plugin");
 		if (slurm_mcs_init() != SLURM_SUCCESS)
 			fatal("failed to initialize mcs plugin");
+
+		/*
+		 * create attached thread to process RPCs
+		 */
+		server_thread_incr();
+		slurm_attr_init(&thread_attr);
+		while (pthread_create(&slurmctld_config.thread_id_rpc,
+				      &thread_attr, _slurmctld_rpc_mgr,
+				      NULL)) {
+			error("pthread_create error %m");
+			sleep(1);
+		}
+		slurm_attr_destroy(&thread_attr);
 
 		/*
 		 * create attached thread for signal handling
@@ -747,7 +728,6 @@ int main(int argc, char **argv)
 #endif
 
 	xfree(slurmctld_config.auth_info);
-	xfree(slurmctld_cluster_name);
 	if (cnt) {
 		info("Slurmctld shutdown completing with %d active agent "
 		     "thread", cnt);
@@ -794,7 +774,8 @@ static void  _init_config(void)
 	slurmctld_config.server_thread_count = 0;
 	slurmctld_config.shutdown_time  = (time_t) 0;
 	slurmctld_config.thread_id_main = pthread_self();
-	slurmctld_config.scheduling_disabled = false;
+	slurmctld_config.scheduling_disabled  = false;
+	slurmctld_config.submissions_disabled = false;
 	slurm_mutex_init(&slurmctld_config.thread_count_lock);
 	slurmctld_config.thread_id_main    = (pthread_t) 0;
 	slurmctld_config.thread_id_sig     = (pthread_t) 0;
@@ -984,9 +965,12 @@ static void *_slurmctld_rpc_mgr(void *no_data)
 			return NULL;	/* Fix CLANG false positive */
 		}
 		fd_set_close_on_exec(sockfd[i]);
-		slurm_get_stream_addr(sockfd[i], &srv_addr);
-		slurm_get_ip_str(&srv_addr, &port, ip, sizeof(ip));
-		debug2("slurmctld listening on %s:%d", ip, ntohs(port));
+		if (slurm_get_stream_addr(sockfd[i], &srv_addr)) {
+			error("slurm_get_stream_addr error %m");
+		} else {
+			slurm_get_ip_str(&srv_addr, &port, ip, sizeof(ip));
+			debug2("slurmctld listening on %s:%d", ip, ntohs(port));
+		}
 	}
 	unlock_slurmctld(config_read_lock);
 
@@ -1860,7 +1844,7 @@ static void *_slurmctld_background(void *no_data)
 		}
 
 		if (slurmctld_conf.inactive_limit &&
-		    (difftime(now, last_ping_srun_time) >=
+		    ((now - last_ping_srun_time) >=
 		     (slurmctld_conf.inactive_limit / 3))) {
 			now = time(NULL);
 			last_ping_srun_time = now;
@@ -2065,7 +2049,7 @@ extern void ctld_assoc_mgr_init(slurm_trigger_callbacks_t *callbacks)
 		acct_storage_g_close_connection(&acct_db_conn);
 
 	acct_db_conn = acct_storage_g_get_connection(callbacks, 0, false,
-						     slurmctld_cluster_name);
+						     slurmctld_conf.cluster_name);
 
 	if (assoc_mgr_init(acct_db_conn, &assoc_init_arg, errno)) {
 		if (accounting_enforce & ACCOUNTING_ENFORCE_ASSOCS)

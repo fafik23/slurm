@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  sreport.c - report generating tool for slurm accounting.
  *****************************************************************************
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Portions Copyright (C) 2010-2017 SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -41,7 +41,6 @@
 #include "config.h"
 
 #include "src/sreport/sreport.h"
-#include "src/sreport/assoc_reports.h"
 #include "src/sreport/cluster_reports.h"
 #include "src/sreport/job_reports.h"
 #include "src/sreport/resv_reports.h"
@@ -49,13 +48,15 @@
 #include "src/common/xsignal.h"
 #include "src/common/proc_args.h"
 
-#define OPT_LONG_HIDE   0x102
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE		4096
+#define OPT_LONG_LOCAL		0x101
 
 char *command_name;
 int exit_code;		/* sreport's exit code, =1 on any error at any time */
 int exit_flag;		/* program to terminate if =1 */
+char *fed_name = NULL;	/* Operating in federation mode */
 int input_words;	/* number of words of input permitted */
+bool local_flag;	/* --local option */
 int quiet_flag;		/* quiet=1, verbose=-1, normal=0 */
 char *tres_str = NULL;	/* --tres= value */
 List tres_list;		/* TRES to report, built from --tres= value */
@@ -68,6 +69,7 @@ uint32_t my_uid = 0;
 slurmdb_report_sort_t sort_flag = SLURMDB_REPORT_SORT_TIME;
 
 static void	_assoc_rep (int argc, char **argv);
+static char *	_build_cluster_string(void);
 static List	_build_tres_list(char *tres_str);
 static void	_cluster_rep (int argc, char **argv);
 static int	_get_command (int *argc, char **argv);
@@ -93,6 +95,7 @@ main (int argc, char **argv)
 		{"cluster",  1, 0, 'M'},
 		{"help",     0, 0, 'h'},
 		{"immediate",0, 0, 'i'},
+		{"local",          no_argument,       0,    OPT_LONG_LOCAL},
 		{"noheader", 0, 0, 'n'},
 		{"parsable", 0, 0, 'p'},
 		{"parsable2",0, 0, 'P'},
@@ -109,6 +112,7 @@ main (int argc, char **argv)
 	exit_code         = 0;
 	exit_flag         = 0;
 	input_field_count = 0;
+	local_flag        = false;
 	quiet_flag        = 0;
 	slurm_conf_init(NULL);
 	log_init("sreport", opts, SYSLOG_FACILITY_DAEMON, NULL);
@@ -127,6 +131,11 @@ main (int argc, char **argv)
 	}
 	xfree(temp);
 
+	temp = getenv("SREPORT_CLUSTER");
+	if (temp)
+		cluster_flag = xstrdup(optarg);
+	if (getenv("SREPORT_LOCAL"))
+		local_flag = true;
 	temp = getenv("SREPORT_TRES");
 	if (temp)
 		tres_str = xstrdup(temp);
@@ -145,6 +154,9 @@ main (int argc, char **argv)
 			break;
 		case (int)'a':
 			all_clusters_flag = 1;
+			break;
+		case OPT_LONG_LOCAL:
+			local_flag = true;
 			break;
 		case (int) 'M':
 			cluster_flag = xstrdup(optarg);
@@ -181,11 +193,23 @@ main (int argc, char **argv)
 			exit(exit_code);
 			break;
 		default:
-			exit_code = 1;
 			fprintf(stderr, "getopt error, returned %c\n",
 				opt_char);
-			exit(exit_code);
+			exit(1);
 		}
+	}
+
+	i = 0;
+	if (all_clusters_flag)
+		i++;
+	if (cluster_flag)
+		i++;
+	if (local_flag)
+		i++;
+	if (i > 1) {
+		fprintf(stderr,
+			"Only one cluster option can be used (--all_clusters OR --cluster OR --local)\n"),
+		exit(1);
 	}
 
 	if (argc > MAX_INPUT_FIELDS)	/* bogus input, but continue anyway */
@@ -198,6 +222,9 @@ main (int argc, char **argv)
 			input_fields[input_field_count++] = argv[i];
 		}
 	}
+
+	if (!all_clusters_flag && !cluster_flag && !local_flag)
+		cluster_flag = _build_cluster_string();
 
 	my_uid = getuid();
 	db_conn = slurmdb_connection_get();
@@ -227,6 +254,45 @@ main (int argc, char **argv)
 	slurmdb_connection_close(&db_conn);
 	slurm_acct_storage_fini();
 	exit(exit_code);
+}
+
+static int _foreach_cluster_list_to_str(void *x, void *arg)
+{
+	slurmdb_cluster_rec_t *cluster = (slurmdb_cluster_rec_t *)x;
+	char **out_str = (char **)arg;
+
+	xassert(cluster);
+	xassert(out_str);
+
+	xstrfmtcat(*out_str, "%s%s", *out_str ? "," : "", cluster->name);
+
+	return SLURM_SUCCESS;
+}
+
+static char *_build_cluster_string(void)
+{
+	char *cluster_str = NULL;
+	slurmdb_federation_rec_t *fed = NULL;
+	slurmdb_federation_cond_t fed_cond;
+	List fed_list;
+	List cluster_list = list_create(NULL);
+
+	list_append(cluster_list, slurmctld_conf.cluster_name);
+	slurmdb_init_federation_cond(&fed_cond, 0);
+	fed_cond.cluster_list = cluster_list;
+
+	if ((fed_list =
+	     acct_storage_g_get_federations(db_conn, my_uid, &fed_cond)) &&
+	     list_count(fed_list) == 1) {
+		fed = list_pop(fed_list);
+		fed_name = xstrdup(fed->name);
+		list_for_each(fed->cluster_list, _foreach_cluster_list_to_str,
+			      &cluster_str);
+	}
+	slurm_destroy_federation_rec(fed);
+	FREE_NULL_LIST(cluster_list);
+
+	return cluster_str;
 }
 
 static List _build_tres_list(char *tres_str)
@@ -598,6 +664,13 @@ _process_command (int argc, char **argv)
 				 argv[0]);
 		}
 		exit_flag = 1;
+	} else if (strncasecmp (argv[0], "local", MAX(command_len, 3)) == 0) {
+		if (argc > 1) {
+			exit_code = 1;
+			fprintf (stderr, "too many arguments for keyword:%s\n",
+				 argv[0]);
+		}
+		local_flag = true;
 	} else if (strncasecmp (argv[0], "nonparsable",
 				MAX(command_len, 4)) == 0) {
 		if (argc > 1) {
@@ -734,13 +807,14 @@ static int _set_sort(char *format)
 
 
 /* _usage - show the valid sreport commands */
-void _usage () {
+void _usage (void) {
 	printf ("\
 sreport [<OPTION>] [<COMMAND>]                                             \n\
     Valid <OPTION> values are:                                             \n\
      -a or --all_clusters: Use all clusters instead of current             \n\
      -h or --help: equivalent to \"help\" command                          \n\
-     -n or --noheader: equivalent to \"noheader\" command                \n\
+     --local: Report local cluster, even when in federation of clusters    \n\
+     -n or --noheader: equivalent to \"noheader\" command                  \n\
      -p or --parsable: output will be '|' delimited with a '|' at the end  \n\
      -P or --parsable2: output will be '|' delimited without a '|' at the end\n\
      -Q or --quiet: equivalent to \"quiet\" command                        \n\

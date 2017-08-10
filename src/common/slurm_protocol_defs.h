@@ -251,7 +251,7 @@ typedef enum {
 	RESPONSE_POWERCAP_INFO,
 	REQUEST_ASSOC_MGR_INFO,
 	RESPONSE_ASSOC_MGR_INFO,
-	REQUEST_EVENT_LOG,		/* DEFUNCT */
+	REQUEST_EVENT_LOG,
 	RESPONSE_SICP_INFO_DEFUNCT,	/* DEFUNCT */
 	REQUEST_LAYOUT_INFO,
 	RESPONSE_LAYOUT_INFO,
@@ -287,6 +287,8 @@ typedef enum {
 	RESPONSE_JOB_WILL_RUN,
 	REQUEST_JOB_ALLOCATION_INFO,
 	RESPONSE_JOB_ALLOCATION_INFO,
+	REQUEST_JOB_ALLOCATION_INFO_LITE,	/* DEFUNCT, LAST USED V17.02 */
+	RESPONSE_JOB_ALLOCATION_INFO_LITE,	/* DEFUNCT, LAST USED V17.02 */
 	REQUEST_UPDATE_JOB_TIME,
 	REQUEST_JOB_READY,
 	RESPONSE_JOB_READY,		/* 4020 */
@@ -299,10 +301,12 @@ typedef enum {
 	REQUEST_SIB_JOB_REQUEUE,
 	REQUEST_SIB_JOB_COMPLETE,
 	REQUEST_SIB_JOB_LOCK,
-	REQUEST_SIB_JOB_UNLOCK,
+	REQUEST_SIB_JOB_UNLOCK,		/* 4030 */
 	REQUEST_SIB_JOB_WILL_RUN,
 	REQUEST_SIB_SUBMIT_BATCH_JOB,
 	REQUEST_SIB_RESOURCE_ALLOCATION,
+	REQUEST_CTLD_MULT_MSG,
+	RESPONSE_CTLD_MULT_MSG,
 
 	REQUEST_JOB_STEP_CREATE = 5001,
 	RESPONSE_JOB_STEP_CREATE,
@@ -385,6 +389,7 @@ typedef enum {
 
 	RESPONSE_SLURM_RC = 8001,
 	RESPONSE_SLURM_RC_MSG,
+	RESPONSE_SLURM_REROUTE_MSG,
 
 	RESPONSE_FORWARD_FAILED = 9001,
 
@@ -450,6 +455,8 @@ typedef struct slurm_protocol_config {
 typedef struct slurm_msg {
 	slurm_addr_t address;
 	void *auth_cred;
+	uint32_t body_offset; /* DON'T PACK: offset in buffer where body part of
+				 buffer starts. */
 	Buf buffer; /* DON't PACK! ptr to buffer that msg was unpacked from. */
 	slurm_persist_conn_t *conn; /* DON'T PACK OR FREE! this is here to
 				     * distinquish a persistant connection from
@@ -547,40 +554,11 @@ typedef struct shares_response_msg {
 	char **tres_names;
 } shares_response_msg_t;
 
-typedef struct priority_factors_object {
-	uint32_t job_id;
-	uint32_t user_id;
-
-	double	 priority_age;
-	double	 priority_fs;
-	double	 priority_js;
-	double	 priority_part;
-	double	 priority_qos;
-
-	double   *priority_tres;/* tres priorities with weights applied. */
-	uint32_t  tres_cnt;     /* number of configured tres' on system. */
-	char    **tres_names;	/* packed as assoc_mgr_tres_names[] */
-	double   *tres_weights; /* PriorityWeightTRES weights as an array */
-
-	uint32_t nice;
-} priority_factors_object_t;
-
 typedef struct priority_factors_request_msg {
 	List	 job_id_list;
+	char    *partitions;
 	List	 uid_list;
 } priority_factors_request_msg_t;
-
-typedef struct priority_factors_response_msg {
-	List	 priority_factors_list;	/* priority_factors_object_t list */
-} priority_factors_response_msg_t;
-
-typedef struct job_step_kill_msg {
-	uint32_t job_id;
-	char *sjob_id;
-	uint32_t job_step_id;
-	uint16_t signal;
-	uint16_t flags;
-} job_step_kill_msg_t;
 
 typedef struct job_notify_msg {
 	uint32_t job_id;
@@ -606,6 +584,8 @@ typedef struct job_step_id_msg {
 typedef struct job_info_request_msg {
 	time_t last_update;
 	uint16_t show_flags;
+	List   job_ids;		/* Optional list of job_ids, otherwise show all
+				 * jobs. */
 } job_info_request_msg_t;
 
 typedef struct job_step_info_request_msg {
@@ -751,8 +731,6 @@ typedef struct job_step_specs {
 	uint32_t num_tasks;	/* number of tasks required */
 	uint8_t overcommit;     /* flag, 1 to allow overcommit of processors,
 				   0 to disallow overcommit. default is 0 */
-	uint32_t packjobid;	/* jobid of srun first step */
-	uint32_t packstepid;	/* stepid of srun first step */
 	uint16_t plane_size;	/* plane size when task_dist =
 				   SLURM_DIST_PLANE */
 	uint16_t port;		/* port to contact initiating srun */
@@ -788,20 +766,12 @@ typedef struct job_step_create_response_msg {
 typedef struct launch_tasks_request_msg {
 	uint32_t  job_id;
 	uint32_t  job_step_id;
-	uint32_t  mpi_jobid;	/* MPI jobid (same for all steps) */
-	uint32_t  mpi_nnodes;	/* number of MPI nodes in all steps */
-	uint32_t  mpi_ntasks;	/* number of MPI tasks in all steps */
-	uint32_t  mpi_stepfnodeid; /* first MPI nodeid for this step */
-	uint32_t  mpi_stepftaskid; /* first MPI taskid for this step */
-	uint32_t  mpi_stepid;	/* MPI stepid (same for all steps) */
 	uint32_t  nnodes;	/* number of nodes in this job step       */
 	uint32_t  ntasks;	/* number of tasks in this job step   */
 	uint16_t  ntasks_per_board;/* number of tasks to invoke on each board */
 	uint16_t  ntasks_per_core; /* number of tasks to invoke on each core */
 	uint16_t  ntasks_per_socket;/* number of tasks to invoke on
 				     * each socket */
-	uint32_t  packjobid;	/* jobid of srun first step */
-	uint32_t  packstepid;	/* stepid of srun first step */
 	uint32_t  uid;
 	char     *user_name;
 	uint32_t  gid;
@@ -857,8 +827,6 @@ typedef struct launch_tasks_request_msg {
 	job_options_t options;  /* Arbitrary job options */
 	char *complete_nodelist;
 	char *ckpt_dir;		/* checkpoint path */
-	char **pelog_env;       /* prolog/epilog environment vars */
-	uint32_t pelog_env_size;
 	char *restart_dir;	/* restart from checkpoint if set */
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
@@ -880,6 +848,10 @@ typedef struct return_code2_msg {
 	uint32_t return_code;
 	char *err_msg;
 } return_code2_msg_t;
+
+typedef struct {
+	slurmdb_cluster_rec_t *working_cluster_rec;
+} reroute_msg_t;
 
 /* defined in slurm.h
 typedef struct network_callerid_msg {
@@ -910,7 +882,10 @@ typedef struct composite_msg {
  * the job epilog. */
 
 #define SIG_OOM		253	/* Dummy signal value for out of memory
-				 * (OOM) notification */
+				 * (OOM) notification. Exist status reported as
+				 * 0:125 (0x80 is the signal flag and
+				 * 253 - 128 = 125) */
+#define SIG_TERM_KILL	991	/* Send SIGCONT + SIGTERM + SIGKILL */
 #define SIG_UME		992	/* Dummy signal value for uncorrectable memory
 				 * error (UME) notification */
 #define SIG_REQUEUED	993	/* Dummy signal value to job requeue */
@@ -926,9 +901,6 @@ typedef struct kill_job_msg {
 	uint32_t job_state;
 	uint32_t job_uid;
 	char *nodes;
-	char **pelog_env;	/* jobpack environment variables for job
-				   prolog/epilog */
-	uint32_t pelog_env_size;/* element count in pelog_env */
 	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
 	char **spank_job_env;
 	uint32_t spank_job_env_size;
@@ -977,8 +949,6 @@ typedef struct prolog_launch_msg {
 	uint32_t nnodes;			/* count of nodes, passed via cred */
 	char *nodes;			/* list of nodes allocated to job_step */
 	char *partition;		/* partition the job is running in */
-	char **pelog_env;               /* prolog/epilog environment vars */
-	uint32_t pelog_env_size;
 	dynamic_plugin_data_t *select_jobinfo;	/* opaque data type */
 	char **spank_job_env;		/* SPANK job environment variables */
 	uint32_t spank_job_env_size;	/* size of spank_job_env */
@@ -1047,10 +1017,6 @@ typedef struct batch_job_launch_msg {
 	char **spank_job_env;	/* SPANK job environment variables */
 	uint32_t spank_job_env_size;	/* size of spank_job_env */
 	char *resv_name;        /* job's reservation */
-	char **pelog_env;       /* prolog/epilog environment vars */
-	uint32_t pelog_env_size;
-	char *resv_ports;       /* reserve ports for jobpack nodes */
-	uint32_t group_number;  /* jobpack group number index */
 } batch_job_launch_msg_t;
 
 typedef struct job_id_request_msg {
@@ -1229,6 +1195,8 @@ typedef struct {
 				 * Only populated on the receiving side. */
 	Buf      data_buffer;	/* Buffer that holds an unpacked data type.
 				 * Only populated on the sending side. */
+	uint32_t data_offset;	/* DON'T PACK: offset where body part of buffer
+				 * starts -- the part that gets sent. */
 	uint16_t data_type;	/* date type to unpack */
 	uint16_t data_version;	/* Version that data is packed with */
 	uint64_t fed_siblings;	/* sibling bitmap of job */
@@ -1242,6 +1210,11 @@ typedef struct {
 				   passed to a remote then the uid will be the
 				   user and not the SlurmUser. */
 } sib_msg_t;
+
+typedef struct {
+	List my_list;		/* this list could be of any type as long as it
+				 * is handled correctly on both ends */
+} ctld_list_msg_t;
 
 /*****************************************************************************\
  *      ACCOUNTING PUSHS
@@ -1290,6 +1263,8 @@ extern List slurm_copy_char_list(List char_list);
 extern int slurm_addto_char_list(List char_list, char *names);
 extern int slurm_addto_mode_char_list(List char_list, char *names, int mode);
 extern int slurm_addto_step_list(List step_list, char *names);
+extern int slurm_char_list_copy(List dst, List src);
+extern char *slurm_char_list_to_xstr(List char_list);
 extern int slurm_find_char_in_list(void *x, void *key);
 extern int slurm_sort_char_list_asc(void *, void *);
 extern int slurm_sort_char_list_desc(void *, void *);
@@ -1298,6 +1273,7 @@ extern int slurm_sort_char_list_desc(void *, void *);
 extern void slurm_free_checkpoint_tasks_msg(checkpoint_tasks_msg_t * msg);
 extern void slurm_free_last_update_msg(last_update_msg_t * msg);
 extern void slurm_free_return_code_msg(return_code_msg_t * msg);
+extern void slurm_free_reroute_msg(reroute_msg_t *msg);
 extern void slurm_free_job_alloc_info_msg(job_alloc_info_msg_t * msg);
 extern void slurm_free_job_info_request_msg(job_info_request_msg_t *msg);
 extern void slurm_free_job_step_info_request_msg(
@@ -1322,8 +1298,6 @@ extern void slurm_copy_priority_factors_object(priority_factors_object_t *dest,
 					       priority_factors_object_t *src);
 extern void slurm_free_priority_factors_request_msg(
 	priority_factors_request_msg_t *msg);
-extern void slurm_free_priority_factors_response_msg(
-	priority_factors_response_msg_t *msg);
 extern void slurm_free_forward_data_msg(forward_data_msg_t *msg);
 extern void slurm_free_comp_msg_list(void *x);
 extern void slurm_free_composite_msg(composite_msg_t *msg);
@@ -1448,6 +1422,7 @@ extern void slurm_free_acct_gather_node_resp_msg(
 extern void slurm_free_acct_gather_energy_req_msg(
 	acct_gather_energy_req_msg_t *msg);
 extern void slurm_free_job_notify_msg(job_notify_msg_t * msg);
+extern void slurm_free_ctld_multi_msg(ctld_list_msg_t *msg);
 
 extern void slurm_free_accounting_update_msg(accounting_update_msg_t *msg);
 extern void slurm_free_spank_env_request_msg(spank_env_request_msg_t *msg);
@@ -1523,6 +1498,9 @@ extern uint32_t slurm_bb_str2flags(char *bb_str);
 /* Function to convert enforce type flags between strings and numbers */
 extern int parse_part_enforce_type(char *enforce_part_type, uint16_t *param);
 extern char * parse_part_enforce_type_2str (uint16_t type);
+
+/* Return true if this cluster_name is in a federation */
+extern bool cluster_in_federation(void *ptr, char *cluster_name);
 
 /* Given a protocol opcode return its string
  * description mapping the slurm_msg_type_t

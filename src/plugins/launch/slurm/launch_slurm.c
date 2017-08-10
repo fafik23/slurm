@@ -97,7 +97,7 @@ static time_t launch_start_time;
 static bool retry_step_begin = false;
 static int  retry_step_cnt = 0;
 
-extern int launch_p_step_terminate();
+static int _step_signal(int signal);
 extern char **environ;
 
 static char *_hostset_to_string(hostset_t hs)
@@ -344,8 +344,7 @@ static void _task_finish(task_exit_msg_t *msg)
 		if (!oom_printed)
 			error("%s: %s %s: Out Of Memory", hosts, task_str, tasks);
 		oom_printed = 1;
-		if (*local_global_rc == NO_VAL)
-			*local_global_rc = msg->return_code;
+		*local_global_rc = msg->return_code;
 	} else if (WIFEXITED(msg->return_code)) {
 		if ((rc = WEXITSTATUS(msg->return_code)) == 0) {
 			verbose("%s: %s %s: Completed", hosts, task_str, tasks);
@@ -360,8 +359,9 @@ static void _task_finish(task_exit_msg_t *msg)
 			      hosts, task_str, tasks, rc);
 			msg_printed = 1;
 		}
-		if (!WIFEXITED(*local_global_rc)
-		    || (rc > WEXITSTATUS(*local_global_rc)))
+		if (((*local_global_rc & 0xff) != SIG_OOM) &&
+		    (!WIFEXITED(*local_global_rc) ||
+		     (rc > WEXITSTATUS(*local_global_rc))))
 			*local_global_rc = msg->return_code;
 	} else if (WIFSIGNALED(msg->return_code)) {
 		const char *signal_str = strsignal(WTERMSIG(msg->return_code));
@@ -389,9 +389,8 @@ static void _task_finish(task_exit_msg_t *msg)
 	_update_task_exit_state(msg->num_tasks, msg->task_id_list,
 				!normal_exit);
 
-	if (task_state_first_abnormal_exit(task_state)
-	    && _kill_on_bad_exit())
-		launch_p_step_terminate();
+	if (task_state_first_abnormal_exit(task_state) && _kill_on_bad_exit())
+		_step_signal(SIG_TERM_KILL);
 
 	if (task_state_first_exit(task_state) && (opt.max_wait > 0))
 		_setup_max_wait_timer();
@@ -468,7 +467,7 @@ extern int launch_p_setup_srun_opt(char **rest)
 	if (opt.debugger_test && opt.parallel_debug)
 		MPIR_being_debugged  = 1;
 
-	/* We need to do +2 here just incase multi-prog is needed (we
+	/* We need to do +2 here just in case multi-prog is needed (we
 	   add an extra argv on so just make space for it).
 	*/
 	opt.argv = (char **) xmalloc((opt.argc + 2) * sizeof(char *));
@@ -726,6 +725,18 @@ extern int launch_p_step_terminate(void)
 				   local_srun_job->stepid, SIGKILL);
 }
 
+static int _step_signal(int signal)
+{
+	if (!local_srun_job) {
+		debug("%s: local_srun_job does not exist yet", __func__);
+		return SLURM_ERROR;
+	}
+
+	info("Terminating job step %u.%u",
+	      local_srun_job->jobid, local_srun_job->stepid);
+	return slurm_kill_job_step(local_srun_job->jobid,
+				   local_srun_job->stepid, signal);
+}
 
 extern void launch_p_print_status(void)
 {

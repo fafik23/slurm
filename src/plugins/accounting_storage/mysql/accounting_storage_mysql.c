@@ -65,16 +65,6 @@
 #include "as_mysql_user.h"
 #include "as_mysql_wckey.h"
 
-/* These are defined here so when we link with something other than
- * the slurmctld we will have these symbols defined.  They will get
- * overwritten when linking with the slurmctld.
- */
-#if defined (__APPLE__)
-char *slurmctld_cluster_name  __attribute__((weak_import)) = NULL;
-#else
-char *slurmctld_cluster_name = NULL;
-#endif
-
 List as_mysql_cluster_list = NULL;
 /* This total list is only used for converting things, so no
    need to keep it upto date even though it lives until the
@@ -130,6 +120,7 @@ char *cluster_day_table = "usage_day_table";
 char *cluster_hour_table = "usage_hour_table";
 char *cluster_month_table = "usage_month_table";
 char *cluster_table = "cluster_table";
+char *convert_version_table = "convert_version_table";
 char *federation_table = "federation_table";
 char *event_table = "event_table";
 char *job_table = "job_table";
@@ -533,6 +524,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ "plugin_id_select", "smallint unsigned default 0" },
 		{ "flags", "int unsigned default 0" },
 		{ "federation", "tinytext not null" },
+		{ "features", "text not null default ''" },
 		{ "fed_id", "int unsigned default 0 not null" },
 		{ "fed_state", "smallint unsigned not null" },
 		{ "fed_weight", "int unsigned default 1 not null" },
@@ -546,6 +538,12 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ "cluster", "tinytext not null" },
 		{ "res_id", "int not null" },
 		{ "percent_allowed", "int unsigned default 0" },
+		{ NULL, NULL}
+	};
+
+	storage_field_t convert_version_table_fields[] = {
+		{ "mod_time", "bigint unsigned default 0 not null" },
+		{ "version", "int default 0" },
 		{ NULL, NULL}
 	};
 
@@ -812,6 +810,15 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	int rc = SLURM_SUCCESS, rc2;
 	ListIterator itr = NULL;
 
+	/* Make the convert version table since we will check that going
+	 * forward to see if we need to update or not.
+	 */
+
+	if (mysql_db_create_table(mysql_conn, convert_version_table,
+				  convert_version_table_fields,
+				  ", primary key (version))") == SLURM_ERROR)
+		return SLURM_ERROR;
+
 	/* Make the cluster table first since we build other tables
 	   built off this one */
 	if (mysql_db_create_table(mysql_conn, cluster_table,
@@ -877,10 +884,11 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		return SLURM_ERROR;
 	}
 
-	if (as_mysql_convert_tables(mysql_conn) != SLURM_SUCCESS) {
-		error("issue converting tables");
+	if ((rc = as_mysql_convert_tables_pre_create(mysql_conn)) !=
+	    SLURM_SUCCESS) {
 		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
-		return SLURM_ERROR;
+		error("issue converting tables before create");
+		return rc;
 	}
 
 	/* might as well do all the cluster centric tables inside this
@@ -894,10 +902,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 			break;
 	}
 	list_iterator_destroy(itr);
-	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
-
-	if (rc != SLURM_SUCCESS)
+	if (rc != SLURM_SUCCESS) {
+		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
 		return rc;
+	}
+
+	rc = as_mysql_convert_tables_post_create(mysql_conn);
+
+	slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	if (rc != SLURM_SUCCESS) {
+		error("issue converting tables after create");
+		return rc;
+	}
 
 	if (mysql_db_create_table(mysql_conn, acct_coord_table,
 				  acct_coord_table_fields,
@@ -1296,7 +1312,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "min_cpu_node", "int unsigned default 0 not null" },
 		{ "ave_cpu", "double unsigned default 0.0 not null" },
 		{ "act_cpufreq", "double unsigned default 0.0 not null" },
-		{ "consumed_energy", "double unsigned default 0.0 not null" },
+		{ "consumed_energy", "bigint unsigned default 0 not null" },
 		{ "req_cpufreq_min", "int unsigned default 0 not null" },
 		{ "req_cpufreq", "int unsigned default 0 not null" }, /* max */
 		{ "req_cpufreq_gov", "int unsigned default 0 not null" },
@@ -1406,7 +1422,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	 * these queries. sacct_def2 is for plain sacct queries. */
 	if (mysql_db_create_table(mysql_conn, table_name, job_table_fields,
 				  ", primary key (job_db_inx), "
-				  "unique index (id_job, "
+				  "unique index (id_job, time_submit), "
+				  "key old_tuple (id_job, "
 				  "id_assoc, time_submit), "
 				  "key rollup (time_eligible, time_end), "
 				  "key rollup2 (time_end, time_eligible), "

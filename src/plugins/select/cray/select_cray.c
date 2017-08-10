@@ -1022,7 +1022,6 @@ static void _wait_job_completed(uint32_t job_id, struct job_record *job_ptr)
 		NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
 	while (!fini) {
-		sleep(1);
 		lock_slurmctld(job_read_lock);
 		if ((job_ptr->magic  != JOB_MAGIC) ||
 		    (job_ptr->job_id != job_id)    ||
@@ -1030,6 +1029,8 @@ static void _wait_job_completed(uint32_t job_id, struct job_record *job_ptr)
 		     (bb_g_job_test_post_run(job_ptr) != 0)))
 			fini = true;
 		unlock_slurmctld(job_read_lock);
+		if (!fini)
+			sleep(1);
 	}
 }
 
@@ -1350,14 +1351,12 @@ extern int select_p_state_save(char *dir_name)
 	slurm_mutex_unlock(&blade_mutex);
 
 	/* write the buffer to file */
-	slurm_conf_lock();
-	old_file = xstrdup(slurmctld_conf.state_save_location);
+	old_file = xstrdup(dir_name);
 	xstrcat(old_file, "/blade_state.old");
-	reg_file = xstrdup(slurmctld_conf.state_save_location);
+	reg_file = xstrdup(dir_name);
 	xstrcat(reg_file, "/blade_state");
-	new_file = xstrdup(slurmctld_conf.state_save_location);
+	new_file = xstrdup(dir_name);
 	xstrcat(new_file, "/blade_state.new");
-	slurm_conf_unlock();
 
 	log_fd = creat(new_file, 0600);
 	if (log_fd < 0) {

@@ -941,11 +941,8 @@ extern void filter_by_node_mcs(struct job_record *job_ptr, int mcs_select,
 	struct node_record *node_ptr;
 	int i;
 
-	if (mcs_select != 1)
-		return;
-
 	/* Need to filter out any nodes allocated with other mcs */
-	if (job_ptr->mcs_label != NULL) {
+	if (job_ptr->mcs_label && (mcs_select == 1)) {
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
 			/* if there is a mcs_label -> OK if it's the same */
@@ -2186,8 +2183,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	bitstr_t *select_bitmap = NULL;
 	struct node_set *node_set_ptr = NULL;
 	struct part_record *part_ptr = NULL;
-	uint32_t min_nodes, max_nodes, req_nodes, acct_max_nodes;
-	uint32_t wait_reason = 0;
+	uint32_t min_nodes, max_nodes, req_nodes;
 	time_t now = time(NULL);
 	bool configuring = false;
 	List preemptee_job_list = NULL;
@@ -2289,55 +2285,14 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	 * isn't set to override them */
 	/* info("req: %u-%u, %u", job_ptr->details->min_nodes, */
 	/*    job_ptr->details->max_nodes, part_ptr->max_nodes); */
+	error_code = get_node_cnts(job_ptr, qos_ptr, part_ptr,
+				   &min_nodes, &req_nodes, &max_nodes);
 
-	/* On BlueGene systems don't adjust the min/max node limits
-	 * here.  We are working on midplane values. */
-	if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MIN_NODE))
-		min_nodes = job_ptr->details->min_nodes;
-	else
-		min_nodes = MAX(job_ptr->details->min_nodes,
-				part_ptr->min_nodes);
-	if (job_ptr->details->max_nodes == 0)
-		max_nodes = part_ptr->max_nodes;
-	else if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MAX_NODE))
-		max_nodes = job_ptr->details->max_nodes;
-	else
-		max_nodes = MIN(job_ptr->details->max_nodes,
-				part_ptr->max_nodes);
 
-	/* Don't call functions in MIN/MAX it will result in the
-	 * function being called multiple times. */
-	acct_max_nodes = acct_policy_get_max_nodes(job_ptr, &wait_reason);
-	max_nodes = MIN(max_nodes, acct_max_nodes);
-
-	if (job_ptr->details->req_node_bitmap && job_ptr->details->max_nodes) {
-		i = bit_set_count(job_ptr->details->req_node_bitmap);
-		if (i > job_ptr->details->max_nodes) {
-			info("Job %u required node list has more node than "
-			     "the job can use (%d > %u)",
-			     job_ptr->job_id, i, job_ptr->details->max_nodes);
-			error_code = ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
-			goto cleanup;
-		}
-	}
-
-	max_nodes = MIN(max_nodes, 500000);	/* prevent overflows */
-	if (!job_ptr->limit_set.tres[TRES_ARRAY_NODE] &&
-	    (job_ptr->details->max_nodes != 0) &&
-	    ((job_ptr->bit_flags & USE_MIN_NODES) == 0))
-		req_nodes = max_nodes;
-	else
-		req_nodes = min_nodes;
-	/* info("nodes:%u:%u:%u", min_nodes, req_nodes, max_nodes); */
-
-	if (acct_max_nodes < min_nodes) {
-		error_code = ESLURM_ACCOUNTING_POLICY;
-		xfree(job_ptr->state_desc);
-		job_ptr->state_reason = wait_reason;
+	if ((error_code == ESLURM_ACCOUNTING_POLICY) ||
+	    (error_code == ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE))
 		goto cleanup;
-	} else if (max_nodes < min_nodes) {
-		error_code = ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE;
-	} else {
+	else if (error_code != ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE) {
 		/* Select resources for the job here */
 		job_array_pre_sched(job_ptr);
 		error_code = _get_req_features(node_set_ptr, node_set_size,
@@ -2346,7 +2301,6 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 					       req_nodes, test_only,
 					       &preemptee_job_list, can_reboot);
 	}
-
 
 	/* Set this guess here to give the user tools an idea
 	 * of how many nodes Slurm is planning on giving the job.
@@ -2521,6 +2475,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->step_list = list_create(NULL);
 
 	job_ptr->node_bitmap = select_bitmap;
+	select_bitmap = NULL;	/* nothing left to free */
 
 	/* we need to have these times set to know when the endtime
 	 * is for the job when we place it
@@ -2548,7 +2503,6 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->start_time = 0;
 		job_ptr->time_last_active = 0;
 		job_ptr->end_time = 0;
-		job_ptr->node_bitmap = NULL;
 		job_ptr->priority = 0;
 		job_ptr->state_reason = WAIT_HELD;
 		last_job_update = now;
@@ -2557,11 +2511,15 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	if (select_g_job_begin(job_ptr) != SLURM_SUCCESS) {
 		/* Leave job queued, something is hosed */
 		error("select_g_job_begin(%u): %m", job_ptr->job_id);
+
+		/* Since we began the job earlier we have to cancel it */
+		(void) bb_g_job_cancel(job_ptr);
+
 		error_code = ESLURM_NODES_BUSY;
 		job_ptr->start_time = 0;
 		job_ptr->time_last_active = 0;
 		job_ptr->end_time = 0;
-		job_ptr->node_bitmap = NULL;
+		job_ptr->state_reason = WAIT_RESOURCES;
 		last_job_update = now;
 		goto cleanup;
 	}
@@ -2574,25 +2532,55 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		job_ptr->nodes = xstrdup(job_ptr->job_resrcs->nodes);
 	else {
 		error("Select plugin failed to set job resources, nodes");
-		job_ptr->nodes = bitmap2node_name(select_bitmap);
+		/* Do not attempt to allocate the select_bitmap nodes since
+		 * select plugin failed to set job resources */
+
+		/* Since we began the bb job earlier we have to cancel it */
+		(void) bb_g_job_cancel(job_ptr);
+
+		error_code = ESLURM_NODES_BUSY;
+		job_ptr->start_time = 0;
+		job_ptr->time_last_active = 0;
+		job_ptr->end_time = 0;
+		job_ptr->state_reason = WAIT_RESOURCES;
+		last_job_update = now;
+		goto cleanup;
 	}
-	select_bitmap = NULL;	/* nothing left to free */
-	allocate_nodes(job_ptr);
-	job_array_start(job_ptr);
-	build_node_details(job_ptr, true);
-	rebuild_job_part_list(job_ptr);
 
 	/* This could be set in the select plugin so we want to keep the flag */
 	configuring = IS_JOB_CONFIGURING(job_ptr);
 
 	job_ptr->job_state = JOB_RUNNING;
-	if (nonstop_ops.job_begin)
-		(nonstop_ops.job_begin)(job_ptr);
 
 	if (select_g_select_nodeinfo_set(job_ptr) != SLURM_SUCCESS) {
 		error("select_g_select_nodeinfo_set(%u): %m", job_ptr->job_id);
-		/* not critical ... by now */
+		if (!job_ptr->job_resrcs) {
+			/* If we don't exit earlier the empty job_resrcs might
+			 * be dereferenced later */
+
+			/* Since we began the bb job earlier we have to cancel
+			 * it */
+			(void) bb_g_job_cancel(job_ptr);
+
+			error_code = ESLURM_NODES_BUSY;
+			job_ptr->start_time = 0;
+			job_ptr->time_last_active = 0;
+			job_ptr->end_time = 0;
+			job_ptr->state_reason = WAIT_RESOURCES;
+			job_ptr->job_state = JOB_PENDING;
+			last_job_update = now;
+			goto cleanup;
+		}
 	}
+
+	allocate_nodes(job_ptr);
+	job_array_start(job_ptr);
+	build_node_details(job_ptr, true);
+	rebuild_job_part_list(job_ptr);
+
+	if (nonstop_ops.job_begin)
+		(nonstop_ops.job_begin)(job_ptr);
+
 	if ((job_ptr->mail_type & MAIL_JOB_BEGIN) &&
 	    ((job_ptr->mail_type & MAIL_ARRAY_TASKS) ||
 	     _first_array_task(job_ptr)))
@@ -2661,11 +2649,90 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		xfree(node_set_ptr);
 	}
 
+	if (error_code != SLURM_SUCCESS)
+		FREE_NULL_BITMAP(job_ptr->node_bitmap);
+
 #ifdef HAVE_BG
 	if (error_code != SLURM_SUCCESS)
 		free_job_resources(&job_ptr->job_resrcs);
 #endif
 
+	return error_code;
+}
+
+/*
+ * get_node_cnts - determine the number of nodes for the requested job.
+ * IN job_ptr - pointer to the job record.
+ * IN qos_ptr - pointer to the job's qos.
+ * IN part_ptr - pointer to the job's partition.
+ * OUT min_nodes - The minimum number of nodes for the job.
+ * OUT req_nodes - The number of node the select plugin should target.
+ * OUT max_nodes - The max number of nodes for the job.
+ * RET SLURM_SUCCESS on success, ESLURM code from slurm_errno.h otherwise.
+ */
+extern int get_node_cnts(struct job_record *job_ptr,
+			 slurmdb_qos_rec_t *qos_ptr,
+			 struct part_record *part_ptr,
+			 uint32_t *min_nodes,
+			 uint32_t *req_nodes, uint32_t *max_nodes)
+{
+	int error_code = SLURM_SUCCESS;
+	uint32_t acct_max_nodes;
+	uint32_t wait_reason = 0;
+
+	xassert(job_ptr);
+	xassert(part_ptr);
+
+	/* On BlueGene systems don't adjust the min/max node limits
+	 * here.  We are working on midplane values. */
+	if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MIN_NODE))
+		*min_nodes = job_ptr->details->min_nodes;
+	else
+		*min_nodes = MAX(job_ptr->details->min_nodes,
+				 part_ptr->min_nodes);
+	if (!job_ptr->details->max_nodes)
+		*max_nodes = part_ptr->max_nodes;
+	else if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MAX_NODE))
+		*max_nodes = job_ptr->details->max_nodes;
+	else
+		*max_nodes = MIN(job_ptr->details->max_nodes,
+				 part_ptr->max_nodes);
+
+	if (job_ptr->details->req_node_bitmap && job_ptr->details->max_nodes) {
+		error_code = bit_set_count(job_ptr->details->req_node_bitmap);
+		if (error_code > job_ptr->details->max_nodes) {
+			info("Job %u required node list has more node than "
+			     "the job can use (%d > %u)",
+			     job_ptr->job_id, error_code,
+			     job_ptr->details->max_nodes);
+			error_code = ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
+			goto end_it;
+		}
+	}
+
+	/* Don't call functions in MIN/MAX it will result in the
+	 * function being called multiple times. */
+	acct_max_nodes = acct_policy_get_max_nodes(job_ptr, &wait_reason);
+	*max_nodes = MIN(*max_nodes, acct_max_nodes);
+	*max_nodes = MIN(*max_nodes, 500000);	/* prevent overflows */
+
+	if (!job_ptr->limit_set.tres[TRES_ARRAY_NODE] &&
+	    job_ptr->details->max_nodes &&
+	    !(job_ptr->bit_flags & USE_MIN_NODES))
+		*req_nodes = *max_nodes;
+	else
+		*req_nodes = *min_nodes;
+
+	if (acct_max_nodes < *min_nodes) {
+		error_code = ESLURM_ACCOUNTING_POLICY;
+		xfree(job_ptr->state_desc);
+		job_ptr->state_reason = wait_reason;
+		goto end_it;
+	} else if (*max_nodes < *min_nodes) {
+		error_code = ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE;
+		goto end_it;
+	}
+end_it:
 	return error_code;
 }
 

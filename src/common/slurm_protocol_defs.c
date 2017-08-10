@@ -3,9 +3,9 @@
  *	storage for RPC data structures. these are the functions used by
  *	the slurm daemons directly, not for user client use.
  *****************************************************************************
+ *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>.
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Kevin Tew <tew1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
@@ -193,6 +193,48 @@ extern int slurm_find_char_in_list(void *x, void *key)
 	return 0;
 }
 
+static int _char_list_append_str(void *x, void *arg)
+{
+	char  *char_item = (char *)x;
+	char **out_str   = (char **)arg;
+
+	xassert(char_item);
+	xassert(out_str);
+
+	xstrfmtcat(*out_str, "%s%s", *out_str ? "," : "", char_item);
+
+	return SLURM_SUCCESS;
+}
+
+extern char *slurm_char_list_to_xstr(List char_list)
+{
+	char *out = NULL;
+
+	if (!char_list)
+		return NULL;
+
+	list_sort(char_list, (ListCmpF)slurm_sort_char_list_asc);
+	list_for_each(char_list, _char_list_append_str, &out);
+
+	return out;
+}
+
+static int _char_list_copy(void *item, void *dst)
+{
+	list_append((List)dst, item);
+	return SLURM_SUCCESS;
+}
+
+extern int slurm_char_list_copy(List dst, List src)
+{
+	xassert(dst);
+	xassert(src);
+
+	list_for_each(src, _char_list_copy, dst);
+
+	return SLURM_SUCCESS;
+}
+
 /* returns number of objects added to list */
 extern int slurm_addto_char_list(List char_list, char *names)
 {
@@ -346,7 +388,8 @@ endit:
 }
 
 /* Parses strings such as stra,+strb,-strc and appends the default mode to each
- * string in the list if no specific mode is listed. */
+ * string in the list if no specific mode is listed.
+ * RET: returns the number of items added to the list. -1 on error. */
 extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 {
 	int i=0, start=0;
@@ -392,7 +435,7 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 				name = xstrndup(names+start, (i-start));
 				if (tmp_mode) {
 					if (equal_set) {
-						count = 0;
+						count = -1;
 						error("%s", err_msg);
 						goto end_it;
 					}
@@ -401,7 +444,7 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 						  "%c%s", tmp_mode, name);
 				} else {
 					if (add_set) {
-						count = 0;
+						count = -1;
 						error("%s", err_msg);
 						goto end_it;
 					}
@@ -420,9 +463,6 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 				} else
 					xfree(m_name);
 				xfree(name);
-			} else if (!(i-start)) {
-				list_append(char_list, xstrdup(""));
-				count++;
 			}
 
 			i++;
@@ -436,6 +476,8 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 		}
 		i++;
 	}
+
+	list_iterator_reset(itr);
 	if ((i-start) > 0) {
 		int tmp_mode = mode;
 		if (names[start] == '+' ||
@@ -446,7 +488,7 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 		name = xstrndup(names+start, (i-start));
 		if (tmp_mode) {
 			if (equal_set) {
-				count = 0;
+				count = -1;
 				error("%s", err_msg);
 				goto end_it;
 			}
@@ -454,7 +496,7 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 				  "%c%s", tmp_mode, name);
 		} else {
 			if (add_set) {
-				count = 0;
+				count = -1;
 				error("%s", err_msg);
 				goto end_it;
 			}
@@ -472,12 +514,6 @@ extern int slurm_addto_mode_char_list(List char_list, char *names, int mode)
 		} else
 			xfree(m_name);
 		xfree(name);
-	} else if (!(i-start)) {
-		list_append(char_list, xstrdup(""));
-		count++;
-	}
-	if (!count) {
-		error("You gave me an empty name list");
 	}
 
 end_it:
@@ -654,6 +690,14 @@ extern void slurm_free_return_code_msg(return_code_msg_t * msg)
 	xfree(msg);
 }
 
+extern void slurm_free_reroute_msg(reroute_msg_t *msg)
+{
+	if (msg) {
+		slurmdb_destroy_cluster_rec(msg->working_cluster_rec);
+		xfree(msg);
+	}
+}
+
 extern void slurm_free_job_id_msg(job_id_msg_t * msg)
 {
 	xfree(msg);
@@ -691,6 +735,7 @@ extern void slurm_free_job_id_response_msg(job_id_response_msg_t * msg)
 extern void slurm_free_job_step_kill_msg(job_step_kill_msg_t * msg)
 {
 	if (msg) {
+		xfree(msg->sibling);
 		xfree(msg->sjob_id);
 		xfree(msg);
 	}
@@ -698,7 +743,10 @@ extern void slurm_free_job_step_kill_msg(job_step_kill_msg_t * msg)
 
 extern void slurm_free_job_info_request_msg(job_info_request_msg_t *msg)
 {
-	xfree(msg);
+	if (msg) {
+		FREE_NULL_LIST(msg->job_ids);						//
+		xfree(msg);
+	}
 }
 
 extern void slurm_free_job_step_info_request_msg(job_step_info_request_msg_t *msg)
@@ -753,12 +801,15 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t * msg)
 		xfree(msg->comment);
 		xfree(msg->cpu_bind);
 		xfree(msg->dependency);
-		for (i = 0; i < msg->env_size; i++)
-			xfree(msg->environment[i]);
-		xfree(msg->environment);
+		if (msg->environment) {
+			for (i = 0; i < msg->env_size; i++)
+				xfree(msg->environment[i]);
+			xfree(msg->environment);
+		}
 		xfree(msg->std_err);
 		xfree(msg->exc_nodes);
 		xfree(msg->features);
+		xfree(msg->cluster_features);
 		xfree(msg->job_id_str);
 		xfree(msg->gres);
 		xfree(msg->std_in);
@@ -774,9 +825,6 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t * msg)
 		xfree(msg->qos);
 		xfree(msg->std_out);
 		xfree(msg->partition);
-		for (i = 0; i < msg->pelog_env_size; i++)
-			xfree(msg->pelog_env[i]);
-		xfree(msg->pelog_env);
 		xfree(msg->ramdiskimage);
 		xfree(msg->req_nodes);
 		xfree(msg->reservation);
@@ -785,9 +833,11 @@ extern void slurm_free_job_desc_msg(job_desc_msg_t * msg)
 		select_g_select_jobinfo_free(msg->select_jobinfo);
 		msg->select_jobinfo = NULL;
 
-		for (i = 0; i < msg->spank_job_env_size; i++)
-			xfree(msg->spank_job_env[i]);
-		xfree(msg->spank_job_env);
+		if (msg->spank_job_env) {
+			for (i = 0; i < msg->spank_job_env_size; i++)
+				xfree(msg->spank_job_env[i]);
+			xfree(msg->spank_job_env);
+		}
 		xfree(msg->tres_req_cnt);
 		xfree(msg->wckey);
 		xfree(msg->work_dir);
@@ -822,17 +872,16 @@ extern void slurm_free_prolog_launch_msg(prolog_launch_msg_t * msg)
 		xfree(msg->alias_list);
 		xfree(msg->nodes);
 		xfree(msg->partition);
-		for (i = 0; i < msg->pelog_env_size; i++)
-			xfree(msg->pelog_env[i]);
-		xfree(msg->pelog_env);
 		xfree(msg->std_err);
 		xfree(msg->std_out);
 		xfree(msg->work_dir);
 		xfree(msg->user_name);
 
-		for (i = 0; i < msg->spank_job_env_size; i++)
-			xfree(msg->spank_job_env[i]);
-		xfree(msg->spank_job_env);
+		if (msg->spank_job_env) {
+			for (i = 0; i < msg->spank_job_env_size; i++)
+				xfree(msg->spank_job_env[i]);
+			xfree(msg->spank_job_env);
+		}
 		slurm_cred_destroy(msg->cred);
 
 		xfree(msg);
@@ -874,12 +923,6 @@ extern void slurm_free_job_launch_msg(batch_job_launch_msg_t * msg)
 			xfree(msg->argv);
 		}
 
-		if (msg->pelog_env) {
-			for (i = 0; i < msg->pelog_env_size; i++)
-				xfree(msg->pelog_env[i]);
-			xfree(msg->pelog_env);
-		}
-
 		if (msg->spank_job_env) {
 			for (i = 0; i < msg->spank_job_env_size; i++)
 				xfree(msg->spank_job_env[i]);
@@ -896,8 +939,6 @@ extern void slurm_free_job_launch_msg(batch_job_launch_msg_t * msg)
 		msg->select_jobinfo = NULL;
 
 		slurm_cred_destroy(msg->cred);
-		xfree(msg->resv_name);
-		xfree(msg->resv_ports);
 		xfree(msg);
 	}
 }
@@ -924,6 +965,7 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->batch_script);
 		xfree(job->burst_buffer);
 		xfree(job->burst_buffer_state);
+		xfree(job->cluster);
 		xfree(job->command);
 		xfree(job->comment);
 		xfree(job->dependency);
@@ -931,9 +973,11 @@ extern void slurm_free_job_info_members(job_info_t * job)
 		xfree(job->exc_node_inx);
 		xfree(job->features);
 		xfree(job->gres);
-		for (i = 0; i < job->gres_detail_cnt; i++)
-			xfree(job->gres_detail_str[i]);
-		xfree(job->gres_detail_str);
+		if (job->gres_detail_str) {
+			for (i = 0; i < job->gres_detail_cnt; i++)
+				xfree(job->gres_detail_str[i]);
+			xfree(job->gres_detail_str);
+		}
 		xfree(job->licenses);
 		xfree(job->mcs_label);
 		xfree(job->name);
@@ -1094,9 +1138,11 @@ extern void slurm_free_layout_info_msg(layout_info_msg_t * msg)
 	int i;
 
 	if (msg) {
-		for (i = 0; i < msg->record_count; i++)
-			xfree(msg->records[i]);
-		xfree(msg->records);
+		if (msg->records) {
+			for (i = 0; i < msg->record_count; i++)
+				xfree(msg->records[i]);
+			xfree(msg->records);
+		}
 		xfree(msg);
 	}
 }
@@ -1149,15 +1195,14 @@ extern void slurm_free_kill_job_msg(kill_job_msg_t * msg)
 	if (msg) {
 		int i;
 		xfree(msg->nodes);
-		for (i=0; i<msg->pelog_env_size; i++)
-			xfree(msg->pelog_env[i]);
-		xfree(msg->pelog_env);
 		select_g_select_jobinfo_free(msg->select_jobinfo);
 		msg->select_jobinfo = NULL;
 
-		for (i=0; i<msg->spank_job_env_size; i++)
-			xfree(msg->spank_job_env[i]);
-		xfree(msg->spank_job_env);
+		if (msg->spank_job_env) {
+			for (i = 0; i < msg->spank_job_env_size; i++)
+				xfree(msg->spank_job_env[i]);
+			xfree(msg->spank_job_env);
+		}
 		xfree(msg);
 	}
 }
@@ -1207,17 +1252,18 @@ extern void slurm_free_launch_tasks_request_msg(launch_tasks_request_msg_t * msg
 		}
 		xfree(msg->argv);
 	}
-	for (i = 0; i < msg->pelog_env_size; i++)
-		xfree(msg->pelog_env[i]);
-	xfree(msg->pelog_env);
-	for (i = 0; i < msg->spank_job_env_size; i++) {
-		xfree(msg->spank_job_env[i]);
+	if (msg->spank_job_env) {
+		for (i = 0; i < msg->spank_job_env_size; i++) {
+			xfree(msg->spank_job_env[i]);
+		}
+		xfree(msg->spank_job_env);
 	}
-	xfree(msg->spank_job_env);
-	if (msg->nnodes && msg->global_task_ids)
-		for(i=0; i<msg->nnodes; i++) {
+	if (msg->global_task_ids) {
+		for (i = 0; i < msg->nnodes; i++) {
 			xfree(msg->global_task_ids[i]);
 		}
+		xfree(msg->global_task_ids);
+	}
 	xfree(msg->tasks_to_launch);
 	xfree(msg->resp_port);
 	xfree(msg->io_port);
@@ -1272,10 +1318,12 @@ extern void slurm_free_reattach_tasks_response_msg(
 		xfree(msg->node_name);
 		xfree(msg->local_pids);
 		xfree(msg->gtids);
-		for (i = 0; i < msg->ntasks; i++) {
-			xfree(msg->executable_names[i]);
+		if (msg->executable_names) {
+			for (i = 0; i < msg->ntasks; i++) {
+				xfree(msg->executable_names[i]);
+			}
+			xfree(msg->executable_names);
 		}
-		xfree(msg->executable_names);
 		xfree(msg);
 	}
 }
@@ -1312,9 +1360,11 @@ extern void slurm_free_srun_exec_msg(srun_exec_msg_t *msg)
 	int i;
 
 	if (msg) {
-		for (i = 0; i < msg->argc; i++)
-			xfree(msg->argv[i]);
-		xfree(msg->argv);
+		if (msg->argv) {
+			for (i = 0; i < msg->argc; i++)
+				xfree(msg->argv[i]);
+			xfree(msg->argv);
+		}
 		xfree(msg);
 	}
 }
@@ -1440,9 +1490,11 @@ extern void slurm_free_spank_env_responce_msg(spank_env_responce_msg_t *msg)
 {
 	uint32_t i;
 
-	for (i = 0; i < msg->spank_job_env_size; i++)
-		xfree(msg->spank_job_env[i]);
-	xfree(msg->spank_job_env);
+	if (msg->spank_job_env) {
+		for (i = 0; i < msg->spank_job_env_size; i++)
+			xfree(msg->spank_job_env[i]);
+		xfree(msg->spank_job_env);
+	}
 	xfree(msg);
 }
 
@@ -1452,9 +1504,11 @@ extern void slurm_free_job_array_resp(job_array_resp_msg_t *msg)
 	uint32_t i;
 
 	if (msg) {
-		for (i = 0; i < msg->job_array_count; i++)
-			xfree(msg->job_array_id[i]);
-		xfree(msg->job_array_id);
+		if (msg->job_array_id) {
+			for (i = 0; i < msg->job_array_count; i++)
+				xfree(msg->job_array_id[i]);
+			xfree(msg->job_array_id);
+		}
 		xfree(msg->error_code);
 		xfree(msg);
 	}
@@ -1848,23 +1902,29 @@ extern void slurm_free_kvs_comm_set(kvs_comm_set_t *msg)
 	int i, j;
 
 	if (msg) {
-		for (i = 0; i < msg->host_cnt; i++)
-			xfree(msg->kvs_host_ptr[i].hostname);
-		xfree(msg->kvs_host_ptr);
-
-		for (i = 0; i < msg->kvs_comm_recs; i++) {
-			if (!msg->kvs_comm_ptr[i])
-				continue;
-
-			xfree(msg->kvs_comm_ptr[i]->kvs_name);
-			for (j = 0; j < msg->kvs_comm_ptr[i]->kvs_cnt; j++) {
-				xfree(msg->kvs_comm_ptr[i]->kvs_keys[j]);
-				xfree(msg->kvs_comm_ptr[i]->kvs_values[j]);
-			}
-			xfree(msg->kvs_comm_ptr[i]->kvs_keys);
-			xfree(msg->kvs_comm_ptr[i]->kvs_values);
+		if (msg->kvs_host_ptr) {
+			for (i = 0; i < msg->host_cnt; i++)
+				xfree(msg->kvs_host_ptr[i].hostname);
+			xfree(msg->kvs_host_ptr);
 		}
-		xfree(msg->kvs_comm_ptr);
+		if (msg->kvs_comm_ptr) {
+			for (i = 0; i < msg->kvs_comm_recs; i++) {
+				if (!msg->kvs_comm_ptr[i])
+					continue;
+
+				xfree(msg->kvs_comm_ptr[i]->kvs_name);
+				for (j = 0; j < msg->kvs_comm_ptr[i]->kvs_cnt;
+				     j++) {
+					xfree(msg->kvs_comm_ptr[i]->
+					      kvs_keys[j]);
+					xfree(msg->kvs_comm_ptr[i]->
+					      kvs_values[j]);
+				}
+				xfree(msg->kvs_comm_ptr[i]->kvs_keys);
+				xfree(msg->kvs_comm_ptr[i]->kvs_values);
+			}
+			xfree(msg->kvs_comm_ptr);
+		}
 		xfree(msg);
 	}
 }
@@ -2960,7 +3020,6 @@ extern char *conn_type_string(enum connection_type conn_type)
 	default:
 		return "n/a";
 	}
-	return "n/a";
 }
 
 /* caller must xfree after call */
@@ -3124,9 +3183,11 @@ extern void slurm_free_resource_allocation_response_msg_members (
 		xfree(msg->alias_list);
 		xfree(msg->cpus_per_node);
 		xfree(msg->cpu_count_reps);
-		for (i = 0; i < msg->env_size; i++)
-			xfree(msg->environment[i]);
-		xfree(msg->environment);
+		if (msg->environment) {
+			for (i = 0; i < msg->env_size; i++)
+				xfree(msg->environment[i]);
+			xfree(msg->environment);
+		}
 		xfree(msg->node_addr);
 		xfree(msg->node_list);
 		xfree(msg->partition);
@@ -3292,6 +3353,7 @@ extern void slurm_free_job_step_info_members (job_step_info_t * msg)
 {
 	if (msg != NULL) {
 		xfree(msg->ckpt_dir);
+		xfree(msg->cluster);
 		xfree(msg->gres);
 		xfree(msg->name);
 		xfree(msg->network);
@@ -3377,6 +3439,7 @@ extern void slurm_free_node_info_members(node_info_t * node)
 {
 	if (node) {
 		xfree(node->arch);
+		xfree(node->cluster_name);
 		xfree(node->cpu_spec_list);
 		acct_gather_energy_destroy(node->energy);
 		ext_sensors_destroy(node->ext_sensors);
@@ -3438,6 +3501,7 @@ extern void slurm_free_partition_info_members(partition_info_t * part)
 	if (part) {
 		xfree(part->allow_alloc_nodes);
 		xfree(part->allow_accounts);
+		xfree(part->cluster_name);
 		xfree(part->allow_groups);
 		xfree(part->allow_qos);
 		xfree(part->alternate);
@@ -3519,12 +3583,14 @@ extern void slurm_free_topo_info_msg(topo_info_response_msg_t *msg)
 	int i;
 
 	if (msg) {
-		for (i = 0; i < msg->record_count; i++) {
-			xfree(msg->topo_array[i].name);
-			xfree(msg->topo_array[i].nodes);
-			xfree(msg->topo_array[i].switches);
+		if (msg->topo_array) {
+			for (i = 0; i < msg->record_count; i++) {
+				xfree(msg->topo_array[i].name);
+				xfree(msg->topo_array[i].nodes);
+				xfree(msg->topo_array[i].switches);
+			}
+			xfree(msg->topo_array);
 		}
-		xfree(msg->topo_array);
 		xfree(msg);
 	}
 }
@@ -3676,7 +3742,7 @@ extern void slurm_free_block_info_msg(block_info_msg_t *block_info_msg)
 	if (block_info_msg) {
 		if (block_info_msg->block_array) {
 			int i;
-			for(i=0; i<block_info_msg->record_count; i++)
+			for (i=0; i<block_info_msg->record_count; i++)
 				slurm_free_block_info_members(
 					&(block_info_msg->block_array[i]));
 			xfree(block_info_msg->block_array);
@@ -3783,6 +3849,8 @@ extern void slurm_copy_priority_factors_object(priority_factors_object_t *dest,
 	size = sizeof(double) * src->tres_cnt;
 
 	memcpy(dest, src, sizeof(priority_factors_object_t));
+	dest->partition = xstrdup(src->partition);
+
 	if (src->priority_tres) {
 		dest->priority_tres = xmalloc(size);
 		memcpy(dest->priority_tres, src->priority_tres, size);
@@ -3805,6 +3873,7 @@ extern void slurm_free_priority_factors_request_msg(
 {
 	if (msg) {
 		FREE_NULL_LIST(msg->job_id_list);
+		xfree(msg->partitions);
 		FREE_NULL_LIST(msg->uid_list);
 		xfree(msg);
 	}
@@ -3944,6 +4013,7 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 		break;
 	case REQUEST_JOB_END_TIME:
 	case REQUEST_JOB_ALLOCATION_INFO:
+	case REQUEST_JOB_ALLOCATION_INFO_LITE:
 		slurm_free_job_alloc_info_msg(data);
 		break;
 	case REQUEST_JOB_SBCAST_CRED:
@@ -4221,6 +4291,13 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
 	case REQUEST_EVENT_LOG:
 		slurm_free_event_log_msg(data);
 		break;
+	case REQUEST_CTLD_MULT_MSG:
+	case RESPONSE_CTLD_MULT_MSG:
+		slurm_free_ctld_multi_msg(data);
+		break;
+	case RESPONSE_JOB_INFO:
+		slurm_free_job_info(data);
+		break;
 	default:
 		error("invalid type trying to be freed %u", type);
 		break;
@@ -4232,7 +4309,7 @@ extern uint32_t slurm_get_return_code(slurm_msg_type_t type, void *data)
 {
 	uint32_t rc = 0;
 
-	switch(type) {
+	switch (type) {
 	case MESSAGE_EPILOG_COMPLETE:
 		rc = ((epilog_complete_msg_t *)data)->return_code;
 		break;
@@ -4275,6 +4352,14 @@ extern void slurm_free_job_notify_msg(job_notify_msg_t * msg)
 	}
 }
 
+extern void slurm_free_ctld_multi_msg(ctld_list_msg_t *msg)
+{
+	if (msg) {
+		FREE_NULL_LIST(msg->my_list);
+		xfree(msg);
+	}
+}
+
 /*
  *  Sanitize spank_job_env by prepending "SPANK_" to all entries,
  *   thus rendering them harmless in environment of scripts and
@@ -4309,10 +4394,12 @@ slurm_free_license_info_msg(license_info_msg_t *msg)
 	if (msg == NULL)
 		return;
 
-	for (cc = 0; cc < msg->num_lic; cc++) {
-		xfree(msg->lic_array[cc].name);
+	if (msg->lic_array) {
+		for (cc = 0; cc < msg->num_lic; cc++) {
+			xfree(msg->lic_array[cc].name);
+		}
+		xfree(msg->lic_array);
 	}
-	xfree(msg->lic_array);
 	xfree(msg);
 }
 extern void slurm_free_license_info_request_msg(license_info_request_msg_t *msg)
@@ -4529,30 +4616,16 @@ rpc_num2string(uint16_t opcode)
 		return "RESPONSE_JOB_ATTACH";
 	case REQUEST_JOB_WILL_RUN:
 		return "REQUEST_JOB_WILL_RUN";
-	case REQUEST_SIB_JOB_START:
-		return "REQUEST_SIB_JOB_START";
-	case REQUEST_SIB_JOB_CANCEL:
-		return "REQUEST_SIB_JOB_CANCEL";
-	case REQUEST_SIB_JOB_REQUEUE:
-		return "REQUEST_SIB_JOB_REQUEUE";
-	case REQUEST_SIB_JOB_COMPLETE:
-		return "REQUEST_SIB_JOB_COMPLETE";
-	case REQUEST_SIB_JOB_LOCK:
-		return "REQUEST_SIB_JOB_LOCK";
-	case REQUEST_SIB_JOB_UNLOCK:
-		return "REQUEST_SIB_JOB_UNLOCK";
-	case REQUEST_SIB_JOB_WILL_RUN:
-		return "REQUEST_SIB_JOB_WILL_RUN";
-	case REQUEST_SIB_SUBMIT_BATCH_JOB:
-		return "REQUEST_SIB_SUBMIT_BATCH_JOB";
-	case REQUEST_SIB_RESOURCE_ALLOCATION:
-		return "REQUEST_SIB_RESOURCE_ALLOCATION";
 	case RESPONSE_JOB_WILL_RUN:
 		return "RESPONSE_JOB_WILL_RUN";
 	case REQUEST_JOB_ALLOCATION_INFO:
 		return "REQUEST_JOB_ALLOCATION_INFO";
 	case RESPONSE_JOB_ALLOCATION_INFO:
 		return "RESPONSE_JOB_ALLOCATION_INFO";
+	case REQUEST_JOB_ALLOCATION_INFO_LITE:
+		return "REQUEST_JOB_ALLOCATION_INFO_LITE";
+	case RESPONSE_JOB_ALLOCATION_INFO_LITE:
+		return "RESPONSE_JOB_ALLOCATION_INFO_LITE";
 	case REQUEST_UPDATE_JOB_TIME:
 		return "REQUEST_UPDATE_JOB_TIME";
 	case REQUEST_JOB_READY:
@@ -4567,6 +4640,28 @@ rpc_num2string(uint16_t opcode)
 		return "REQUEST_JOB_SBCAST_CRED";
 	case RESPONSE_JOB_SBCAST_CRED:
 		return "RESPONSE_JOB_SBCAST_CRED";
+	case REQUEST_SIB_JOB_START:
+		return "REQUEST_SIB_JOB_START";
+	case REQUEST_SIB_JOB_CANCEL:
+		return "REQUEST_SIB_JOB_CANCEL";
+	case REQUEST_SIB_JOB_REQUEUE:
+		return "REQUEST_SIB_JOB_REQUEUE";
+	case REQUEST_SIB_JOB_COMPLETE:
+		return "REQUEST_SIB_JOB_COMPLETE";
+	case REQUEST_SIB_JOB_LOCK:
+		return "REQUEST_SIB_JOB_LOCK";
+	case REQUEST_SIB_JOB_UNLOCK:				/* 4030 */
+		return "REQUEST_SIB_JOB_UNLOCK";
+	case REQUEST_SIB_JOB_WILL_RUN:
+		return "REQUEST_SIB_JOB_WILL_RUN";
+	case REQUEST_SIB_SUBMIT_BATCH_JOB:
+		return "REQUEST_SIB_SUBMIT_BATCH_JOB";
+	case REQUEST_SIB_RESOURCE_ALLOCATION:
+		return "REQUEST_SIB_RESOURCE_ALLOCATION";
+	case REQUEST_CTLD_MULT_MSG:
+		return "REQUEST_CTLD_MULT_MSG";
+	case RESPONSE_CTLD_MULT_MSG:
+		return "RESPONSE_CTLD_MULT_MSG";
 
 	case REQUEST_JOB_STEP_CREATE:				/* 5001 */
 		return "REQUEST_JOB_STEP_CREATE";
@@ -4715,6 +4810,8 @@ rpc_num2string(uint16_t opcode)
 		return "RESPONSE_SLURM_RC";
 	case RESPONSE_SLURM_RC_MSG:
 		return "RESPONSE_SLURM_RC_MSG";
+	case RESPONSE_SLURM_REROUTE_MSG:
+		return "RESPONSE_SLURM_REROUTE_MSG";
 
 	case RESPONSE_FORWARD_FAILED:				/* 9001 */
 		return "RESPONSE_FORWARD_FAILED";
@@ -4875,4 +4972,25 @@ extern char * parse_part_enforce_type_2str (uint16_t type)
 	}
 
 	return type_str;
+}
+
+/* Return true if this cluster_name is in a federation */
+extern bool cluster_in_federation(void *ptr, char *cluster_name)
+{
+	slurmdb_federation_rec_t *fed = (slurmdb_federation_rec_t *) ptr;
+	slurmdb_cluster_rec_t *cluster;
+	ListIterator iter;
+	bool status = false;
+
+	if (!fed || !fed->cluster_list)		/* NULL if no federations */
+		return status;
+	iter = list_iterator_create(fed->cluster_list);
+	while ((cluster = (slurmdb_cluster_rec_t *) list_next(iter))) {
+		if (!xstrcmp(cluster->name, cluster_name)) {
+			status = true;
+			break;
+		}
+	}
+	list_iterator_destroy(iter);
+	return status;
 }

@@ -329,6 +329,12 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Partition in DOWN state"				},
 	{ ESLURM_DUPLICATE_GRES,
 	  "Duplicate generic resource (gres) specification"	},
+	{ ESLURM_JOB_SETTING_DB_INX,
+	  "Job update not available right now, the DB index is being set, try again in a bit" },
+	{ ESLURM_RSV_ALREADY_STARTED,
+	  "Reservation already started"				},
+	{ ESLURM_SUBMISSIONS_DISABLED,
+	  "System submissions disabled"				},
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -442,6 +448,12 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Too many clusters in federation"			},
 	{ ESLURM_FED_CLUSTER_MULTIPLE_ASSIGNMENT,
 	  "Clusters can only be assigned to one federation" 	},
+	{ ESLURM_INVALID_CLUSTER_FEATURE,
+	  "Invalid cluster feature specification"		},
+	{ ESLURM_JOB_NOT_FEDERATED,
+	  "Not a valid federated job"				},
+	{ ESLURM_INVALID_CLUSTER_NAME,
+	  "Invalid cluster name"				},
 
 	/* plugin and custom errors */
 	{ ESLURM_MISSING_TIME_LIMIT,

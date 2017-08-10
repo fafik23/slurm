@@ -38,14 +38,179 @@ documents those changes that are of interest to users and administrators.
     ExitCode.
  -- scontrol modified to report core IDs for reservation containing individual
     cores.
+ -- MYSQL - Get rid of table join during rollup which speeds up the process
+    dramatically on large job/step tables.
+ -- Add ability to define features on clusters for directing federated jobs to
+    different clusters.
+ -- Add new RPC to process multiple federation RPCs in a single communication.
+ -- Modify slurm_load_jobs() function to load job information from all clusters
+    in a federation.
+ -- Add squeue --local and --sibling options to modify filtering of jobs on
+    federated clusters.
+ -- Add SchedulerParameters option of bf_max_job_user_part to specifiy the
+    maximum number of jobs per user for any single partition. This differs from
+    bf_max_job_user in that a separate counter is applied to each partition
+    rather than having a single counter per user applied to all partitions.
+ -- Modify backfill logic so that bf_max_job_user, bf_max_job_part and
+    bf_max_job_user_part options can all be used independently of each other.
+ -- Add sprio -p/--partition option to filter jobs by partition name.
+ -- Add partition name to job priority factor response message.
+ -- Add sprio --local and --sibling options for use in federation of clusters.
+ -- Add sprio "%c" format to print cluster name in federation mode.
+ -- Modify sinfo logic to provided unified view of all nodes and partitions
+    in a federation, add --local option to only report local state information
+    even in a cluster, print cluster name with "%V" format option, and
+    optionally sort by cluster name.
+ -- If a task in a parallel job fails and it was launched with the
+    --kill-on-bad-exit option then terminate the remaining tasks using the
+    SIGCONT, SIGTERM and SIGKILL signals rather than just sending SIGKILL.
+ -- Include submit_time when doing the sort for job scheduling.
+ -- Modify sacct to report all jobs in federation by default. Also add --local
+    option.
+ -- Modify sacct to accept "--cluster all" option (in addition to the old
+    "--cluster -1", which is still accepted).
+ -- Modify sreport to report all jobs in federation by default. Also add --local
+    option.
+ -- sched/backfill: Improve assoc_limit_stop configuration parameter support.
+ -- KNL features: Always keep active and available features in the same order:
+    first site-specific features, next MCDRAM modes, last NUMA modes.
+ -- Changed default ProctrackType to cgroup.
+ -- Add "cluster_name" field to node_info_t and partition_info_t data structure.
+    It is filled in only when the cluster is part of a federation and
+    SHOW_GLOBAL flag used.
+ -- Functions slurm_load_node() slurm_load_partitions() modified to show all
+    nodes/partitions in a federation when the SHOW_GLOBAL flag is used.
 
-* Changes in Slurm 17.02.2
+* Changes in Slurm 17.02.3
 ==========================
+ -- Increase --cpu_bind and --mem_bind field length limits.
+ -- Fix segfault when using AdminComment field with job arrays.
+ -- Clear Dependency field when all dependencies are satisfied.
+ -- Add --array-unique to squeue which will display one unique pending job
+    array element per line.
+ -- Reset backfill timers correctly without skipping over them in certain
+    circumstances.
+ -- When running the "scontrol top" command, make sure that all of the user's
+    jobs have a priority that is lower than the selected job. Previous logic
+    would permit other jobs with equal priority (no jobs with higher priority).
+ -- Fix perl api so we always get an allocation when calling Slurm::new().
+ -- Fix issue with cleaning up cpuset and devices cgroups when multiple steps
+    end at the same time.
+ -- Document that PriorityFlags option of DEPTH_OBLIVIOUS precludes the use of
+    FAIR_TREE.
+ -- Fix issue if an invalid message came in a Slurm daemon/command may abort.
+ -- Make it impossible to use CR_CPU* along with CR_ONE_TASK_PER_CORE. The
+    options are mutually exclusive.
+ -- ALPS - Fix scheduling when ALPS doesn't agree with Slurm on what nodes
+    are free.
+ -- When removing a partition make sure it isn't part of a reservation.
+ -- Fix seg fault if loading attempting to load non-existent burstbuffer plugin.
+ -- Fix to backfill scheduling with respect to QOS and association limits. Jobs
+    submitted to multiple partitions are most likley to be effected.
+ -- sched/backfill: Improve assoc_limit_stop configuration parameter support.
+ -- CRAY - Add ansible play and README.
+ -- sched/backfill: Fix bug related to advanced reservations and the need to
+    reboot nodes to change KNL mode.
+ -- Preempt plugins - fix check for 'preempt_youngest_first' option.
+ -- Preempt plugins - fix incorrect casts in preempt_youngest_first mode.
+ -- Preempt/job_prio - fix incorrect casts in sort function.
+ -- Fix to make task/affinity work with ldoms where there are more than 64
+    cpus on the node.
+ -- When using node_features/knl_generic make it so the slurmd doesn't segfault
+    when shutting down.
+ -- Fix potential double-xfree() when using job arrays that can lead to
+    slurmctld crashing.
+ -- Fix priority/multifactor priorities on a slurmctld restart if not using
+    accounting_storage/[mysql|slurmdbd].
+ -- Fix NULL dereference reported by CLANG.
+ -- Update proctrack documentation to strongly encourage use of
+    proctrack/cgroup.
+ -- Fix potential memory leak if job fails to begin after nodes have been
+    selected for a job.
+ -- Handle a job that made it out of the select plugin without a job_resrcs
+    pointer.
+ -- Fix potential race condition when persistent connections are being closed at
+    shutdown.
+ -- Fix incorrect locks levels when submitting a batch job or updating a job
+    in general.
+ -- CRAY - Move delay waiting for job cleanup to after we check once.
+ -- MYSQL - Fix memory leak when loading archived jobs into the database.
+ -- Fix potential race condition when starting the priority/multifactor plugin's
+    decay thread.
 
 * Changes in Slurm 17.02.2
 ==========================
  -- Update hyperlink to LBNL Node Health Check program.
  -- burst_buffer/cray - Add support for line continuation.
+ -- If a job is cancelled by the user while it's allocated nodes are being
+    reconfigured (i.e. the capmc_resume program is rebooting nodes for the job)
+    and the node reconfiguration fails (i.e. the reboot fails), then don't
+    requeue the job but leave it in a cancelled state.
+ -- capmc_resume (Cray resume node script) - Do not disable changing a node's
+    active features if SyscfgPath is configured in the knl.conf file.
+ -- Improve the srun documentation for the --resv-ports option.
+ -- burst_buffer/cray - Fix parsing for discontinuous allocated nodes. A job
+    allocation of "20,22" must be expressed as "20\n22".
+ -- Fix rare segfault when shutting down slurmctld and still sending data to
+    the database.
+ -- Fix gres output of a job if it is updated while pending to be displayed
+    correctly with Slurm tools.
+ -- Fix pam_slurm_adopt.
+ -- Fix missing unlock when job_list doesn't exist when starting priority/
+    multifactor.
+ -- Fix segfault if slurmctld is shutting down and the slurmdbd plugin was
+    in the middle of setting db_indexes.
+ -- Add ESLURM_JOB_SETTING_DB_INX to errno to note when a job can't be updated
+    because the dbd is setting a db_index.
+ -- Fix possible double insertion into database when a job is updated at the
+    moment the dbd is assigning a db_index.
+ -- Fix memory error when updating a job's licenses.
+ -- Fix seff to work correctly with non-standard perl installs.
+ -- Export missing slurmdbd_defs_[init|fini] needed for libslurmdb.so to work.
+ -- Fix sacct from returning way more than requested when querying against a job
+    array task id.
+ -- Fix double read lock of tres when updating gres or licenses on a job.
+ -- Make sure locks are always in place when calling
+    assoc_mgr_make_tres_str_from_array.
+ -- Prevent slurmctld SEGV when creating reservation with duplicated name.
+ -- Consider QOS flags Partition[Min|Max]Nodes when doing backfill.
+ -- Fix slurmdbd_defs.c to not have half symbols go to libslurm.so and the
+    other half go to libslurmdb.so.
+ -- Fix 'scontrol show jobs' to remove an errant newline when 'Switches' is
+    printed.
+ -- Better code for handling memory required by a task on a heterogeneous
+    system.
+ -- Fix regression in 17.02.0 with respects to GrpTresMins on a QOS or
+    Association.
+ -- Cleanup to make make dist work.
+ -- Schedule interactive jobs quicker.
+ -- Perl API - correct value of MEM_PER_CPU constant to correctly handle
+    memory values.
+ -- Fix 'flags' variable to be 32 bit from the old 16 bit value in the perl api.
+ -- Export sched_nodes for a job in the perl api.
+ -- Improve error output when updating a reservation that has already started.
+ -- Fix --ntasks-per-node issue with srun so DenyOnLimit would work correctly.
+ -- node_features/knl_cray plugin - Fix memory leak.
+ -- Fix wrong cpu_per_task count issue on heterogeneous system when dealing with
+    steps.
+ -- Fix double free issue when removing usage from an association with sacctmgr.
+ -- Fix issue with SPANK plugins attempting to set null values as environment
+    variables, which leads to the command segfaulting on newer glibc versions.
+ -- Fix race condition on slurmctld startup when plugins have not gone through
+    init() ahead of the rpc_manager processing incoming messages.
+ -- job_submit/lua - expose admin_comment field.
+ -- Allow AdminComment field to be set by the job_submit plugin.
+ -- Allow AdminComment field to be changed by any Administrator.
+ -- Fix key words in jobcomp select.
+ -- MYSQL - Streamline job flush sql when doing a clean start on the slurmctld.
+ -- Fix potential infinite loop when talking to the DBD when shutting down
+    the slurmctld.
+ -- Fix MCS filter.
+ -- Make it so pmix can be included in the plugin rpm without having to
+    specify --with-pmix.
+ -- MYSQL - Fix initial load when not using he DBD.
+ -- Fix scontrol top to not make jobs priority 0 (held).
+ -- Downgrade info message about exceeding partition time limit to a debug2.
 
 * Changes in Slurm 17.02.1-2
 ============================
@@ -338,6 +503,21 @@ documents those changes that are of interest to users and administrators.
 * Changes in Slurm 16.05.11
 ===========================
  -- burst_buffer/cray - Add support for line continuation.
+ -- If a job is cancelled by the user while it's allocated nodes are being
+    reconfigured (i.e. the capmc_resume program is rebooting nodes for the job)
+    and the node reconfiguration fails (i.e. the reboot fails), then don't
+    requeue the job but leave it in a cancelled state.
+ -- capmc_resume (Cray resume node script) - Do not disable changing a node's
+    active features if SyscfgPath is configured in the knl.conf file.
+ -- Fix memory error when updating a job's licenses.
+ -- Fix double read lock of tres when updating gres or licenses on a job.
+ -- Fix regression in 16.05.10 with respects to GrpTresMins on a QOS or
+    Association.
+ -- ALPS - Fix scheduling when ALPS doesn't agree with Slurm on what nodes
+    are free.
+ -- Fix seg fault if loading attempting to load non-existent burstbuffer plugin.
+ -- Fix to backfill scheduling with respect to QOS and association limits. Jobs
+    submitted to multiple partitions are most likley to be effected.
 
 * Changes in Slurm 16.05.10-2
 =============================

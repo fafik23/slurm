@@ -81,9 +81,10 @@ GtkTable *main_grid_table = NULL;
 GMutex *sview_mutex = NULL;
 GMutex *grid_mutex = NULL;
 GCond *grid_cond = NULL;
-uint32_t cluster_flags;
 int cluster_dims;
+uint32_t cluster_flags;
 List cluster_list = NULL;
+char *orig_cluster_name = NULL;
 switch_record_bitmaps_t *g_switch_nodes_maps = NULL;
 popup_pos_t popup_pos;
 
@@ -101,7 +102,6 @@ topo_info_response_msg_t *g_topo_info_msg_ptr = NULL;
 static GtkActionGroup *admin_action_group = NULL;
 static GtkActionGroup *menu_action_group = NULL;
 static bool debug_inited = 0;
-static char *orig_cluster_name = NULL;
 static int g_menu_id = 0;
 static GtkUIManager *g_ui_manager = NULL;
 static GtkToggleActionEntry *debug_actions = NULL;
@@ -1166,7 +1166,7 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 		if (display_data->id == -1)
 			break;
 		if (cluster_flags & CLUSTER_FLAG_BG) {
-			switch(display_data->id) {
+			switch (display_data->id) {
 			case BLOCK_PAGE:
 				display_data->show = true;
 				break;
@@ -1177,7 +1177,7 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 				break;
 			}
 		} else {
-			switch(display_data->id) {
+			switch (display_data->id) {
 			case BLOCK_PAGE:
 				display_data->show = false;
 				break;
@@ -1331,7 +1331,7 @@ static GtkWidget *_create_cluster_combo(void)
 	if (list_count(cluster_list) > 1)
 		model = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_POINTER);
 
-	/* Set up the working_cluster_rec just incase we are on a node
+	/* Set up the working_cluster_rec just in case we are on a node
 	   that doesn't technically belong to a cluster (like
 	   the node running the slurmdbd).
 	*/

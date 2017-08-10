@@ -928,7 +928,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 					atof(step_row[STEP_REQ_AVE_CPU]);
 				step->stats.act_cpufreq =
 					atof(step_row[STEP_REQ_ACT_CPUFREQ]);
-				step->stats.consumed_energy = atof(
+				step->stats.consumed_energy = slurm_atoull(
 					step_row[STEP_REQ_CONSUMED_ENERGY]);
 				step->stats.vsize_max_nodeid = slurm_atoul(
 					step_row[STEP_REQ_MAX_VSIZE_NODE]);
@@ -1248,6 +1248,12 @@ no_resv:
 		xstrcat(*extra, ")");
 	}
 
+	/* Don't show revoked sibling federated jobs w/out -D */
+	if (!job_cond->duplicates)
+		xstrfmtcat(*extra, " %s (state != %d)",
+			   *extra ? "&&" : "where",
+			   JOB_REVOKED);
+
 	return SLURM_SUCCESS;
 }
 
@@ -1418,10 +1424,13 @@ extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 
 		if (job_ids)
 			xstrfmtcat(*extra, "t1.id_job in (%s) || ", job_ids);
-		if (array_job_ids)
+		if (array_job_ids) {
 			xstrfmtcat(*extra, "t1.id_array_job in (%s)", array_job_ids);
-		if (array_task_ids)
-			xstrfmtcat(*extra, " || t1.id_array_task in (%s)", array_task_ids);
+			if (array_task_ids)
+				xstrfmtcat(*extra,
+					   " && t1.id_array_task in (%s)",
+					   array_task_ids);
+		}
 
 		xstrcat(*extra, ")");
 		xfree(job_ids);

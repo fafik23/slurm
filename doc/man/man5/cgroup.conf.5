@@ -59,6 +59,14 @@ the file accepts one device per line and it permits lines like /dev/sda* or /dev
 See also an example of this file in etc/cgroup_allowed_devices_file.conf.example.
 
 .TP
+\fBAllowedKmemSpace\fR=<number>
+Constrain the job cgroup kernel memory to this amount of the allocated memory,
+specified in bytes. The \fBAllowedKmemSpace\fR must be between the upper and
+lower memory limits, specified by \fBMaxKmemPercent\fR and \fBMinKmemSpace\fR,
+respectivley. If \fBAllowedKmemSpace\fR goes beyond the upper or lower limit,
+it will be reset to that upper or lower limit, whichever has been exceeded.
+
+.TP
 \fBAllowedRAMSpace\fR=<number>
 Constrain the job cgroup RAM to this percentage of the allocated memory.
 The percentage supplied may be expressed as floating point
@@ -93,9 +101,9 @@ The default value is "no".
 .TP
 \fBConstrainKmemSpace\fR=<yes|no>
 If configured to "yes" then constrain the job's Kmem RAM usage. In addition to
-RAM usage. Only takes effect if ConstrainRAMSpace is set to "yes".
-The default value is "yes",
-in which case the job's Kmem limit will be set to its RAM limit.
+RAM usage. Only takes effect if ConstrainRAMSpace is set to "yes". The default
+value is "yes", in which case the job's Kmem limit will be set to its RAM limit.
+Also see \fBAllowedKmemSpace\fR.
 
 .TP
 \fBConstrainRAMSpace\fR=<yes|no>
@@ -118,12 +126,6 @@ RAM and RAM+Swap limits. This means that in that particular case,
 ConstrainRAMSpace is automatically enabled with the same limit than the one
 used to constrain swap space.
 Also see \fBAllowedSwapSpace\fR.
-
-.TP
-\fBConstrainKmemSpace\fR=<yes|no>
-If configured to "yes" then constrain the job's kernel memory usage.
-The default value is "yes". It is automatically disabled if \fBConstrainRAMSpace\fR=no.
-Also see \fBAllowedKmemSpace\fR.
 
 .TP
 \fBMaxRAMPercent\fR=\fIPERCENT\fR

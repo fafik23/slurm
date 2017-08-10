@@ -245,14 +245,37 @@ static void _build_pending_step(struct job_record *job_ptr,
 static void _internal_step_complete(struct job_record *job_ptr,
 				    struct step_record *step_ptr)
 {
+	struct jobacctinfo *jobacct = (struct jobacctinfo *)step_ptr->jobacct;
+	if (jobacct && job_ptr->tres_alloc_cnt &&
+	    (jobacct->energy.consumed_energy != NO_VAL64)) {
+		if (job_ptr->tres_alloc_cnt[TRES_ARRAY_ENERGY] == NO_VAL64)
+			job_ptr->tres_alloc_cnt[TRES_ARRAY_ENERGY] = 0;
+		job_ptr->tres_alloc_cnt[TRES_ARRAY_ENERGY] +=
+			jobacct->energy.consumed_energy;
+	}
+
+	if (IS_JOB_FINISHED(job_ptr) &&
+	    job_ptr->tres_alloc_cnt &&
+	    (job_ptr->tres_alloc_cnt[TRES_ENERGY] != NO_VAL64) &&
+	    (list_count(job_ptr->step_list) == 1)) {
+		set_job_tres_alloc_str(job_ptr, false);
+		/* This flag says we have processed the tres alloc including
+		 * energy from all steps, so don't process or handle it again
+		 * with the job.  It also tells the slurmdbd plugin to send it
+		 * to the DBD.
+		 */
+		job_ptr->bit_flags |= TRES_STR_CALC;
+	}
+
 	jobacct_storage_g_step_complete(acct_db_conn, step_ptr);
 
 	if (step_ptr->step_id == SLURM_PENDING_STEP)
 		return;
 
-	if (step_ptr->step_id != SLURM_EXTERN_CONT)
-		job_ptr->derived_ec = MAX(job_ptr->derived_ec,
-					  step_ptr->exit_code);
+	if ((step_ptr->step_id != SLURM_EXTERN_CONT) &&
+	    ((step_ptr->exit_code == SIG_OOM) ||
+	     (step_ptr->exit_code > job_ptr->derived_ec)))
+		job_ptr->derived_ec = step_ptr->exit_code;
 
 	step_ptr->state |= JOB_COMPLETING;
 	select_g_step_finish(step_ptr, false);
@@ -482,13 +505,14 @@ find_step_record(struct job_record *job_ptr, uint32_t step_id)
  * IN job_id - id of the job to be cancelled
  * IN step_id - id of the job step to be cancelled
  * IN signal - user id of user issuing the RPC
+ * IN flags - RPC flags
  * IN uid - user id of user issuing the RPC
  * RET 0 on success, otherwise ESLURM error code
  * global: job_list - pointer global job list
  *	last_job_update - time of last job table update
  */
 int job_step_signal(uint32_t job_id, uint32_t step_id,
-		    uint16_t signal, uid_t uid)
+		    uint16_t signal, uint16_t flags, uid_t uid)
 {
 	struct job_record *job_ptr;
 	struct step_record *step_ptr, step_rec;
@@ -557,6 +581,8 @@ int job_step_signal(uint32_t job_id, uint32_t step_id,
 		step_rec.step_node_bitmap = job_ptr->node_bitmap;
 		step_ptr = &step_rec;
 		rc = ESLURM_ALREADY_DONE;
+	} else if (flags & KILL_OOM) {
+		step_ptr->exit_code = SIG_OOM;
 	}
 
 	/* If SIG_NODE_FAIL codes through it means we had nodes failed
@@ -2764,7 +2790,7 @@ extern slurm_step_layout_t *step_layout_create(struct step_record *step_ptr,
 					cpus_task = cpus_per_task;
 
 				if ((cpus_task_inx == -1) ||
-				    (cpus_task_reps[cpus_task_inx] !=
+				    (cpus_per_task_array[cpus_task_inx] !=
 				     cpus_task)) {
 					cpus_task_inx++;
 					cpus_per_task_array[cpus_task_inx] =
@@ -2904,7 +2930,55 @@ static void _pack_ctld_job_step_info(struct step_record *step_ptr, Buf buffer,
 	cpu_cnt = step_ptr->cpu_count;
 #endif
 
-	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+		pack32(step_ptr->job_ptr->array_job_id, buffer);
+		pack32(step_ptr->job_ptr->array_task_id, buffer);
+		pack32(step_ptr->job_ptr->job_id, buffer);
+		pack32(step_ptr->step_id, buffer);
+		pack16(step_ptr->ckpt_interval, buffer);
+		pack32(step_ptr->job_ptr->user_id, buffer);
+		pack32(cpu_cnt, buffer);
+		pack32(step_ptr->cpu_freq_min, buffer);
+		pack32(step_ptr->cpu_freq_max, buffer);
+		pack32(step_ptr->cpu_freq_gov, buffer);
+		pack32(task_cnt, buffer);
+		if (step_ptr->step_layout)
+			pack32(step_ptr->step_layout->task_dist, buffer);
+		else
+			pack32((uint32_t) SLURM_DIST_UNKNOWN, buffer);
+		pack32(step_ptr->time_limit, buffer);
+		pack32(step_ptr->state, buffer);
+		pack32(step_ptr->srun_pid, buffer);
+
+		pack_time(step_ptr->start_time, buffer);
+		if (IS_JOB_SUSPENDED(step_ptr->job_ptr)) {
+			run_time = step_ptr->pre_sus_time;
+		} else {
+			begin_time = MAX(step_ptr->start_time,
+					 step_ptr->job_ptr->suspend_time);
+			run_time = step_ptr->pre_sus_time +
+				difftime(time(NULL), begin_time);
+		}
+		pack_time(run_time, buffer);
+
+		packstr(slurmctld_conf.cluster_name, buffer);
+		if (step_ptr->job_ptr->part_ptr)
+			packstr(step_ptr->job_ptr->part_ptr->name, buffer);
+		else
+			packstr(step_ptr->job_ptr->partition, buffer);
+		packstr(step_ptr->host, buffer);
+		packstr(step_ptr->resv_ports, buffer);
+		packstr(node_list, buffer);
+		packstr(step_ptr->name, buffer);
+		packstr(step_ptr->network, buffer);
+		pack_bit_str_hex(pack_bitstr, buffer);
+		packstr(step_ptr->ckpt_dir, buffer);
+		packstr(step_ptr->gres, buffer);
+		select_g_select_jobinfo_pack(step_ptr->select_jobinfo, buffer,
+					     protocol_version);
+		packstr(step_ptr->tres_fmt_alloc_str, buffer);
+		pack16(step_ptr->start_protocol_ver, buffer);
+	} else if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		pack32(step_ptr->job_ptr->array_job_id, buffer);
 		pack32(step_ptr->job_ptr->array_task_id, buffer);
 		pack32(step_ptr->job_ptr->job_id, buffer);
@@ -2951,8 +3025,8 @@ static void _pack_ctld_job_step_info(struct step_record *step_ptr, Buf buffer,
 					     protocol_version);
 		packstr(step_ptr->tres_fmt_alloc_str, buffer);
 		pack16(step_ptr->start_protocol_ver, buffer);
-		pack32(step_ptr->packjobid, buffer);
-		pack32(step_ptr->packstepid, buffer);
+		pack32((uint32_t) 0, buffer);
+		pack32((uint32_t) 0, buffer);
 	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		pack32(step_ptr->job_ptr->array_job_id, buffer);
 		pack32(step_ptr->job_ptr->array_task_id, buffer);
@@ -3362,7 +3436,7 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid,
 
 	/* FIXME: It was changed in 16.05.3 to make the extern step
 	 * at the beginning of the job, so this isn't really needed
-	 * anymore, but just incase there were steps out on the nodes
+	 * anymore, but just in case there were steps out on the nodes
 	 * during an upgrade this was left in.  It can probably be
 	 * taken out in future releases though.
 	 */
@@ -3422,7 +3496,9 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid,
 		*/
 		req->range_last = nodes - 1;
 #endif
-		step_ptr->exit_code = MAX(step_ptr->exit_code, req->step_rc);
+		if ((req->step_rc == SIG_OOM) ||
+		    (req->step_rc > step_ptr->exit_code))
+			step_ptr->exit_code = req->step_rc;
 	}
 	if ((req->range_first >= nodes) || (req->range_last >= nodes) ||
 	    (req->range_first > req->range_last)) {
@@ -4304,10 +4380,8 @@ static bool _is_mem_resv(void)
 
 	if (!mem_resv_tested) {
 		mem_resv_tested = true;
-		slurm_ctl_conf_t *conf = slurm_conf_lock();
-		if (conf->select_type_param & CR_MEMORY)
+		if (slurmctld_conf.select_type_param & CR_MEMORY)
 			mem_resv_value = true;
-		slurm_conf_unlock();
 	}
 
 	return mem_resv_value;

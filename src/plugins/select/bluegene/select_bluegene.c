@@ -69,7 +69,6 @@ time_t last_job_update __attribute__((weak_import));
 char *alpha_num  __attribute__((weak_import)) =
 	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 void *acct_db_conn  __attribute__((weak_import)) = NULL;
-char *slurmctld_cluster_name  __attribute__((weak_import)) = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import)) = NULL;
 uint32_t g_qos_count __attribute__((weak_import));
 List assoc_mgr_qos_list __attribute__((weak_import)) = NULL;
@@ -84,7 +83,6 @@ time_t last_node_update;
 time_t last_job_update;
 char *alpha_num = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 void *acct_db_conn = NULL;
-char *slurmctld_cluster_name = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 uint32_t g_qos_count;
 List assoc_mgr_qos_list = NULL;
@@ -1699,7 +1697,7 @@ extern int select_p_job_ready(struct job_record *job_ptr)
 			} else if (!bg_record->free_cnt
 				   && (uid == job_ptr->user_id)
 				   && (bg_record->state == BG_BLOCK_INITED)) {
-				/* Clear the state just incase we
+				/* Clear the state just in case we
 				 * missed it somehow. */
 				job_ptr->job_state &= (~JOB_CONFIGURING);
 				last_job_update = time(NULL);

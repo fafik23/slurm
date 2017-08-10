@@ -1,4 +1,4 @@
-.TH sreport "1" "Slurm Commands" "June 2015" "Slurm Commands"
+.TH sreport "1" "Slurm Commands" "April 2017" "Slurm Commands"
 
 .SH "NAME"
 sreport \- Generate reports from the slurm accounting data.
@@ -15,13 +15,21 @@ utilization for Slurm jobs saved to the Slurm Database,
 
 .TP
 \fB\-a\fR, \fB\-\-all_clusters\fR
-Use all clusters instead of only the cluster from where the command was run.
+Use all clusters instead of only the cluster from which the command was
+executed.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print a help message describing the usage of \fBsreport\fR.
 .TP
+\fB\-\-local\fR
+Generate a report for the local cluster, even if part of a federation.
+.TP
 \fB\-M\fR, \fB\-\-cluster\fR
-The cluster(s) to generate reports for. Default is local cluster.
+The cluster(s) to generate reports for. Default is local cluster, unless the
+local cluster is currently part of a federation and in that case generate a
+report for all clusters in the current federation. If the clusters included
+in a federation vary through time, use this option to identify the clusters
+to be included in report.
 .TP
 \fB\-n\fR, \fB\-\-noheader\fR
 Don't display header when listing results.
@@ -196,7 +204,7 @@ each user on each cluster.
 
 .TP
 .B job SizesByAccount
-This report will dispay the amount of time used for job ranges
+This report will display the amount of time used for job ranges
 specified by the 'grouping=' option.  Only a single level in the tree
 is displayed defaulting to the root dir.  If you specify other
 accounts with the 'account=' option sreport will use those accounts as
@@ -210,7 +218,7 @@ instead of just account so there will most likely be multiple accounts
 listed depending on the number of wckeys used.
 .TP
 .B job SizesByWckey
-This report will dispay the amount of time for each wckey for job ranges
+This report will display the amount of time for each wckey for job ranges
 specified by the 'grouping=' option.
 
 .TP
@@ -423,7 +431,13 @@ All commands and options are case-insensitive.
 Some \fBsreport\fR options may be set via environment variables. These
 environment variables, along with their corresponding options, are listed below.
 (Note: commandline options will always override these settings)
-.TP 14
+.TP 18
+\fBSREPORT_CLUSTER\fR
+Same as \fB\-M\fR, \fB\-\-cluster\fR
+.TP
+\fBSREPORT_LOCAL\fR
+Same as \-\-local\fR
+.TP
 \fBSREPORT_TRES\fR
 Same as \fB\-t, \-\-tres\fR
 .TP

@@ -321,6 +321,7 @@
 #define xstring_is_whitespace   slurm_xstring_is_whitespace
 #define	xstrtolower		slurm_xstrtolower
 #define xstrchr			slurm_xstrchr
+#define xstrrchr		slurm_xstrrchr
 #define xstrcmp			slurm_xstrcmp
 #define xstrcasecmp		slurm_xstrcasecmp
 #define xstrcasestr		slurm_xstrcasestr
@@ -349,9 +350,11 @@
 #define reservation_flags_string slurm_reservation_flags_string
 
 /* slurmdbd_defs.[ch] functions */
-#define slurmdbd_free_list_msg	slurmdb_slurmdbd_free_list_msg
-#define slurmdbd_free_usage_msg slurmdb_slurmdbd_free_usage_msg
-#define slurmdbd_free_id_rc_msg slurmdb_slurmdbd_free_id_rc_msg
+#define slurmdbd_defs_init      slurm_slurmdbd_defs_init
+#define slurmdbd_defs_fini      slurm_slurmdbd_defs_fini
+#define slurmdbd_free_list_msg	slurm_slurmdbd_free_list_msg
+#define slurmdbd_free_usage_msg slurm_slurmdbd_free_usage_msg
+#define slurmdbd_free_id_rc_msg slurm_slurmdbd_free_id_rc_msg
 
 /* plugin.[ch] functions */
 #define plugin_get_syms         slurm_plugin_get_syms
@@ -386,6 +389,7 @@
 #define s_p_get_long		slurm_s_p_get_long
 #define s_p_get_uint16		slurm_s_p_get_uint16
 #define s_p_get_uint32		slurm_s_p_get_uint32
+#define s_p_get_uint64		slurm_s_p_get_uint64
 #define s_p_get_pointer		slurm_s_p_get_pointer
 #define s_p_get_array		slurm_s_p_get_array
 #define s_p_get_boolean		slurm_s_p_get_boolean

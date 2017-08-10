@@ -2,7 +2,7 @@
  *  cluster_reports.c - functions for generating cluster reports
  *                       from accounting infrastructure.
  *****************************************************************************
- *  Copyright (C) 2010-2015 SchedMD LLC.
+ *  Portions Copyright (C) 2010-2017 SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
@@ -578,6 +578,37 @@ static void _set_usage_column_width(List print_fields_list,
 				       slurmdb_report_cluster_list);
 }
 
+static void _merge_cluster_recs(List cluster_list)
+{
+	slurmdb_cluster_rec_t *cluster = NULL, *first_cluster = NULL;
+	ListIterator iter = NULL;
+
+	if (list_count(cluster_list) < 2)
+		return;
+
+	iter = list_iterator_create(cluster_list);
+	while ((cluster = list_next(iter))) {
+		if (!first_cluster) {
+			first_cluster = cluster;
+			xfree(cluster->name);
+			if (fed_name)
+				xstrfmtcat(cluster->name, "FED:%s", fed_name);
+			else
+				cluster->name = xstrdup("FEDERATION");
+		} else if (!first_cluster->accounting_list) {
+			first_cluster->accounting_list =
+				cluster->accounting_list;
+			cluster->accounting_list = NULL;
+			list_delete_item(iter);
+		} else {
+			list_transfer(first_cluster->accounting_list,
+				      cluster->accounting_list);
+			list_delete_item(iter);
+		}
+	}
+	list_iterator_destroy(iter);
+}
+
 static List _get_cluster_list(int argc, char **argv, uint32_t *total_time,
 			      char *report_name, List format_list)
 {
@@ -598,6 +629,8 @@ static List _get_cluster_list(int argc, char **argv, uint32_t *total_time,
 		fprintf(stderr, " Problem with cluster query.\n");
 		return NULL;
 	}
+	if (fed_name)
+		_merge_cluster_recs(cluster_list);
 
 	if (print_fields_have_header) {
 		char start_char[20];
@@ -753,6 +786,45 @@ static void _cluster_account_by_user_tres_report(
 	printf("\n");
 }
 
+static void _merge_cluster_reps(List cluster_list)
+{
+	slurmdb_report_cluster_rec_t *cluster = NULL, *first_cluster = NULL;
+	ListIterator iter = NULL;
+
+	if (list_count(cluster_list) < 2)
+		return;
+
+	iter = list_iterator_create(cluster_list);
+	while ((cluster = list_next(iter))) {
+		if (!first_cluster) {
+			first_cluster = cluster;
+			xfree(cluster->name);
+			if (fed_name)
+				xstrfmtcat(cluster->name, "FED:%s", fed_name);
+			else
+				cluster->name = xstrdup("FEDERATION");
+			continue;
+		}
+		combine_tres_list(first_cluster->tres_list, cluster->tres_list);
+		if (!first_cluster->assoc_list) {
+			first_cluster->assoc_list = cluster->assoc_list;
+			cluster->assoc_list = NULL;
+		} else {
+			combine_assoc_tres(first_cluster->assoc_list,
+					   cluster->assoc_list);
+		}
+		if (!first_cluster->user_list) {
+			first_cluster->user_list = cluster->user_list;
+			cluster->user_list = NULL;
+		} else {
+			combine_user_tres(first_cluster->user_list,
+					  cluster->user_list);
+		}
+		list_delete_item(iter);
+	}
+	list_iterator_destroy(iter);
+}
+
 extern int cluster_account_by_user(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
@@ -794,6 +866,8 @@ extern int cluster_account_by_user(int argc, char **argv)
 		exit_code = 1;
 		goto end_it;
 	}
+	if (fed_name)
+		_merge_cluster_reps(slurmdb_report_cluster_list);
 
 	if (print_fields_have_header) {
 		char start_char[20];
@@ -809,7 +883,7 @@ extern int cluster_account_by_user(int argc, char **argv)
 		       start_char, end_char,
 		       (int)(assoc_cond->usage_end - assoc_cond->usage_start));
 
-		switch(time_format) {
+		switch (time_format) {
 		case SLURMDB_REPORT_TIME_PERCENT:
 			printf("Use reported in %s\n", time_format_string);
 			break;
@@ -1001,6 +1075,8 @@ extern int cluster_user_by_account(int argc, char **argv)
 		exit_code = 1;
 		goto end_it;
 	}
+	if (fed_name)
+		_merge_cluster_reps(slurmdb_report_cluster_list);
 
 	if (print_fields_have_header) {
 		char start_char[20];
@@ -1194,6 +1270,8 @@ extern int cluster_user_by_wckey(int argc, char **argv)
 		exit_code = 1;
 		goto end_it;
 	}
+	if (fed_name)
+		_merge_cluster_reps(slurmdb_report_cluster_list);
 
 	if (print_fields_have_header) {
 		char start_char[20];
@@ -1654,6 +1732,8 @@ extern int cluster_wckey_by_user(int argc, char **argv)
 		exit_code = 1;
 		goto end_it;
 	}
+	if (fed_name)
+		_merge_cluster_reps(slurmdb_report_cluster_list);
 
 	if (print_fields_have_header) {
 		char start_char[20];

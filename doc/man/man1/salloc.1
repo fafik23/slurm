@@ -112,7 +112,7 @@ desired:
     \fB\-\-threads\-per\-core\fR=<\fIthreads\fR>
 .fi
 If task/affinity plugin is enabled, then specifying an allocation in this
-manner also sets a default \fB\-\-cpu_bind\fR option of \fIthreads\fR
+manner also results in subsequently launched tasks being bound to threads
 if the \fB\-B\fR option specifies a thread count, otherwise an option of
 \fIcores\fR if a core count is specified, otherwise an option of \fIsockets\fR.
 If SelectType is configured to select/cons_res, it must have a parameter of
@@ -192,6 +192,12 @@ Force salloc to ring the terminal bell when the job allocation is granted
 (and only if stdout is a tty).  By default, salloc only rings the bell
 if the allocation is pending for more than ten seconds (and only if stdout
 is a tty). Also see the option \fB\-\-no\-bell\fR.
+
+.TP
+\fB\-\-cluster\-constraint\fR=<\fIlist\fR>
+Specifies features that a federated cluster must have to have a sibling job
+submitted to it. Slurm will attempt to submit a sibling job to a cluster if it
+has at least one of the specified features.
 
 .TP
 \fB\-\-comment\fR=<\fIstring\fR>

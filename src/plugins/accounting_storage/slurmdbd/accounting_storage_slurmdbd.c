@@ -270,6 +270,7 @@ static void *_set_db_inx_thread(void *no_data)
 		 * later in this function. */
 		lock_slurmctld(job_read_lock);	/* USE READ LOCK, SEE ABOVE */
 		if (!job_list) {
+			unlock_slurmctld(job_read_lock);
 			slurm_mutex_unlock(&db_inx_lock);
 			error("_set_db_inx_thread: No job list, waiting");
 			sleep(1);
@@ -332,7 +333,6 @@ static void *_set_db_inx_thread(void *no_data)
 			dbd_list_msg_t send_msg, *got_msg;
 			int rc = SLURM_SUCCESS;
 			bool reset = 0;
-
 			memset(&send_msg, 0, sizeof(dbd_list_msg_t));
 
 			send_msg.my_list = local_job_list;
@@ -1837,7 +1837,6 @@ extern List acct_storage_p_get_federations(void *db_conn, uid_t uid,
 		slurmdbd_free_list_msg(got_msg);
 	}
 
-
 	return ret_list;
 }
 
@@ -2645,6 +2644,9 @@ extern int jobacct_storage_p_job_complete(void *db_conn,
 			req.submit_time = job_ptr->details->submit_time;
 	}
 
+	if (!(job_ptr->bit_flags & TRES_STR_CALC))
+		req.tres_alloc_str = job_ptr->tres_alloc_str;
+
 	msg.msg_type    = DBD_JOB_COMPLETE;
 	msg.data        = &req;
 
@@ -2738,6 +2740,7 @@ extern int jobacct_storage_p_step_start(void *db_conn,
 	req.total_tasks = tasks;
 
 	req.tres_alloc_str = step_ptr->tres_alloc_str;
+
 	req.req_cpufreq_min = step_ptr->cpu_freq_min;
 	req.req_cpufreq_max = step_ptr->cpu_freq_max;
 	req.req_cpufreq_gov = step_ptr->cpu_freq_gov;
@@ -2807,6 +2810,10 @@ extern int jobacct_storage_p_step_complete(void *db_conn,
 		req.job_submit_time   = step_ptr->job_ptr->resize_time;
 	else if (step_ptr->job_ptr->details)
 		req.job_submit_time   = step_ptr->job_ptr->details->submit_time;
+
+	if (step_ptr->job_ptr->bit_flags & TRES_STR_CALC)
+		req.job_tres_alloc_str = step_ptr->job_ptr->tres_alloc_str;
+
 	req.state       = step_ptr->state;
 	req.step_id     = step_ptr->step_id;
 	req.total_tasks = tasks;

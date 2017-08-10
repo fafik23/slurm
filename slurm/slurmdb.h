@@ -300,7 +300,7 @@ typedef struct {
 typedef struct {
 	double act_cpufreq;	/* contains actual average cpu frequency */
 	double cpu_ave;
-	double consumed_energy; /* contains energy consumption in joules */
+	uint64_t consumed_energy; /* contains energy consumption in joules */
 	uint32_t cpu_min;
 	uint32_t cpu_min_nodeid; /* contains which node number it was on */
 	uint32_t cpu_min_taskid; /* contains which task number it was on */
@@ -596,6 +596,7 @@ typedef struct {
 } slurmdb_cluster_cond_t;
 
 typedef struct {
+	List feature_list; /* list of cluster features */
 	uint32_t id; /* id of cluster in federation */
 	char *name; /* Federation name */
 	void *recv;  /* slurm_persist_conn_t we recv information about this
@@ -606,9 +607,11 @@ typedef struct {
 	uint32_t weight; /* weight of cluster in federation */
 } slurmdb_cluster_fed_t;
 
-typedef struct {
+struct slurmdb_cluster_rec {
 	List accounting_list; /* list of slurmdb_cluster_accounting_rec_t *'s */
 	uint16_t classification; /* how this machine is classified */
+	time_t comm_fail_time;	/* avoid constatnt error messages. For
+			         * convenience only. DOESN"T GET PACKED */
 	slurm_addr_t control_addr; /* For convenience only.
 				    * DOESN'T GET PACKED */
 	char *control_host;
@@ -620,15 +623,21 @@ typedef struct {
 			* PACKED, is set up in slurmdb_get_info_cluster */
 	slurmdb_cluster_fed_t fed; /* Federation information */
 	uint32_t flags;      /* set of CLUSTER_FLAG_* */
-	pthread_mutex_t lock; /* For convenience only. DOESN"T GET PACK */
+	pthread_mutex_t lock; /* For convenience only. DOESN"T GET PACKED */
 	char *name;
 	char *nodes;
 	uint32_t plugin_id_select; /* id of the select plugin */
 	slurmdb_assoc_rec_t *root_assoc; /* root assoc for
 						* cluster */
 	uint16_t rpc_version; /* version of rpc this cluter is running */
+	List send_rpc;        /* For convenience only. DOESN'T GET PACKED */
 	char  	*tres_str;    /* comma separated list of TRES */
-} slurmdb_cluster_rec_t;
+};
+
+#ifndef __slurmdb_cluster_rec_t_defined
+#  define __slurmdb_cluster_rec_t_defined
+typedef struct slurmdb_cluster_rec slurmdb_cluster_rec_t;
+#endif
 
 typedef struct {
 	uint64_t alloc_secs; /* number of cpu seconds allocated */
@@ -964,8 +973,6 @@ typedef struct {
 	uint32_t nnodes;
 	char *nodes;
 	uint32_t ntasks;
-	uint32_t packjobid;	/* jobid of srun first step of the jobpack */
-	uint32_t packstepid;	/* stepid of jobpack member */
 	char *pid_str;
 	uint32_t req_cpufreq_min;
 	uint32_t req_cpufreq_max;
@@ -1181,19 +1188,19 @@ typedef struct {
 } slurmdb_report_job_grouping_t;
 
 typedef struct {
-	char *acct; /*account name */
+	char *acct;	/* account name */
 	uint32_t count; /* total count of jobs taken up by this acct */
-	List groups; /* containing slurmdb_report_job_grouping_t's*/
+	List groups;	/* containing slurmdb_report_job_grouping_t's*/
 	uint32_t lft;
 	uint32_t rgt;
 	List tres_list; /* list of slurmdb_tres_rec_t *'s */
 } slurmdb_report_acct_grouping_t;
 
 typedef struct {
-	List acct_list; /* containing slurmdb_report_acct_grouping_t's */
-	char *cluster; /*cluster name */
-	uint32_t count; /* total count of jobs taken up by this cluster */
-	List tres_list; /* list of slurmdb_tres_rec_t *'s */
+	List acct_list;	/* containing slurmdb_report_acct_grouping_t's */
+	char *cluster; 	/* cluster name */
+	uint32_t count;	/* total count of jobs taken up by this cluster */
+	List tres_list;	/* list of slurmdb_tres_rec_t *'s */
 } slurmdb_report_cluster_grouping_t;
 
 #define ROLLUP_HOUR	0
