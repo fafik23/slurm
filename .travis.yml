@@ -1,5 +1,6 @@
 sudo: required
 language: c
+dist: trusty
 addons:
   mariadb: '10.1'
   apt:
