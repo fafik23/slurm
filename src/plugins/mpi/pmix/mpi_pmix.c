@@ -2,7 +2,7 @@
  **  mpi_pmix.c - Main plugin callbacks for PMIx support in SLURM
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015      Mellanox Technologies. All rights reserved.
+ *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
  *  Written by Artem Y. Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
  *  This file is part of SLURM, a resource management program.
@@ -85,6 +85,8 @@ const char plugin_type[] = "mpi/pmix_v2";
 
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
+#include "pmixp_dconn_ucx.h"
+
 /*
  * init() is called when the plugin is loaded, before any other functions
  * are called.  Put global initialization here.
@@ -145,8 +147,8 @@ int p_mpi_hook_slurmstepd_task(const mpi_plugin_task_info_t *job, char ***env)
 				*value = '\0';
 				value++;
 				env_array_overwrite(env,
-						(const char *)tmp_env[i],
-						value);
+						    (const char *)tmp_env[i],
+						    value);
 			}
 			free(tmp_env[i]);
 		}
@@ -161,6 +163,7 @@ mpi_plugin_client_state_t *p_mpi_hook_client_prelaunch(
 {
 	char *mapping = NULL;
 	PMIXP_DEBUG("setup process mapping in srun");
+
 	uint32_t nnodes = job->step_layout->node_cnt;
 	uint32_t ntasks = job->step_layout->task_cnt;
 	uint16_t *task_cnt = job->step_layout->tasks;

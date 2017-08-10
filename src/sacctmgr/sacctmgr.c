@@ -44,6 +44,7 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/xsignal.h"
 #include "src/common/proc_args.h"
+#include "src/common/strlcpy.h"
 
 #define BUFFER_SIZE 4096
 
@@ -278,7 +279,8 @@ static char *_getline(const char *prompt)
 	line = malloc(len * sizeof(char));
 	if (!line)
 		return NULL;
-	return strncpy(line, buf, len);
+	strlcpy(line, buf, len);
+	return line;
 }
 #endif
 
@@ -734,8 +736,6 @@ static void _show_it(int argc, char **argv)
 		fprintf(stderr, "Input line must include ");
 		fprintf(stderr, "\"Account\", \"Association\", "
 			"\"Cluster\", \"Configuration\",\n\"Event\", "
-			"\"Problem\", \"QOS\", \"Resource\", \"Reservation\", "
-			"\"RunAwayJobs\", \"Stats\", \"Transaction\", "
 			"\"Federation\", \"Problem\", \"QOS\", \"Resource\", "
 			"\"Reservation\",\n\"RunAwayJobs\", \"Stats\", "
 			"\"Transaction\", \"TRES\", \"User\", or \"WCKey\"\n");

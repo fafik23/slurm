@@ -115,8 +115,6 @@
 #  define MAXHOSTNAMELEN	64
 #endif
 
-#define HEALTH_RETRY_DELAY 10
-
 #define MAX_THREADS		256
 
 #define _free_and_set(__dst, __src) \
@@ -125,6 +123,9 @@
 /* global, copied to STDERR_FILENO in tasks before the exec */
 int devnull = -1;
 slurmd_conf_t * conf = NULL;
+int fini_job_cnt = 0;
+uint32_t *fini_job_id = NULL;
+pthread_mutex_t fini_job_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * count of active threads
@@ -147,6 +148,7 @@ typedef struct connection {
 static bitstr_t	*res_core_bitmap;	/* reserved abstract cores bitmap */
 static bitstr_t	*res_cpu_bitmap;	/* reserved abstract CPUs bitmap */
 static char	*res_abs_cores = NULL;	/* reserved abstract cores list */
+static int32_t	res_abs_core_size = 0;	/* Length of res_abs_cores variable */
 static char	res_abs_cpus[MAX_CPUSTR]; /* reserved abstract CPUs list */
 static char	*res_mac_cpus = NULL;	/* reserved machine CPUs list */
 static int	ncores;			/* number of cores on this node */
@@ -201,9 +203,9 @@ static void      _term_handler(int);
 static void      _update_logging(void);
 static void      _update_nice(void);
 static void      _usage(void);
+static void      _usr_handler(int);
 static int       _validate_and_convert_cpu_list(void);
 static void      _wait_for_all_threads(int secs);
-static void      _wait_health_check(void);
 
 int
 main (int argc, char **argv)
@@ -284,16 +286,16 @@ main (int argc, char **argv)
 	xsignal(SIGTERM, &_term_handler);
 	xsignal(SIGINT,  &_term_handler);
 	xsignal(SIGHUP,  &_hup_handler );
+	xsignal(SIGUSR2, &_usr_handler );
 	xsignal_block(blocked_signals);
 
 	debug3("slurmd initialization successful");
 
 	/*
 	 * Become a daemon if desired.
-	 * Do not chdir("/") or close all fd's
 	 */
 	if (conf->daemonize) {
-		if (daemon(1,1) == -1)
+		if (xdaemon())
 			error("Couldn't daemonize slurmd: %m");
 	}
 	test_core_limit();
@@ -348,8 +350,6 @@ main (int argc, char **argv)
 	_create_msg_socket();
 
 	conf->pid = getpid();
-	/* This has to happen after daemon(), which closes all fd's,
-	 * so we keep the write lock of the pidfile. */
 	pidfd = create_pidfile(conf->pidfile, 0);
 
 	rfc2822_timestamp(time_stamp, sizeof(time_stamp));
@@ -366,10 +366,9 @@ main (int argc, char **argv)
 	if (slurmd_plugstack_init())
 		fatal("failed to initialize slurmd_plugstack");
 
-	/* Wait for a successfull health check if HealthCheckInterval != 0 */
-	_wait_health_check();
-
+	run_script_health_check();
 	_spawn_registration_engine();
+
 	msg_aggr_sender_init(conf->hostname, conf->port,
 			     conf->msg_aggr_window_time,
 			     conf->msg_aggr_window_msgs);
@@ -1002,6 +1001,7 @@ _read_config(void)
 	_free_and_set(conf->pubkey,   path_pubkey);
 
 	conf->debug_flags = cf->debug_flags;
+	conf->syslog_debug = cf->slurmd_syslog_debug;
 	conf->propagate_prio = cf->propagate_prio_process;
 
 	_free_and_set(conf->job_acct_gather_freq,
@@ -1204,6 +1204,7 @@ _print_conf(void)
 	debug3("ChosLoc     = `%s'",     conf->chos_loc);
 	debug3("Slurmstepd  = `%s'",     conf->stepd_loc);
 	debug3("Spool Dir   = `%s'",     conf->spooldir);
+	debug3("Syslog Debug  = %d",     cf->slurmd_syslog_debug);
 	debug3("Pid File    = `%s'",     conf->pidfile);
 	debug3("Slurm UID   = %u",       conf->slurm_user_id);
 	debug3("TaskProlog  = `%s'",     conf->task_prolog);
@@ -1236,10 +1237,8 @@ _init_conf(void)
 	slurm_mutex_init(&conf->config_mutex);
 
 	conf->starting_steps = list_create(destroy_starting_step);
-	slurm_mutex_init(&conf->starting_steps_lock);
 	slurm_cond_init(&conf->starting_steps_cond, NULL);
 	conf->prolog_running_jobs = list_create(slurm_destroy_uint32_ptr);
-	slurm_mutex_init(&conf->prolog_running_lock);
 	slurm_cond_init(&conf->prolog_running_cond, NULL);
 	return;
 }
@@ -1282,10 +1281,8 @@ _destroy_conf(void)
 		xfree(conf->tmpfs);
 		slurm_mutex_destroy(&conf->config_mutex);
 		FREE_NULL_LIST(conf->starting_steps);
-		slurm_mutex_destroy(&conf->starting_steps_lock);
 		slurm_cond_destroy(&conf->starting_steps_cond);
 		FREE_NULL_LIST(conf->prolog_running_jobs);
-		slurm_mutex_destroy(&conf->prolog_running_lock);
 		slurm_cond_destroy(&conf->prolog_running_cond);
 		slurm_cred_ctx_destroy(conf->vctx);
 		xfree(conf);
@@ -1509,7 +1506,8 @@ _slurmd_init(void)
 	 */
 	_read_config();
 
-	cpu_cnt = MAX(conf->conf_cpus, conf->block_map_size);
+	fini_job_cnt = cpu_cnt = MAX(conf->conf_cpus, conf->block_map_size);
+	fini_job_id = xmalloc(sizeof(uint32_t) * fini_job_cnt);
 
 	if ((gres_plugin_init() != SLURM_SUCCESS) ||
 	    (gres_plugin_node_config_load(cpu_cnt, conf->node_name, NULL)
@@ -1562,12 +1560,10 @@ _slurmd_init(void)
 		rlim.rlim_cur = rlim.rlim_max;
 		setrlimit(RLIMIT_NOFILE, &rlim);
 	}
-#ifndef NDEBUG
 	if (getrlimit(RLIMIT_CORE, &rlim) == 0) {
 		rlim.rlim_cur = rlim.rlim_max;
 		setrlimit(RLIMIT_CORE, &rlim);
 	}
-#endif /* !NDEBUG */
 
 	/*
 	 * Create a context for verifying slurm job credentials
@@ -1732,6 +1728,10 @@ _slurmd_fini(void)
 	acct_gather_conf_destroy();
 	fini_system_cgroup();
 	route_fini();
+	slurm_mutex_lock(&fini_job_mutex);
+	xfree(fini_job_id);
+	fini_job_cnt = 0;
+	slurm_mutex_unlock(&fini_job_mutex);
 
 	return SLURM_SUCCESS;
 }
@@ -1836,6 +1836,14 @@ _hup_handler(int signum)
 	}
 }
 
+static void
+_usr_handler(int signum)
+{
+	if (signum == SIGUSR2) {
+		_update_logging();
+	}
+}
+
 
 static void
 _usage(void)
@@ -1919,6 +1927,7 @@ static void _update_logging(void)
 	cf = slurm_conf_lock();
 	if (!conf->debug_level_set && (cf->slurmd_debug != (uint16_t) NO_VAL))
 		conf->debug_level = cf->slurmd_debug;
+	conf->syslog_debug = cf->slurmd_syslog_debug;
 	conf->log_fmt = cf->log_fmt;
 	slurm_conf_unlock();
 
@@ -1935,11 +1944,15 @@ static void _update_logging(void)
 	 */
 	if (conf->daemonize) {
 		o->stderr_level = LOG_LEVEL_QUIET;
-		if (conf->logfile)
-			o->syslog_level = LOG_LEVEL_FATAL;
+		if (!conf->logfile &&
+		    (conf->syslog_debug == LOG_LEVEL_QUIET)) {
+			/* Insure fatal errors get logged somewhere */
+ 			o->syslog_level = LOG_LEVEL_FATAL;
+		} else {
+			o->syslog_level = conf->syslog_debug;
+		}
 	} else
 		o->syslog_level  = LOG_LEVEL_QUIET;
-
 	log_alter(conf->log_opts, SYSLOG_FACILITY_DAEMON, conf->logfile);
 	log_set_timefmt(conf->log_fmt);
 
@@ -1947,6 +1960,9 @@ static void _update_logging(void)
 	 * MULTIPLE_SLURMD mode add my node_name
 	 * in the name tag for syslog.
 	 */
+
+	debug("Log file re-opened");
+
 #if defined(MULTIPLE_SLURMD)
 	if (conf->logfile == NULL) {
 		char buf[64];
@@ -2122,7 +2138,8 @@ static int _core_spec_init(void)
 
 	ncores = conf->sockets * conf->cores;
 	ncpus = ncores * conf->threads;
-	res_abs_cores = xmalloc(ncores * 4 * sizeof(char));
+	res_abs_core_size = ncores * 4;
+	res_abs_cores = xmalloc(res_abs_core_size);
 	res_core_bitmap = bit_alloc(ncores);
 	res_cpu_bitmap  = bit_alloc(ncpus);
 	res_abs_cpus[0] = '\0';
@@ -2187,7 +2204,7 @@ static int _memory_spec_init(void)
 	pid_t pid;
 
 	if (conf->mem_spec_limit == 0) {
-		info ("Resource spec: Reserved system memory limit not "
+		debug("Resource spec: Reserved system memory limit not "
 		      "configured for this node");
 		return SLURM_SUCCESS;
 	}
@@ -2301,7 +2318,7 @@ static void _select_spec_cores(void)
  */
 static int _convert_spec_cores(void)
 {
-	bit_fmt(res_abs_cores, sizeof(res_abs_cores), res_core_bitmap);
+	bit_fmt(res_abs_cores, res_abs_core_size, res_core_bitmap);
 	bit_fmt(res_abs_cpus, sizeof(res_abs_cpus), res_cpu_bitmap);
 	if (xcpuinfo_abs_to_mac(res_abs_cores, &res_mac_cpus) != SLURM_SUCCESS)
 		return SLURM_ERROR;
@@ -2335,7 +2352,7 @@ static int _validate_and_convert_cpu_list(void)
 		if (bit_test(res_cpu_bitmap, thread_off) == 1)
 			bit_set(res_core_bitmap, thread_off/(conf->threads));
 	}
-	bit_fmt(res_abs_cores, sizeof(res_abs_cores), res_core_bitmap);
+	bit_fmt(res_abs_cores, res_abs_core_size, res_core_bitmap);
 	/* create output abstract CPU list from core bitmap */
 	for (core_off = 0; core_off < ncores; core_off++) {
 		if (bit_test(res_core_bitmap, core_off) == 1) {
@@ -2362,28 +2379,6 @@ static void _resource_spec_fini(void)
 }
 
 /*
- * Wait for health check to execute successfully
- *
- * Return imediately if a shutdown has been requested or
- * if the HealthCheckInterval is 0.
- */
-static void _wait_health_check(void)
-{
-	int last_check_time = 0;
-	while (!_shutdown && (conf->health_check_interval != 0) ) {
-		if (time(NULL) - last_check_time > HEALTH_RETRY_DELAY) {
-			if (run_script_health_check() == SLURM_SUCCESS) {
-				break;
-			}
-			last_check_time = time(NULL);
-			info ("Health Check failed, retrying in %ds...",
-				HEALTH_RETRY_DELAY);
-		}
-		usleep(10000);
-	}
-}
-
-/*
  * Run the configured health check program
  *
  * Returns the run result. If the health check program
@@ -2393,7 +2388,7 @@ extern int run_script_health_check(void)
 {
 	int rc = SLURM_SUCCESS;
 
-	if (conf->health_check_program) {
+	if (conf->health_check_program && (conf->health_check_interval != 0)) {
 		char *env[1] = { NULL };
 		rc = run_script("health_check", conf->health_check_program,
 				0, 60, env, 0);

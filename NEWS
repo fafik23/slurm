@@ -1,6 +1,90 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 17.11.0pre2
+==============================
+ -- Initial work for heterogeneous job support (complete solution in v17.11):
+    * Modified salloc, sbatch and srun commands to parse command line, job
+      script and environment variables to recognize requests for heterogeneous
+      jobs. Same commands also modified to set environment variables describing
+      each component of the heterogeneous job.
+    * Modified job allocate, batch job submit and job "will-run" requests to
+      pass a list of job specifications and get a list of responses.
+    * Modify slurmctld daemon to process a heterogeneous job request and create
+      multiple job records as needed.
+    * Added new fields to job record: pack_job_id, pack_job_offset and
+      pack_job_set (set of job IDs). Added to slurmctld state save/restore
+      logic and job information reported.
+    * Display new job fields in "scontrol show job" output.
+    * Modify squeue command to display heterogeneous job records using "#+#"
+      format. The squeue --job=# output lists all components of a heterogeneous
+      job.
+    * Modify scancel logic to cancel all components of a heterogeneous job with
+      a single request/RPC.
+    * Configuration parameter DebugFlags value of "HeteroJobs" added.
+    * Job requeue and suspend/resume modified to operate on all components of
+      a heterogeneous job with a single request/RPC.
+    * New web page added to describe heterogeneous jobs.
+    * Descriptions of new API added to man pages.
+    * Modified email notifications to only operate on the first job component.
+    * Purge heterogeneous job records at the same time and not by individual
+      components.
+    * Modified logic for heterogeneous jobs submitted to multiple clusters
+      ("--clusters=...") so the job will be routed to the cluster that is
+      expected to start all components earliest.
+    * Modified srun to create multiple job steps for heterogeneous job
+      allocations.
+    * Modified launch plugin to accept a pointer to job step options structure
+      rather than work from a single/common data structure.
+ -- Improve backfill scheduling algorithm with respect to starting jobs as soon
+    as possible while avoiding advanced reservations.
+ -- Add URG as an option to 'scancel --signal'.
+ -- Check if the buffer returned from slurm_persist_msg_pack() isn't NULL.
+ -- Modify all daemons to re-open log files on receipt of SIGUSR2 signal. This
+    is much than using SIGHUP to re-read the configuration file and rebuild
+    various tables.
+ -- Add PrivateData=events configuration parameter
+ -- Work for heterogeneous job support (complete solution in v17.11):
+    * Add pointer to job option structure to job_step_create_allocation()
+      function used by srun.
+    * Parallelize task launch for heterogeneous job allocations (initial work).
+    * Make packjobid, packjoboffset, and packjobidset fields available in squeue
+      output.
+    * Modify smap command to display heterogeneous job records using "#+#"
+      format.
+    * Add srun --pack-group and --mpi-combine options to control job step
+      launch behaviour (not fully implemented).
+    * Add pack job component ID to srun --label output (e.g. "P0 1:" for
+      job component 0 and task 1).
+    * jobcomp/elasticsearch: Add pack_job_id and pack_job_offset fields.
+    * sview: Modified to display pack job information.
+    * Major re-write of task state container logic to support for list of
+      containers rather than one container per srun command.
+    * Add some regression tests.
+    * Add srun pack job environment variables when performing job allocation.
+ -- Set Reason=dependency over Reason=JobArrayTaskLimit for pending jobs.
+ -- Add slurm.conf configuration parameters SlurmctldSyslogDebug and
+    SlurmdSyslogDebug to control which messages from the slurmctld and slurmd
+    daemons get written to syslog.
+ -- Add slurmdbd.conf configuration parameter DebugLevelSyslog to control which
+    messages from the slurmdbd daemon get written to syslog.
+ -- Fix handling of GroupUpdateForce option.
+ -- Work for heterogeneous job support (complete solution in v17.11):
+    * Add support to sched/backfill for concurrent allocation of all pack job
+      components including support of --time-min option.
+    * Defer initiation of a heterogeneous job until a components can be started
+      at the same time, taking into consideration association and QOS limits
+      for the job as a whole.
+    * Perform limit check on heterogeneous job as a whole at submit time to
+      reject jobs that will never be able to run.
+    * Add pack_job_id and pack_job_offset to accounting database.
+    * Modified sacct to accept pack job ID specification using "#+#" notation.
+    * Modified sstat to accept pack job ID specification using "#+#" notation.
+ -- Clear a job's "wait reason" value of BeginTime" after that time has passed.
+    Previously a readon of "BeginTime" could be reported long after the job's
+    requested begin time had passed.
+ -- Split group_info in slurm_ctl_conf_t into group_force and group_time.
+
 * Changes in Slurm 17.11.0pre1
 ==============================
  -- Interpet all format options in output/error file to log prolog errors. Prior
@@ -77,9 +161,199 @@ documents those changes that are of interest to users and administrators.
  -- Changed default ProctrackType to cgroup.
  -- Add "cluster_name" field to node_info_t and partition_info_t data structure.
     It is filled in only when the cluster is part of a federation and
-    SHOW_GLOBAL flag used.
+    SHOW_FEDERATION flag used.
  -- Functions slurm_load_node() slurm_load_partitions() modified to show all
-    nodes/partitions in a federation when the SHOW_GLOBAL flag is used.
+    nodes/partitions in a federation when the SHOW_FEDERATION flag is used.
+ -- Add federated views to sview.
+ -- Add --federation option to sacct, scontrol, sinfo, sprio, squeue, sreport to
+    show a federated view. Will show local view by default.
+ -- Add FederationParameters=fed_display slurm.conf option to configure status
+    commands to display a federated view by default if the cluster is a member
+    of a federation.
+ -- Log the down nodes whenever slurmctld restarts.
+ -- Report that "CPUs" plus "Boards" in node configuration invalid only if the
+    CPUs value is not equal to the total thread count.
+ -- Extend the output of the seff utility to also include the job's wall-clock
+    time.
+ -- Add bf_max_time to SchedulerParameters.
+ -- Add bf_max_job_assoc to SchedulerParameters.
+ -- Add new SchedulerParameters option bf_window_linear to control the rate at
+    which the backfill test window expands. This can be used on a system with
+    a modest number of running jobs (hundreds of jobs) to help prevent expected
+    start times of pending jobs to get pushed forward in time. On systems with
+    large numbers of running jobs, performance of the backfill scheduler will
+    suffer and fewer jobs will be evaluated.
+ -- Improve scheduling logic with respect to license use and node reboots.
+ -- CRAY - Alter algorithm to come up with the SLURM_ID_HASH.
+ -- Implement federated scheduling and federated status outputs.
+ -- The '-q' option to srun has changed from being the short form of
+    '--quit-on-interrupt' to '--qos'.
+
+* Changes in Slurm 17.02.7
+==========================
+ -- Fix deadlock if requesting to create more than 10000 reservations.
+ -- Fix potential memory leak when creating partition name.
+ -- Execute the HealthCheckProgram once when the slurmd daemon starts rather
+    than executing repeatedly until an exit code of 0 is returned.
+ -- Set job/step start and end times to 0 when using --truncate and start > end.
+ -- Make srun --pty option ignore EINTR allowing windows to resize.
+ -- When resuming node only send one message to the slurmdbd.
+ -- Modify srun --pty option to use configured SrunPortRange range.
+ -- Fix issue with whole gres not being printed out with Slurm tools.
+ -- Fix issue with multiple jobs from an array are prevented from starting.
+ -- Fix for possible slurmctld abort with use of salloc/sbatch/srun
+    --gres-flags=enforce-binding option.
+ -- Fix race condition when using jobacct_gather/cgroup where the memory of the
+    step wasn't always gathered correctly.
+ -- Better debug when slurmdbd queue is filling up in the slurmctld.
+ -- Fixed truncation on scontrol show config output.
+ -- Serialize updates from from the dbd to the slurmctld.
+ -- Fix memory leak in slurmctld when agent queue to the DBD has filled up.
+ -- CRAY - Throttle step creation if trying to create too many steps at once.
+ -- If failing after switch_g_job_init happened make sure switch_g_job_fini is
+    called.
+ -- Fix minor memory leak if launch fails in the slurmstepd.
+ -- Fix issue where UnkillableStepProgram if step was in an ending state.
+ -- Fix bug when tracking multiple simultaneous spawned ping cycles.
+ -- jobcomp/elasticsearch plugin now saves state of pending requests on
+    slurmctld daemon shutdown so then can be recovered on restart.
+ -- Fix issue when an alternate munge key when communicating on a persistent
+    connection.
+ -- Document inconsistent behavior of GroupUpdateForce option.
+ -- Fix bug in selection of GRES bound to specific CPUs where the GRES count
+    is 2 or more. Previous logic could allocate CPUs not available to the job.
+ -- Increase buffer to handle long /proc/<pid>/stat output so that Slurm can
+    read correct RSS value and take action on jobs using more memory than
+    requested.
+ -- Fix srun job jobs that can run immediately to run in the highest priority
+    partion when multiple partitions are listed. scontrol show jobs can
+    potentially show the partition list in priority order.
+ -- Fix starting controller if StateSaveLocation path didn't exist.
+ -- Fix inherited association 'max' TRES limits combining multiple limits in
+    the tree.
+ -- Sort TRES id's on limits when getting them from the database.
+ -- Fix issue with pmi[2|x] when TreeWidth=1.
+ -- Correct buffer size used in determining specialized cores to avoid possible
+    truncation of core specification and not reserving the specified cores.
+ -- Close race condition on Slurm structures when setting DebugFlags.
+ -- Make it so the cray/switch plugin grabs new DebugFlags on a reconfigure.
+
+* Changes in Slurm 17.02.6
+==========================
+ -- Fix configurator.easy.html to output the SelectTypeParameters line.
+ -- If a job requests a specific memory requirement then gets something else
+    from the slurmctld make sure the step allocation is made aware of it.
+ -- Fix missing initialization in slurmd.
+ -- Fix potential degradation when running HTC (> 100 jobs a sec) like
+    workflows through the slurmd.
+ -- Fix race condition which could leave a stepd hung on shutdown.
+ -- CRAY - Add configuration for ATP to the ansible play script.
+ -- Fix potential to corrupt DBD message.
+ -- burst_buffer logic modified to support sizes in both SI and EIC size units
+    (e.g. M/MiB for powers of 1024, MB for powers of 1000).
+
+* Changes in Slurm 17.02.5
+==========================
+ -- Prevent segfault if a job was blocked from running by a QOS that is then
+    deleted.
+ -- Improve selection of jobs to preempt when there are multiple partitions
+    with jobs subject to preemption.
+ -- Only set kmem limit when ConstrainKmemSpace=yes is set in cgroup.conf.
+ -- Fix bug in task/affinity that could result in slurmd fatal error.
+ -- Increase number of jobs that are tracked in the slurmd as finishing at one
+    time.
+ -- Note when a job finishes in the slurmd to avoid a race when launching a
+    batch job takes longer than it takes to finish.
+ -- Improve slurmd startup on large systems (> 10000 nodes)
+ -- Add LaunchParameters option of cray_net_exclusive to control whether all
+    jobs on the cluster have exclusive access to their assigned nodes.
+ -- Make sure srun inside an allocation gets --ntasks-per-[core|socket]
+    set correctly.
+ -- Only make the extern step at job creation.
+ -- Fix for job step task layout with --cpus-per-task option.
+ -- Fix --ntasks-per-core option/environment variable parsing to set
+    the requested value, instead of always setting one (srun).
+ -- Correct error message when ClusterName in configuration files does not match
+    the name in the slurmctld daemon's state save file.
+ -- Better checking when a job is finishing to avoid underflow on job's
+    submitted to a QOS/association.
+ -- Handle partition QOS submit limits correctly when a job is submitted to
+    more than 1 partition or when the partition is changed with scontrol.
+ -- Performance boost for when Slurm is dealing with credentials.
+ -- Fix race condition which could leave a stepd hung on shutdown.
+ -- Add lua support for opensuse.
+
+* Changes in Slurm 17.02.4
+==========================
+ -- Do not attempt to schedule jobs after changing the power cap if there are
+    already many active threads.
+ -- Job expansion example in FAQ enhanced to demonstrate operation in
+    heterogeneous environments.
+ -- Prevent scontrol crash when operating on array and no-array jobs at once.
+ -- knl_cray plugin: Log incomplete capmc output for a node.
+ -- knl_cray plugin: Change capmc parsing of mcdram_pct from string to number.
+ -- Remove log files from test20.12.
+ -- When rebooting a node and using the PrologFlags=alloc make sure the
+    prolog is ran after the reboot.
+ -- node_features/knl_generic - If a node is rebooted for a pending job, but
+    fails to enter the desired NUMA and/or MCDRAM mode then drain the node and
+    requeue the job.
+ -- node_features/knl_generic disable mode change unless RebootProgram
+    configured.
+ -- Add new burst_buffer function bb_g_job_revoke_alloc() to be executed
+    if there was a failure after the initial resource allocation. Does not
+    release previously allocated resources.
+ -- Test if the node_bitmap on a job is NULL when testing if the job's nodes
+    are ready.  This will be NULL is a job was revoked while beginning.
+ -- Fix incorrect lock levels when testing when job will run or updating a job.
+ -- Add missing locks to job_submit/pbs plugin when updating a jobs
+    dependencies.
+ -- Add support for lua5.3
+ -- Add min_memory_per_node|cpu to the job_submit/lua plugin to deal with lua
+    not being able to deal with pn_min_memory being a uint64_t.  Scripts are
+    urged to change to these new variables avoid issue.  If not set the
+    variables will be 'nil'.
+ -- Calculate priority correctly when 'nice' is given.
+ -- Fix minor typos in the documentation.
+ -- node_features/knl_cray: Preserve non-KNL active features if slurmctld
+    reconfigured while node boot in progress.
+ -- node_features/knl_generic: Do not repeatedly log errors when trying to read
+    KNL modes if not KNL system.
+ -- Add missing QOS read lock to backfill scheduler.
+ -- When doing a dlopen on liblua only attempt the version compiled against.
+ -- Fix null-dereference in sreport cluster ulitization when configured with
+    memory-leak-debug.
+ -- Fix Partition info in 'scontrol show node'. Previously duplicate partition
+    names, or Partitions the node did not belong to could be displayed.
+ -- Fix it so the backup slurmdbd will take control correctly.
+ -- Fix unsafe use of MAX() macro, which could result in problems cleaning up
+    accounting plugins in slurmd, or repeat job cancellation attempts in
+    scancel.
+ -- Fix 'scontrol update reservation duration=unlimited' to set the duration
+    to 365-days (as is done elsewhere), rather than 49710 days.
+ -- Check if variable given to scontrol show job is a valid jobid.
+ -- Fix WithSubAccounts option to not include WithDeleted unless requested.
+ -- Prevent a job tested on multiple partitions from being marked
+    WHOLE_NODE_USER.
+ -- Prevent a race between completing jobs on a user-exclusive node from
+    leaving the node owned.
+ -- When scheduling take the nodes in completing jobs out of the mix to reduce
+    fragmentation.  SchedulerParameters=reduce_completing_frag
+ -- For jobs submited to multiple partitions, report the job's earliest start
+    time for any partition.
+ -- Backfill partitions that use QOS Grp limits to "float" better.
+ -- node_features/knl_cray: don't clear configured GRES from non-KNL node.
+ -- sacctmgr - prevent segfault in command when a request is denied due
+    to a insufficient priviledges.
+ -- Add warning about libcurl-devel not being installed during configure.
+ -- Streamline job purge by handling file deletion on a separate thread.
+ -- Always set RLIMIT_CORE to the maximum permitted for slurmd, to ensure
+    core files are created even on non-developer builds.
+ -- Fix --ntasks-per-core option/environment variable parsing to set
+    the requested value, instead of always setting one.
+ -- If trying to cancel a step that hasn't started yet for some reason return
+    a good return code.
+ -- Fix issue with sacctmgr show where user=''
 
 * Changes in Slurm 17.02.3
 ==========================
@@ -137,6 +411,14 @@ documents those changes that are of interest to users and administrators.
  -- MYSQL - Fix memory leak when loading archived jobs into the database.
  -- Fix potential race condition when starting the priority/multifactor plugin's
     decay thread.
+ -- Sanity check to make sure we have started a job in acct_policy.c before we
+    clear it as started.
+ -- Allow reboot program to use arguments.
+ -- Message Aggr - Remove race condition on slurmd shutdown with respects to
+    destroying a mutex.
+ -- Fix updating job priority on multiple partitions to be correct.
+ -- Don't remove admin comment when updating a job.
+ -- Return error when bad separator is given for scontrol update job licenses.
 
 * Changes in Slurm 17.02.2
 ==========================
@@ -3242,7 +3524,7 @@ documents those changes that are of interest to users and administrators.
     subdirectory called "hash.#" based upon the last digit of the job ID.
  -- More gracefully handle missing batch script file. Just kill the job and do
     not drain the compute node.
- -- Add support for allocation of GRES by model type for heterogenous systems
+ -- Add support for allocation of GRES by model type for heterogeneous systems
     (e.g. request a Kepler GPU, a Tesla GPU, or a GPU of any type).
  -- Record and enable display of nodes anticipated to be used for pending jobs.
  -- Modify squeue --start option to print the nodes expected to be used for
@@ -4493,7 +4775,7 @@ documents those changes that are of interest to users and administrators.
     jobs in a space separated list.
  -- Minor debug error when a connection goes away at the end of a job.
  -- Validate return code from calls to slurm_get_peer_addr
- -- BGQ - Fix issues with making sure all cnodes are accounted for when mulitple
+ -- BGQ - Fix issues with making sure all cnodes are accounted for when multiple
     steps cause multiple cnodes in one allocation to go into error at the
     same time.
  -- scontrol show job - Correct NumNodes value calculated based upon job
@@ -6228,7 +6510,7 @@ documents those changes that are of interest to users and administrators.
     currently running job steps.
  -- Added an rpath if using the --with-munge option of configure.
  -- Add support for multiple sets of DEFAULT node, partition, and frontend
-    specifications in slurm.conf so that default values can be changed mulitple
+    specifications in slurm.conf so that default values can be changed multiple
     times as the configuration file is read.
  -- BLUEGENE - Improved logic to place small blocks in free space before freeing
     larger blocks.

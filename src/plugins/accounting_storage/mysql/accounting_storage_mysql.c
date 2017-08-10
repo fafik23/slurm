@@ -527,7 +527,6 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		{ "features", "text not null default ''" },
 		{ "fed_id", "int unsigned default 0 not null" },
 		{ "fed_state", "smallint unsigned not null" },
-		{ "fed_weight", "int unsigned default 1 not null" },
 		{ NULL, NULL}
 	};
 
@@ -681,14 +680,18 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		/* "@mtrm := REPLACE(CONCAT(@mtrm, max_tres_run_mins), " */
 		/* "\\\',,\\\', \\\',\\\'), '); " */
 		"set @s = concat(@s, "
-		"'@mtpj := REPLACE(CONCAT(@mtpj, max_tres_pj), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtpn := REPLACE(CONCAT(@mtpn, max_tres_pn), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtmpj := REPLACE(CONCAT(@mtmpj, max_tres_mins_pj), "
-		"\\\',,\\\', \\\',\\\'), "
-		"@mtrm := REPLACE(CONCAT(@mtrm, max_tres_run_mins), "
-		"\\\',,\\\', \\\',\\\'), "
+		"'@mtpj := CONCAT(@mtpj, "
+		"if (@mtpj != \\\'\\\' && max_tres_pj != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_pj), "
+		"@mtpn := CONCAT(@mtpn, "
+		"if (@mtpn != \\\'\\\' && max_tres_pn != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_pn), "
+		"@mtmpj := CONCAT(@mtmpj, "
+		"if (@mtmpj != \\\'\\\' && max_tres_mins_pj != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_mins_pj), "
+		"@mtrm := CONCAT(@mtrm, "
+		"if (@mtrm != \\\'\\\' && max_tres_run_mins != \\\'\\\', "
+		"\\\',\\\', \\\'\\\'), max_tres_run_mins), "
 		"@my_acct_new := parent_acct from \"', "
 		"cluster, '_', my_table, '\" where "
 		"acct = \\\'', @my_acct, '\\\' && user=\\\'\\\''); "
@@ -1230,6 +1233,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "id_wckey", "int unsigned not null" },
 		{ "id_user", "int unsigned not null" },
 		{ "id_group", "int unsigned not null" },
+		{ "pack_job_id", "int unsigned not null" },
+		{ "pack_job_offset", "int unsigned not null" },
 		{ "kill_requid", "int default -1 not null" },
 		{ "mem_req", "bigint unsigned default 0 not null" },
 		{ "nodelist", "text" },

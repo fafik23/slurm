@@ -1084,7 +1084,7 @@ proc test_topology { } {
 
 ################################################################
 #
-# Proc: get_task_types
+# Proc: get_affinity_types
 #
 # Purpose: get the task plugins running with task/ stripped
 #
@@ -1114,6 +1114,34 @@ proc get_affinity_types { } {
 	}
 	log_user 1
 	return $affinity
+}
+
+################################################################
+#
+# Proc: get_affinity_params
+#
+# Purpose: get the task plugin parameters
+#
+# Returns Returns value of TaskPluginParam
+#
+################################################################
+proc get_affinity_params { } {
+	global scontrol alpha_comma_slash
+
+	log_user 0
+	set params ""
+	spawn $scontrol show config
+	expect {
+		-re "TaskPluginParam *= ($alpha_comma_slash)" {
+			set params $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $params
 }
 
 ################################################################
@@ -2090,7 +2118,6 @@ proc test_select_type_params { type } {
 			break
 		}
 	}
-
 	log_user 1
 
 	return $ret
@@ -2136,10 +2163,8 @@ proc test_super_user { } {
 #
 #	Check if user root
 #
-	log_user 0
 	set uid [get_my_uid]
 	if {$uid == 0} {
-		log_user 1
 		set super_user 1
 		set super_user_set 1
 		return $super_user
@@ -2150,6 +2175,7 @@ proc test_super_user { } {
 #
 	set user [get_my_user_name]
 
+	log_user 0
 	spawn $scontrol show config
 	set slurm_user ""
 	expect {
@@ -4108,4 +4134,17 @@ proc get_prolog { } {
 	log_user 1
 
 	return $prolog
+
+}
+
+proc log_error {msg} {
+	send_user "\nFAILURE: $msg\n"
+}
+
+proc log_warn {msg} {
+	send_user "\nWARNING:    $msg\n"
+}
+
+proc log_info {msg} {
+	send_user "INFO:    $msg\n"
 }

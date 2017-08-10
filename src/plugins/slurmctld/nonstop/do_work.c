@@ -274,7 +274,7 @@ static int _update_job(job_desc_msg_t * job_specs, uid_t uid)
 
 	msg.data= job_specs;
 	msg.conn_fd = -1;
-	return update_job(&msg, uid);
+	return update_job(&msg, uid, true);
 }
 
 /*
@@ -419,6 +419,8 @@ extern int restore_nonstop_state(void)
 	debug3("Version in slurmctld/nonstop header is %u", protocol_version);
 
 	if (protocol_version == (uint16_t) NO_VAL) {
+		if (!ignore_state_errors)
+			fatal("Can not recover slurmctld/nonstop state, incompatible version, start with '-i' to ignore this");
 		error("*************************************************************");
 		error("Can not recover slurmctld/nonstop state, incompatible version");
 		error("*************************************************************");
@@ -445,6 +447,8 @@ extern int restore_nonstop_state(void)
 	return error_code;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete nonstop state file, start with '-i' to ignore this");
 	error("Incomplete nonstop state file");
 	free_buf(buffer);
 	return SLURM_FAILURE;
@@ -1249,11 +1253,8 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 	job_alloc_req.network	= xstrdup(job_ptr->network);
 	job_alloc_req.partition	= xstrdup(job_ptr->partition);
 	job_alloc_req.priority	= NO_VAL - 1;
-	if (job_ptr->qos_ptr) {
-		slurmdb_qos_rec_t *qos_ptr;
-		qos_ptr = (slurmdb_qos_rec_t *)job_ptr->qos_ptr;
-		job_alloc_req.qos = xstrdup(qos_ptr->name);
-	}
+	if (job_ptr->qos_ptr)
+		job_alloc_req.qos = xstrdup(job_ptr->qos_ptr->name);
 
 	/* Without unlock, the job_begin_callback() function will deadlock.
 	 * Not a great solution, but perhaps the least bad solution. */

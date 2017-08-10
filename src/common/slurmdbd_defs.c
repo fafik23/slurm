@@ -187,6 +187,15 @@ extern int slurm_close_slurmdbd_conn(void)
 	return SLURM_SUCCESS;
 }
 
+/* Return true if connection to slurmdbd is active, false otherwise. */
+extern bool slurmdbd_conn_active(void)
+{
+	if (!slurmdbd_conn || (slurmdbd_conn->fd < 0))
+		return false;
+
+	return true;
+}
+
 /* Send an RPC to the SlurmDBD and wait for the return code reply.
  * The RPC will not be queued if an error occurs.
  * Returns SLURM_SUCCESS or an error code */
@@ -324,8 +333,10 @@ extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 	static time_t syslog_time = 0;
 	static int max_agent_queue = 0;
 
-	/* Whatever our max job count is times that by 2 or
-	 * MAX_AGENT_QUEUE which ever is bigger */
+	/*
+	 * Whatever our max job count is multiplied by 2 plus node count
+	 * multiplied by 4 or MAX_AGENT_QUEUE which ever is bigger.
+	 */
 	if (!max_agent_queue)
 		max_agent_queue =
 			MAX(MAX_AGENT_QUEUE,
@@ -351,7 +362,8 @@ extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 	    (difftime(time(NULL), syslog_time) > 120)) {
 		/* Record critical error every 120 seconds */
 		syslog_time = time(NULL);
-		error("slurmdbd: agent queue filling, RESTART SLURMDBD NOW");
+		error("slurmdbd: agent queue filling (%d), RESTART SLURMDBD NOW",
+		      cnt);
 		syslog(LOG_CRIT, "*** RESTART SLURMDBD NOW ***");
 		if (slurmdbd_conn->trigger_callbacks.dbd_fail)
 			(slurmdbd_conn->trigger_callbacks.dbd_fail)();
@@ -364,9 +376,13 @@ extern int slurm_send_slurmdbd_msg(uint16_t rpc_version, slurmdbd_msg_t *req)
 		if (list_enqueue(agent_list, buffer) == NULL)
 			fatal("list_enqueue: memory allocation failure");
 	} else {
-		error("slurmdbd: agent queue is full, discarding request");
+		error("slurmdbd: agent queue is full (%u), discarding %s:%u request",
+		      cnt,
+		      slurmdbd_msg_type_2_str(req->msg_type, 1),
+		      req->msg_type);
 		if (slurmdbd_conn->trigger_callbacks.acct_full)
 			(slurmdbd_conn->trigger_callbacks.acct_full)();
+		free_buf(buffer);
 		rc = SLURM_ERROR;
 	}
 
@@ -3312,7 +3328,43 @@ slurmdbd_pack_job_start_msg(void *in,
 {
 	dbd_job_start_msg_t *msg = (dbd_job_start_msg_t *)in;
 
-	if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_17_11_PROTOCOL_VERSION) {
+		packstr(msg->account, buffer);
+		pack32(msg->alloc_nodes, buffer);
+		pack32(msg->array_job_id, buffer);
+		pack32(msg->array_max_tasks, buffer);
+		pack32(msg->array_task_id, buffer);
+		packstr(msg->array_task_str, buffer);
+		pack32(msg->array_task_pending, buffer);
+		pack32(msg->assoc_id, buffer);
+		packstr(msg->block_id, buffer);
+		pack64(msg->db_index, buffer);
+		pack_time(msg->eligible_time, buffer);
+		pack32(msg->gid, buffer);
+		packstr(msg->gres_alloc, buffer);
+		packstr(msg->gres_req, buffer);
+		packstr(msg->gres_used, buffer);
+		pack32(msg->job_id, buffer);
+		pack32(msg->job_state, buffer);
+		packstr(msg->name, buffer);
+		packstr(msg->nodes, buffer);
+		packstr(msg->node_inx, buffer);
+		pack32(msg->pack_job_id, buffer);
+		pack32(msg->pack_job_offset, buffer);
+		packstr(msg->partition, buffer);
+		pack32(msg->priority, buffer);
+		pack32(msg->qos_id, buffer);
+		pack32(msg->req_cpus, buffer);
+		pack64(msg->req_mem, buffer);
+		pack32(msg->resv_id, buffer);
+		pack_time(msg->start_time, buffer);
+		pack_time(msg->submit_time, buffer);
+		pack32(msg->timelimit, buffer);
+		packstr(msg->tres_alloc_str, buffer);
+		packstr(msg->tres_req_str, buffer);
+		pack32(msg->uid, buffer);
+		packstr(msg->wckey, buffer);
+	} else if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		packstr(msg->account, buffer);
 		pack32(msg->alloc_nodes, buffer);
 		pack32(msg->array_job_id, buffer);
@@ -3394,7 +3446,50 @@ slurmdbd_unpack_job_start_msg(void **msg,
 	msg_ptr->array_job_id = 0;
 	msg_ptr->array_task_id = NO_VAL;
 
-	if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
+	if (rpc_version >= SLURM_17_11_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->account, &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->alloc_nodes, buffer);
+		safe_unpack32(&msg_ptr->array_job_id, buffer);
+		safe_unpack32(&msg_ptr->array_max_tasks, buffer);
+		safe_unpack32(&msg_ptr->array_task_id, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->array_task_str,
+				       &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->array_task_pending, buffer);
+		safe_unpack32(&msg_ptr->assoc_id, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->block_id, &uint32_tmp, buffer);
+		safe_unpack64(&msg_ptr->db_index, buffer);
+		safe_unpack_time(&msg_ptr->eligible_time, buffer);
+		safe_unpack32(&msg_ptr->gid, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->gres_alloc, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->gres_req, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->gres_used, &uint32_tmp,
+				       buffer);
+		safe_unpack32(&msg_ptr->job_id, buffer);
+		safe_unpack32(&msg_ptr->job_state, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->name, &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->nodes, &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->node_inx, &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->pack_job_id, buffer);
+		safe_unpack32(&msg_ptr->pack_job_offset, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->partition,
+				       &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->priority, buffer);
+		safe_unpack32(&msg_ptr->qos_id, buffer);
+		safe_unpack32(&msg_ptr->req_cpus, buffer);
+		safe_unpack64(&msg_ptr->req_mem, buffer);
+		safe_unpack32(&msg_ptr->resv_id, buffer);
+		safe_unpack_time(&msg_ptr->start_time, buffer);
+		safe_unpack_time(&msg_ptr->submit_time, buffer);
+		safe_unpack32(&msg_ptr->timelimit, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->tres_alloc_str,
+				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->tres_req_str,
+				       &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->uid, buffer);
+		safe_unpackstr_xmalloc(&msg_ptr->wckey, &uint32_tmp, buffer);
+	} else if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		safe_unpackstr_xmalloc(&msg_ptr->account, &uint32_tmp, buffer);
 		safe_unpack32(&msg_ptr->alloc_nodes, buffer);
 		safe_unpack32(&msg_ptr->array_job_id, buffer);
@@ -3421,6 +3516,8 @@ slurmdbd_unpack_job_start_msg(void **msg,
 		safe_unpackstr_xmalloc(&msg_ptr->node_inx, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&msg_ptr->partition,
 				       &uint32_tmp, buffer);
+		msg_ptr->pack_job_id = 0;
+		msg_ptr->pack_job_offset = NO_VAL;
 		safe_unpack32(&msg_ptr->priority, buffer);
 		safe_unpack32(&msg_ptr->qos_id, buffer);
 		safe_unpack32(&msg_ptr->req_cpus, buffer);
@@ -3465,6 +3562,8 @@ slurmdbd_unpack_job_start_msg(void **msg,
 		safe_unpackstr_xmalloc(&msg_ptr->name, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&msg_ptr->nodes, &uint32_tmp, buffer);
 		safe_unpackstr_xmalloc(&msg_ptr->node_inx, &uint32_tmp, buffer);
+		msg_ptr->pack_job_id = 0;
+		msg_ptr->pack_job_offset = NO_VAL;
 		safe_unpackstr_xmalloc(&msg_ptr->partition,
 				       &uint32_tmp, buffer);
 		safe_unpack32(&msg_ptr->priority, buffer);
@@ -3603,6 +3702,7 @@ extern void slurmdbd_pack_list_msg(dbd_list_msg_t *msg,
 				   Buf buffer)
 {
 	uint32_t count = 0;
+	uint32_t header_position;
 	ListIterator itr = NULL;
 	void *object = NULL;
 	void (*my_function) (void *object, uint16_t rpc_version, Buf buffer);
@@ -3680,16 +3780,26 @@ extern void slurmdbd_pack_list_msg(dbd_list_msg_t *msg,
 	}
 
 	if (msg->my_list) {
+		header_position = get_buf_offset(buffer);
 		count = list_count(msg->my_list);
 		pack32(count, buffer);
 	} else {
 		// to let user know there wasn't a list (error)
-		pack32((uint32_t)-1, buffer);
+		pack32(NO_VAL, buffer);
 	}
+
 	if (count) {
 		itr = list_iterator_create(msg->my_list);
 		while ((object = list_next(itr))) {
 			(*(my_function))(object, rpc_version, buffer);
+			if (size_buf(buffer) > REASONABLE_BUF_SIZE) {
+				error("%s: size limit exceeded", __func__);
+				/* rewind buffer, pack NO_VAL as count instead */
+				set_buf_offset(buffer, header_position);
+				pack32(NO_VAL, buffer);
+				msg->return_code = ESLURM_RESULT_TOO_LARGE;
+				break;
+			}
 		}
 		list_iterator_destroy(itr);
 	}
@@ -3801,11 +3911,12 @@ extern int slurmdbd_unpack_list_msg(dbd_list_msg_t **msg, uint16_t rpc_version,
 	*msg = msg_ptr;
 
 	safe_unpack32(&count, buffer);
-	if ((int)count > -1) {
-		/* here we are looking to make the list if -1 or
-		   higher than 0.  If -1 we don't want to have the
-		   list be NULL meaning an error occured.
-		*/
+	if (count != NO_VAL) {
+		/*
+		 * Build the list for zero or more objects. If NO_VAL
+		 * was packed this indicates an error, and no list is
+		 * created.
+		 */
 		msg_ptr->my_list = list_create((*(my_destroy)));
 		for(i=0; i<count; i++) {
 			if (((*(my_function))(&object, rpc_version, buffer))

@@ -159,8 +159,6 @@ int main(int argc, char **argv)
 	 * (init_pidfile() exits if it can't initialize pid file).
 	 * On Linux we also need to make this setuid job explicitly
 	 * able to write a core dump.
-	 * This also has to happen after daemon(), which closes all fd's,
-	 * so we keep the write lock of the pidfile.
 	 */
 	_init_pidfile();
 	_become_slurm_user();
@@ -284,10 +282,14 @@ int main(int argc, char **argv)
 		acct_storage_g_commit(db_conn, 1);
 
 		/* this is only ran if not backup */
-		if (rollup_handler_thread)
+		if (rollup_handler_thread) {
 			pthread_join(rollup_handler_thread, NULL);
-		if (rpc_handler_thread)
+			rollup_handler_thread = 0;
+		}
+		if (rpc_handler_thread) {
 			pthread_join(rpc_handler_thread, NULL);
+			rpc_handler_thread = 0;
+		}
 
 		if (backup && primary_resumed && !restart_backup) {
 			shutdown_time = 0;
@@ -504,7 +506,7 @@ static void _usage(char *prog_name)
 		"Print version information and exit.\n");
 }
 
-/* Reset slurmctld logging based upon configuration parameters */
+/* Reset slurmdbd logging based upon configuration parameters */
 static void _update_logging(bool startup)
 {
 	/* Preserve execute line arguments (if any) */
@@ -518,12 +520,17 @@ static void _update_logging(bool startup)
 	log_opts.logfile_level = slurmdbd_conf->debug_level;
 	log_opts.syslog_level  = slurmdbd_conf->debug_level;
 
-	if (foreground)
+	if (foreground) {
 		log_opts.syslog_level = LOG_LEVEL_QUIET;
-	else {
+	} else {
 		log_opts.stderr_level = LOG_LEVEL_QUIET;
-		if (slurmdbd_conf->log_file)
-			log_opts.syslog_level = LOG_LEVEL_QUIET;
+		if (!slurmdbd_conf->log_file &&
+		    (slurmdbd_conf->syslog_debug == LOG_LEVEL_QUIET)) {
+			/* Insure fatal errors get logged somewhere */
+ 			log_opts.syslog_level = LOG_LEVEL_FATAL;
+		} else {
+			log_opts.syslog_level = slurmdbd_conf->syslog_debug;
+		}
 	}
 
 	log_alter(log_opts, SYSLOG_FACILITY_DAEMON, slurmdbd_conf->log_file);
@@ -541,6 +548,8 @@ static void _update_logging(bool startup)
 			      (int) slurm_user_gid);
 		}
 	}
+
+	debug("Log file re-opened");
 }
 
 /* Reset slurmd nice value */
@@ -603,7 +612,7 @@ static void _init_pidfile(void)
  * "cd" to the LogFile directory (if one is configured) */
 static void _daemonize(void)
 {
-	if (daemon(1, 1))
+	if (xdaemon())
 		error("daemon(): %m");
 	log_alter(log_opts, LOG_DAEMON, slurmdbd_conf->log_file);
 }
@@ -839,7 +848,7 @@ static int _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec)
 static void *_signal_handler(void *no_data)
 {
 	int rc, sig;
-	int sig_array[] = {SIGINT, SIGTERM, SIGHUP, SIGABRT, 0};
+	int sig_array[] = {SIGINT, SIGTERM, SIGHUP, SIGABRT, SIGUSR2, 0};
 	sigset_t set;
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
@@ -850,6 +859,7 @@ static void *_signal_handler(void *no_data)
 	_default_sigaction(SIGTERM);
 	_default_sigaction(SIGHUP);
 	_default_sigaction(SIGABRT);
+	_default_sigaction(SIGUSR2);
 
 	while (1) {
 		xsignal_sigset_create(sig_array, &set);
@@ -871,6 +881,10 @@ static void *_signal_handler(void *no_data)
 			abort();	/* Should terminate here */
 			shutdown_threads();
 			return NULL;
+		case SIGUSR2:
+			info("Logrotate signal (SIGUSR2) received");
+			_update_logging(false);
+			break;
 		default:
 			error("Invalid signal (%d) received", sig);
 		}

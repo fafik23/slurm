@@ -38,6 +38,10 @@ optimize the display.  This can also be set with the environment variable
 SQUEUE_ARRAY_UNIQUE.
 
 .TP
+\fB\-\-federation\fR
+Show jobs from the federation if a member of one.
+
+.TP
 \fB\-h\fR, \fB\-\-noheader\fR
 Do not print a header on the output.
 
@@ -77,7 +81,7 @@ Use the environment variable SLURM_BITSTR_LEN to specify larger field sizes.
 .TP
 \fB\-\-local\fR
 Show only jobs local to this cluster. Ignore other clusters in this federation
-(if any).
+(if any). Overrides \-\-federation.
 
 .TP
 \fB\-l\fR, \fB\-\-long\fR
@@ -258,6 +262,9 @@ In the case of job arrays, the job ID format will be of the form
 By default, the job array index field size will be limited to 64 bytes.
 Use the environment variable SLURM_BITSTR_LEN to specify larger field sizes.
 (Valid for jobs and job steps)
+In the case of heterogeneous (pack) job allocations, the job ID format will be
+of the form "#+#" where the first number is the "pack job leader" and the
+second number the zero origin offset for each component of the job.
 .TP
 \fB%I\fR
 Number of cores per socket requested by the job.
@@ -619,7 +626,8 @@ For non\-array jobs, this is the job ID.
 .TP
 \fBjobid\fR
 Job id.
-This will have a unique value for each element of job arrays.
+This will have a unique value for each element of job arrays and each
+component of pack jobs.
 (Valid for jobs only)
 .TP
 \fBlastschedeval\fR
@@ -742,6 +750,15 @@ or the partition is configured with OverSubscribe=Force,
 (See MCSPlugin and MCSParameters configuration parameters for more information),
 "OK" otherwise (typically allocated dedicated CPUs),
 (Valid for jobs only)
+.TP
+\fBpackjobid\fR
+Job ID of the heterogeneous job leader.
+.TP
+\fBpackjoboffset\fR
+Zero origin offset within a collection of heterogeneous jobs.
+.TP
+\fBpackjobidset\fR
+Expression identifying all job IDs within a heterogeneous job.
 .TP
 \fBpartition\fR
 Partition of the job or job step.
@@ -993,7 +1010,7 @@ and not include a space between them. For example "\-s1008.0" and not
 
 .TP
 \fB\-\-sibling\fR
-Show all sibling jobs on a federated cluster.
+Show all sibling jobs on a federated cluster. Implies \-\-federation.
 
 .TP
 \fB\-S <sort_list>\fR, \fB\-\-sort=<sort_list>\fR
@@ -1288,6 +1305,9 @@ A valid strftime() format can also be specified. For example, a value of
 .TP
 \fBSQUEUE_NAMES\fR
 \fB\-\-name=<name_list>\fR
+.TP
+\fBSQUEUE_FEDERATION\fR
+\fB\-\-federation\fR
 .TP
 \fBSQUEUE_FORMAT\fR
 \fB\-o <output_format>, \-\-format=<output_format>\fR

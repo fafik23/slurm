@@ -124,7 +124,7 @@ AC_CHECK_HEADERS(mcheck.h values.h socket.h sys/socket.h  \
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
 AC_HEADER_STDC
-
+AC_HEADER_MAJOR
 
 dnl Checks for structures.
 dnl
@@ -230,6 +230,7 @@ X_AC_PMIX
 X_AC_FREEIPMI
 X_AC_SLURM_SEMAPHORE
 X_AC_RRDTOOL
+X_AC_UCX
 
 X_AC_NCURSES
 AM_CONDITIONAL(HAVE_SOME_CURSES, test "x$ac_have_some_curses" = "xyes")
@@ -351,6 +352,11 @@ dnl
 X_AC_SLURM_WITH_SSL
 AM_CONDITIONAL(HAVE_OPENSSL, test "x$ac_have_openssl" = "xyes")
 AC_SUBST(HAVE_OPENSSL)
+
+dnl
+dnl Check for systemd presence, version and system unit dir
+dnl
+X_AC_SYSTEMD
 
 dnl
 dnl Check for compilation of SLURM auth modules:

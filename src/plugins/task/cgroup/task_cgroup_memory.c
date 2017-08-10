@@ -338,9 +338,9 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 	 * Also constrain kernel memory (if available).
 	 * See https://lwn.net/Articles/516529/
 	 */
-
-	xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes",
-				  kmem_limit_in_bytes(mlb));
+	if (constrain_kmem_space)
+		xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes",
+					  kmem_limit_in_bytes(mlb));
 
 	/* this limit has to be set only if ConstrainSwapSpace is set to yes */
 	if ( constrain_swap_space ) {
@@ -502,15 +502,10 @@ error:
 	return fstatus;
 }
 
-extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job)
+extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job, pid_t pid)
 {
 	int fstatus = SLURM_ERROR;
-	pid_t pid;
 
-	/*
-	 * Attach the current task to the step memory cgroup
-	 */
-	pid = getpid();
 	if (xcgroup_add_pids(&step_memory_cg, &pid, 1) != XCGROUP_SUCCESS) {
 		error("task/cgroup: unable to add task[pid=%u] to "
 		      "memory cg '%s'",pid,step_memory_cg.path);

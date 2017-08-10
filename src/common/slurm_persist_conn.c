@@ -351,6 +351,8 @@ extern void slurm_persist_conn_recv_server_init(void)
 {
 	int sigarray[] = {SIGUSR1, 0};
 
+	shutdown_time = 0;
+
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
@@ -586,6 +588,8 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 	 */
 	req_msg.protocol_version = persist_conn->version;
 	req_msg.msg_type = REQUEST_PERSIST_INIT;
+
+	req_msg.flags |= SLURM_GLOBAL_AUTH_KEY;
 	if (persist_conn->flags & PERSIST_FLAG_DBD)
 		req_msg.flags |= SLURMDBD_CONNECTION;
 
@@ -603,7 +607,7 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 	} else {
 		Buf buffer = slurm_persist_recv_msg(persist_conn);
 		persist_msg_t msg;
-		uint16_t flags = persist_conn->flags;
+		slurm_persist_conn_t persist_conn_tmp;
 
 		if (!buffer) {
 			if (_comm_fail_log(persist_conn)) {
@@ -614,11 +618,12 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 			goto end_it;
 		}
 		memset(&msg, 0, sizeof(persist_msg_t));
+		memcpy(&persist_conn_tmp, persist_conn,
+		       sizeof(slurm_persist_conn_t));
 		/* The first unpack is done the same way for dbd or normal
 		 * communication . */
-		persist_conn->flags &= (~PERSIST_FLAG_DBD);
-		rc = slurm_persist_msg_unpack(persist_conn, &msg, buffer);
-		persist_conn->flags = flags;
+		persist_conn_tmp.flags &= (~PERSIST_FLAG_DBD);
+		rc = slurm_persist_msg_unpack(&persist_conn_tmp, &msg, buffer);
 		free_buf(buffer);
 
 		resp = (persist_rc_msg_t *)msg.data;
@@ -831,6 +836,9 @@ extern int slurm_persist_send_msg(
 	if (persist_conn->fd < 0)
 		return EAGAIN;
 
+	if (!buffer)
+		return SLURM_ERROR;
+
 	rc = slurm_persist_conn_writeable(persist_conn);
 	if (rc == -1) {
 	re_open:
@@ -959,7 +967,10 @@ extern Buf slurm_persist_msg_pack(slurm_persist_conn_t *persist_conn,
 		buffer = init_buf(BUF_SIZE);
 
 		pack16(req_msg->msg_type, buffer);
-		pack_msg(&msg, buffer);
+		if (pack_msg(&msg, buffer) != SLURM_SUCCESS) {
+			free_buf(buffer);
+			return NULL;
+                }
 	}
 
 	return buffer;

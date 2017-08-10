@@ -141,9 +141,18 @@ slurm_populate_node_partitions(node_info_msg_t *node_buffer_ptr,
 		xfree(node_ptr->partitions);
 	}
 
+	/*
+	 * Iterate through the partitions in the slurm.conf using "p".  The
+	 * partition has an array of node index pairs to specify the range.
+	 * Using "i", iterate by two's through the node list to get the
+	 * begin-end node range.  Using "j", interate through the node range
+	 * and add the partition name to the node's partition list.  If the
+	 * node on the partition is a singleton (i.e. Nodes=node1), the
+	 * begin-end range are both the same node index value.
+	 */
 	for (p = 0, part_ptr = part_buffer_ptr->partition_array;
 	     p < part_buffer_ptr->record_count; p++, part_ptr++) {
-		for (i = 0; ; i++) {
+		for (i = 0; ; i += 2) {
 			if (part_ptr->node_inx[i] == -1)
 				break;
 			for (j = part_ptr->node_inx[i];
@@ -675,15 +684,18 @@ static int _load_fed_nodes(slurm_msg_t *req_msg,
 						    new_msg->last_update);
 			new_rec_cnt = orig_msg->record_count +
 				      new_msg->record_count;
-			orig_msg->node_array = xrealloc(orig_msg->node_array,
-						sizeof(node_info_t) *
-						new_rec_cnt);
-			(void) memcpy(orig_msg->node_array +
-				      orig_msg->record_count,
-				      new_msg->node_array,
-				      sizeof(node_info_t) *
-				      new_msg->record_count);
-			orig_msg->record_count = new_rec_cnt;
+			if (new_msg->record_count) {
+				orig_msg->node_array =
+					xrealloc(orig_msg->node_array,
+						 sizeof(node_info_t) *
+						 new_rec_cnt);
+				(void) memcpy(orig_msg->node_array +
+					      orig_msg->record_count,
+					      new_msg->node_array,
+					      sizeof(node_info_t) *
+					      new_msg->record_count);
+				orig_msg->record_count = new_rec_cnt;
+			}
 			xfree(new_msg->node_array);
 			xfree(new_msg);
 		}
@@ -721,8 +733,7 @@ extern int slurm_load_node(time_t update_time, node_info_msg_t **resp,
 		cluster_name = xstrdup(working_cluster_rec->name);
 	else
 		cluster_name = slurm_get_cluster_name();
-	if (!working_cluster_rec &&
-	    (show_flags & SHOW_GLOBAL) &&
+	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
 	    cluster_in_federation(ptr, cluster_name)) {
 		/* In federation. Need full info from all clusters */
@@ -731,7 +742,7 @@ extern int slurm_load_node(time_t update_time, node_info_msg_t **resp,
 	} else {
 		/* Report local cluster info only */
 		show_flags |= SHOW_LOCAL;
-		show_flags &= (~SHOW_GLOBAL);
+		show_flags &= (~SHOW_FEDERATION);
 	}
 
 	slurm_msg_t_init(&req_msg);
@@ -740,7 +751,7 @@ extern int slurm_load_node(time_t update_time, node_info_msg_t **resp,
 	req_msg.msg_type = REQUEST_NODE_INFO;
 	req_msg.data     = &req;
 
-	if (show_flags & SHOW_GLOBAL) {
+	if (show_flags & SHOW_FEDERATION) {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_nodes(&req_msg, resp, show_flags, cluster_name,
 				     fed);

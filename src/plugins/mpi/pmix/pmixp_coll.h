@@ -2,7 +2,7 @@
  **  pmix_coll.h - PMIx collective primitives
  *****************************************************************************
  *  Copyright (C) 2014-2015 Artem Polyakov. All rights reserved.
- *  Copyright (C) 2015      Mellanox Technologies. All rights reserved.
+ *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
  *  This file is part of SLURM, a resource management program.
@@ -61,7 +61,7 @@ typedef enum {
 
 typedef struct {
 #ifndef NDEBUG
-#define PMIXP_COLL_STATE_MAGIC 0xCA11CAFE
+#define PMIXP_COLL_STATE_MAGIC 0xC011CAFE
 	int magic;
 #endif
 	/* element-wise lock */
@@ -77,6 +77,7 @@ typedef struct {
 	uint32_t nodeid;
 	/* tree structure */
 	char *parent_host;
+	int parent_nodeid;
 	hostlist_t all_children;
 	uint32_t children_cnt;
 
@@ -90,7 +91,7 @@ typedef struct {
 	bool *ch_contribs;
 
 	/* collective data */
-	Buf buf;
+	Buf buf, root_buf;
 	size_t serv_offs;
 
 	/* libpmix callback data */
@@ -103,11 +104,12 @@ typedef struct {
 
 static inline void pmixp_coll_sanity_check(pmixp_coll_t *coll)
 {
+	xassert(NULL != coll);
 	xassert(coll->magic == PMIXP_COLL_STATE_MAGIC);
 }
 
 int pmixp_coll_init(pmixp_coll_t *coll, const pmix_proc_t *procs,
-		size_t nprocs, pmixp_coll_type_t type);
+		    size_t nprocs, pmixp_coll_type_t type);
 void pmixp_coll_free(pmixp_coll_t *coll);
 
 static inline void pmixp_coll_set_callback(pmixp_coll_t *coll,
@@ -119,8 +121,10 @@ static inline void pmixp_coll_set_callback(pmixp_coll_t *coll,
 	 * - only slurm thread may touch this data during fan-out stage
 	 */
 	pmixp_coll_sanity_check(coll);
+	slurm_mutex_lock(&coll->lock);
 	coll->cbfunc = cbfunc;
 	coll->cbdata = cbdata;
+	slurm_mutex_unlock(&coll->lock);
 }
 
 /*
@@ -134,12 +138,12 @@ static inline void pmixp_coll_set_callback(pmixp_coll_t *coll,
  *
  *    If we succeed - we are OK. Otherwise we will abort the whole job step.
  *
- * 2. A child of us sends us the message and gets the error, however we
- *    receive this message (false negative). Child will try again while we might be:
+ * 2. A child of us sends us the message and gets the error, however we receive
+ *    this message (false negative). Child will try again while we might be:
  *    (a) at FAN-IN step waiting for other contributions.
  *    (b) at FAN-OUT since we get all we need.
- *    (c) 2 step forward (SYNC) with coll->seq = (child_seq+1) if root of the tree
- *        successfuly broadcasted the whole database to us.
+ *    (c) 2 step forward (SYNC) with coll->seq = (child_seq+1) if root of the
+ *        tree successfuly broadcasted the whole database to us.
  *    (d) 3 step forward (next FAN-IN) with coll->seq = (child_seq+1)
  *        if somebody initiated next collective.
  *    (e) we won't move further because the child with problem won't send us
@@ -157,22 +161,23 @@ static inline void pmixp_coll_set_callback(pmixp_coll_t *coll,
  *
  * 3. Root of the tree broadcasts the data and we get it, however root gets
  *    false negative. In this case root will try again. We might be:
- *    (a) at SYNC since we just got the DB and we are fine (coll->seq == root_seq+1)
- *    (b) at FAN-IN if somebody initiated next collective  (coll->seq == root_seq+1)
- *    (c) at FAN-OUT if we will collect all necessary contributions and send it to
- *        our parent.
- *    (d) we won't be able to switch to SYNC since root will be busy dealing with
- *        previous DB broadcast.
- *    (e) at FAN-OUT waiting for the fan-out msg while receiving next fan-in message
- *        from one of our children (coll->seq + 1 == child_seq).
+ *    (a) at SYNC since we just got the DB and we are fine
+ *        (coll->seq == root_seq+1)
+ *    (b) at FAN-IN if somebody initiated next collective
+ *        (coll->seq == root_seq+1)
+ *    (c) at FAN-OUT if we will collect all necessary contributions and send
+ *        it to our parent.
+ *    (d) we won't be able to switch to SYNC since root will be busy dealing
+ *        with previous DB broadcast.
+ *    (e) at FAN-OUT waiting for the fan-out msg while receiving next fan-in
+ *        message from one of our children (coll->seq + 1 == child_seq).
  */
-static inline int pmixp_coll_check_seq(pmixp_coll_t *coll, uint32_t seq,
-		char *nodename)
+static inline int pmixp_coll_check_seq(pmixp_coll_t *coll, uint32_t seq)
 {
 	if (coll->seq == seq) {
 		/* accept this message */
 		return PMIXP_COLL_REQ_PROGRESS;
-	} else if( (coll->seq+1) == seq ){
+	} else if ((coll->seq+1) == seq) {
 		/* practice shows that because of SLURM communication
 		 * infrastructure our child can switch to the next Fence
 		 * and send us the message before the current fan-out message
@@ -188,18 +193,17 @@ static inline int pmixp_coll_check_seq(pmixp_coll_t *coll, uint32_t seq,
 	}
 	/* maybe need more sophisticated handling in presence of
 	 * several steps. However maybe it's enough to just ignore */
-	/* slurm_kill_job_step(pmixp_info_jobid(), pmixp_info_stepid(), SIGKILL); */
 	return PMIXP_COLL_REQ_FAILURE;
 }
 
 int pmixp_coll_contrib_local(pmixp_coll_t *coll, char *data,
 			     size_t ndata);
-int pmixp_coll_contrib_node(pmixp_coll_t *coll, char *nodename, Buf buf);
-void pmixp_coll_bcast(pmixp_coll_t *coll, Buf buf);
+int pmixp_coll_contrib_node(pmixp_coll_t *coll, uint32_t nodeid, Buf buf);
+void pmixp_coll_bcast(pmixp_coll_t *coll);
 bool pmixp_coll_progress(pmixp_coll_t *coll, char *fwd_node,
 			 void **data, uint64_t size);
 int pmixp_coll_unpack_ranges(Buf buf, pmixp_coll_type_t *type,
-		pmix_proc_t **ranges, size_t *nranges);
+			     pmix_proc_t **ranges, size_t *nranges);
 int pmixp_coll_belong_chk(pmixp_coll_type_t type,
 			  const pmix_proc_t *procs, size_t nprocs);
 void pmixp_coll_reset_if_to(pmixp_coll_t *coll, time_t ts);

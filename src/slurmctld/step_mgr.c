@@ -1538,7 +1538,7 @@ _pick_step_nodes (struct job_record  *job_ptr,
 		step_spec->min_nodes = (i > step_spec->min_nodes) ?
 					i : step_spec->min_nodes ;
 		if (step_spec->max_nodes < step_spec->min_nodes) {
-			info("%s: Job step %u max node count incompatible with CPU count (%u < %u)",
+			info("%s: Job step %u max node less than min node count (%u < %u)",
 			     __func__, job_ptr->job_id, step_spec->max_nodes,
 			     step_spec->min_nodes);
 			*return_code = ESLURM_TOO_MANY_REQUESTED_CPUS;
@@ -2172,6 +2172,7 @@ static int _calc_cpus_per_task(job_step_create_request_msg_t *step_specs,
 			       struct job_record  *job_ptr)
 {
 	int cpus_per_task = 0, i;
+	int num_tasks;
 
 	if ((step_specs->cpu_count == 0) ||
 	    (step_specs->cpu_count % step_specs->num_tasks))
@@ -2184,13 +2185,19 @@ static int _calc_cpus_per_task(job_step_create_request_msg_t *step_specs,
 	if (!job_ptr->job_resrcs)
 		return cpus_per_task;
 
+	num_tasks = step_specs->num_tasks;
 	for (i = 0; i < job_ptr->job_resrcs->cpu_array_cnt; i++) {
-		if ((cpus_per_task > job_ptr->job_resrcs->cpu_array_value[i]) ||
-		    (job_ptr->job_resrcs->cpu_array_value[i] % cpus_per_task)) {
+		if (cpus_per_task > job_ptr->job_resrcs->cpu_array_value[i]) {
 			cpus_per_task = 0;
 			break;
 		}
+		num_tasks -= (job_ptr->job_resrcs->cpu_array_value[i] /
+			      cpus_per_task) *
+			     job_ptr->job_resrcs->cpu_array_reps[i];
 	}
+
+	if (num_tasks > 0)
+		return 0;
 
 	return cpus_per_task;
 }
@@ -3104,8 +3111,6 @@ extern int pack_ctld_job_step_info_response_msg(
 	pack_time(now, buffer);
 	pack32(steps_packed, buffer);	/* steps_packed placeholder */
 
-	part_filter_set(uid);
-
 	job_iterator = list_iterator_create(job_list);
 	while ((job_ptr = list_next(job_iterator))) {
 		if ((job_id != NO_VAL) && (job_id != job_ptr->job_id) &&
@@ -3115,8 +3120,7 @@ extern int pack_ctld_job_step_info_response_msg(
 		valid_job = 1;
 
 		if (((show_flags & SHOW_ALL) == 0) && (uid != 0) &&
-		    (job_ptr->part_ptr) &&
-		    (job_ptr->part_ptr->flags & PART_FLAG_HIDDEN))
+		    (job_ptr->part_ptr) && !part_is_visible(job_ptr->part_ptr, uid))
 			continue;
 
 		if ((slurmctld_conf.private_data & PRIVATE_DATA_JOBS) &&
@@ -3143,8 +3147,6 @@ extern int pack_ctld_job_step_info_response_msg(
 
 	if (list_count(job_list) && !valid_job && !steps_packed)
 		error_code = ESLURM_INVALID_JOB_ID;
-
-	part_filter_clear();
 
 	/* put the real record count in the message body header */
 	tmp_offset = get_buf_offset(buffer);
@@ -3433,15 +3435,6 @@ extern int step_partial_comp(step_complete_msg_t *req, uid_t uid,
 	}
 
 	step_ptr = find_step_record(job_ptr, req->job_step_id);
-
-	/* FIXME: It was changed in 16.05.3 to make the extern step
-	 * at the beginning of the job, so this isn't really needed
-	 * anymore, but just in case there were steps out on the nodes
-	 * during an upgrade this was left in.  It can probably be
-	 * taken out in future releases though.
-	 */
-	if ((step_ptr == NULL) && (req->job_step_id == SLURM_EXTERN_CONT))
-		step_ptr = build_extern_step(job_ptr);
 
 	if (step_ptr == NULL) {
 		info("step_partial_comp: StepID=%u.%u invalid",

@@ -50,13 +50,14 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "src/common/macros.h" /* true and false */
+#include "src/common/bitstring.h"
 #include "src/common/env.h"
-
-#include "fname.h"
+#include "src/common/list.h"
+#include "src/common/macros.h" /* true and false */
 
 #define DEFAULT_IMMEDIATE	1
 #define MAX_THREADS		60
+#define MAX_PACK_COUNT		128
 
 /* global variables relating to user options */
 extern int _verbose;
@@ -129,7 +130,6 @@ typedef struct srun_options {
 	bool job_name_set_env;	/* true if job_name set by env var */
 	unsigned int jobid;     /* --jobid=jobid                */
 	bool jobid_set;		/* true if jobid explicitly set */
-	char *mpi_type;		/* --mpi=type			*/
 	char *dependency;	/* --dependency, -P type:jobid	*/
 	int nice;		/* --nice			*/
 	uint32_t priority;	/* --priority */
@@ -141,7 +141,6 @@ typedef struct srun_options {
 	char *efname;		/* --error, -e filename         */
 
 	int  slurmd_debug;	/* --slurmd-debug, -D           */
-	bool join;		/* --join, 	    -j		*/
 
 	/* no longer need these, they are set globally : 	*/
 	/*int verbose;*/	/* -v, --verbose		*/
@@ -243,18 +242,21 @@ typedef struct srun_options {
 	char *mcs_label;	/* mcs label if mcs plugin in use */
 	time_t deadline; 	/* --deadline                   */
 	uint32_t job_flags;	/* --gres-flags */
-	uint32_t delay_boot;	/* --delay-boot			*/	
+	uint32_t delay_boot;	/* --delay-boot			*/
+	bool mpi_combine;	/* --mpi-combine		*/
+	char *pack_group;	/* --pack-group			*/
+	bitstr_t *pack_grp_bits;/* --pack-group	in bitmap form	*/
 } opt_t;
 
-extern opt_t opt;
-
-extern int error_exit;		/* exit code for slurm errors */
-extern int immediate_exit;	/* exit code for --imediate option & busy */
-extern bool srun_max_timer;
-extern bool srun_shutdown;
-extern time_t srun_begin_time;	/* begin time of srun process */
-extern int sig_array[];
+extern int	error_exit;	/* exit code for slurm errors */
 extern resource_allocation_response_msg_t *global_resp;
+extern int	immediate_exit;	/* exit code for --imediate option & busy */
+extern opt_t	opt;
+extern List	opt_list;
+extern int	sig_array[];
+extern time_t	srun_begin_time; /* begin time of srun process */
+extern bool	srun_max_timer;
+extern bool	srun_shutdown;
 
 /* return whether any constraints were specified by the user
  * (if new constraints are added above, might want to add them to this
@@ -269,13 +271,18 @@ extern resource_allocation_response_msg_t *global_resp;
 			     (opt.pn_min_threads  != NO_VAL) || \
 			     (opt.contiguous))
 
-/* process options:
+/*
+ * process options:
  * 1. set defaults
  * 2. update options with env vars
  * 3. update options with commandline args
  * 4. perform some verification that options are reasonable
+ *
+ * argc IN - Count of elements in argv
+ * argv IN - Array of elements to parse
+ * argc_off OUT - Offset of first non-parsable element
  */
-int initialize_and_process_args(int argc, char **argv);
+extern int initialize_and_process_args(int argc, char **argv, int *argc_off);
 
 /* external functions available for SPANK plugins to modify the environment
  * exported to the SLURM Prolog and Epilog programs */
@@ -287,5 +294,17 @@ extern int   spank_unset_job_env(const char *name);
 /* Initialize the spank_job_env based upon environment variables set
  *	via salloc or sbatch commands */
 extern void init_spank_env(void);
+
+/*
+ * Find option structure for a given pack job offset
+ * pack_offset IN - Offset into pack job, -1 if regular job, -2 to reset
+ * RET - Pointer to next matching option structure or NULL if none found
+ */
+extern opt_t *get_next_opt(int pack_offset);
+
+/*
+ * Return maximum pack_group value for any step launch option request
+ */
+extern int get_max_pack_group(void);
 
 #endif	/* _HAVE_OPT_H */

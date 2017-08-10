@@ -49,6 +49,7 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/macros.h"
+#include "src/common/strlcpy.h"
 #include "src/plugins/switch/nrt/slurm_nrt.h"
 
 #define NRT_BUF_SIZE 4096
@@ -795,7 +796,7 @@ static bool _nrt_version_ok(void)
 {
 	if ((NRT_VERSION >= 1100) && (NRT_VERSION <= 1300))
 		return true;
-	error("switch/nrt: Incompatable NRT version");
+	error("switch/nrt: Incompatible NRT version");
 	return false;
 }
 
@@ -826,14 +827,14 @@ extern int switch_p_job_init (stepd_step_rec_t *job)
 	pid_t pid;
 	DEF_TIMERS;
 	int rc;
-
+	slurm_nrt_jobinfo_t *nrt_jobinfo = job->switch_job ?
+		(slurm_nrt_jobinfo_t *)job->switch_job->data : NULL;
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		START_TIMER;
 		info("switch_p_job_init() starting");
 	}
 	pid = getpid();
-	rc = nrt_load_table((slurm_nrt_jobinfo_t *)job->switch_job,
-			    job->uid, pid, job->argv[0]);
+	rc = nrt_load_table(nrt_jobinfo, job->uid, pid, job->argv[0]);
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		END_TIMER;
 		info("switch_p_job_init() ending %s", TIME_STR);
@@ -945,6 +946,8 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 	uid_t pgid = job->jmgr_pid;
 	DEF_TIMERS;
 	int err;
+	slurm_nrt_jobinfo_t *nrt_jobinfo = job->switch_job ?
+		(slurm_nrt_jobinfo_t *)job->switch_job->data : NULL;
 
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		START_TIMER;
@@ -960,7 +963,7 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 	} else
 		debug("Job %u.%u: pgid value is zero", job->jobid, job->stepid);
 
-	err = nrt_unload_table((slurm_nrt_jobinfo_t *)job->switch_job);
+	err = nrt_unload_table(nrt_jobinfo);
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		END_TIMER;
 		info("switch_p_job_postfini() ending %s", TIME_STR);
@@ -1030,7 +1033,7 @@ static void *_state_save_thread(void *arg)
 {
 	char *dir_name = (char *)arg;
 
-	strncpy(local_dir_path, dir_name, sizeof(local_dir_path));
+	strlcpy(local_dir_path, dir_name, sizeof(local_dir_path));
 	xfree(dir_name);
 
 	while (1) {

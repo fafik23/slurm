@@ -655,6 +655,7 @@ MUNGE_DIR
 MUNGE_LDFLAGS
 MUNGE_CPPFLAGS
 MUNGE_LIBS
+SYSTEMD_TASKSMAX_OPTION
 HAVE_OPENSSL
 HAVE_OPENSSL_FALSE
 HAVE_OPENSSL_TRUE
@@ -728,6 +729,11 @@ HAVE_SOME_CURSES
 HAVE_SOME_CURSES_FALSE
 HAVE_SOME_CURSES_TRUE
 NCURSES
+HAVE_UCX_FALSE
+HAVE_UCX_TRUE
+UCX_LIBS
+UCX_LDFLAGS
+UCX_CPPFLAGS
 BUILD_RRD_FALSE
 BUILD_RRD_TRUE
 RRDTOOL_LDFLAGS
@@ -1007,6 +1013,7 @@ with_hwloc
 with_pmix
 with_freeipmi
 with_rrdtool
+with_ucx
 enable_glibtest
 enable_gtktest
 with_alps_emulation
@@ -1773,6 +1780,7 @@ Optional Packages:
                           version directories can be ':' delimited.
   --with-freeipmi=PATH    Specify path to freeipmi installation
   --with-rrdtool=PATH     Specify path to rrdtool-devel installation
+  --with-ucx=PATH         Build with Unified Communication X library support
   --with-alps-emulation   Run SLURM against an emulated ALPS system - requires
                           option cray.conf [default=no]
   --with-cray_dir=PATH    Specify path to Cray file installation - /opt/cray
@@ -18810,6 +18818,55 @@ $as_echo "#define STDC_HEADERS 1" >>confdefs.h
 
 fi
 
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether sys/types.h defines makedev" >&5
+$as_echo_n "checking whether sys/types.h defines makedev... " >&6; }
+if ${ac_cv_header_sys_types_h_makedev+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include <sys/types.h>
+int
+main ()
+{
+return makedev(0, 0);
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_header_sys_types_h_makedev=yes
+else
+  ac_cv_header_sys_types_h_makedev=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_header_sys_types_h_makedev" >&5
+$as_echo "$ac_cv_header_sys_types_h_makedev" >&6; }
+
+if test $ac_cv_header_sys_types_h_makedev = no; then
+ac_fn_c_check_header_mongrel "$LINENO" "sys/mkdev.h" "ac_cv_header_sys_mkdev_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_mkdev_h" = xyes; then :
+
+$as_echo "#define MAJOR_IN_MKDEV 1" >>confdefs.h
+
+fi
+
+
+
+  if test $ac_cv_header_sys_mkdev_h = no; then
+    ac_fn_c_check_header_mongrel "$LINENO" "sys/sysmacros.h" "ac_cv_header_sys_sysmacros_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_sysmacros_h" = xyes; then :
+
+$as_echo "#define MAJOR_IN_SYSMACROS 1" >>confdefs.h
+
+fi
+
+
+  fi
+fi
 
 
 
@@ -21911,6 +21968,110 @@ fi
 
 
 
+  _x_ac_ucx_dirs="/usr /usr/local"
+  _x_ac_ucx_libs="lib64 lib"
+
+
+# Check whether --with-ucx was given.
+if test "${with_ucx+set}" = set; then :
+  withval=$with_ucx; if test "x$with_ucx" != xno; then :
+  _x_ac_ucx_dirs="$with_ucx $_x_ac_ucx_dirs"
+fi
+fi
+
+
+  if test "x$with_ucx" = xno; then
+    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: support for ucx disabled" >&5
+$as_echo "$as_me: WARNING: support for ucx disabled" >&2;}
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for ucx installation" >&5
+$as_echo_n "checking for ucx installation... " >&6; }
+if ${x_ac_cv_ucx_dir+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+
+        for d in $_x_ac_ucx_dirs; do
+          test -d "$d" || continue
+          test -d "$d/include" || continue
+          test -d "$d/include/ucp" || continue
+          test -d "$d/include/ucp/api" || continue
+          test -d "$d/include/uct" || continue
+          test -d "$d/include/uct/api" || continue
+          test -f "$d/include/ucp/api/ucp.h" || continue
+          test -f "$d/include/ucp/api/ucp_version.h" || continue
+          for bit in $_x_ac_ucx_libs; do
+            test -d "$d/$bit" || continue
+            _x_ac_ucx_cppflags_save="$CPPFLAGS"
+            CPPFLAGS="-I$d/include $CPPFLAGS"
+            _x_ac_ucx_libs_save="$LIBS"
+            LIBS="-L$d/$bit -lrrd $LIBS"
+
+            cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include <ucp/api/ucp_version.h>
+int
+main ()
+{
+
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  x_ac_cv_ucx_dir=$d
+                x_ac_cv_ucx_libdir=$d/$bit
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+
+            if test -z "$x_ac_cv_ucx_dir" ||
+               test -z "$x_ac_cv_ucx_libdir"; then
+              { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: unable to locate ucx installation" >&5
+$as_echo "$as_me: WARNING: unable to locate ucx installation" >&2;}
+              continue
+            fi
+
+            CPPFLAGS="$_x_ac_ucx_cppflags_save"
+            LIBS="$_x_ac_ucx_libs_save"
+            test -n "$x_ac_cv_ucx_dir" && break
+          done
+          test -n "$x_ac_cv_ucx_dir" && break
+        done
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $x_ac_cv_ucx_dir" >&5
+$as_echo "$x_ac_cv_ucx_dir" >&6; }
+
+    if test -z "$x_ac_cv_ucx_dir"; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: unable to locate ucx installation" >&5
+$as_echo "$as_me: WARNING: unable to locate ucx installation" >&2;}
+    else
+      UCX_CPPFLAGS="-I$x_ac_cv_ucx_dir/include"
+      if test "$ac_with_rpath" = "yes"; then
+        UCX_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_ucx_libdir"
+      else
+        UCX_CPPFLAGS+=" -DPMIXP_UCX_LIBPATH=\\\"$x_ac_cv_ucx_libdir\\\""
+      fi
+
+$as_echo "#define HAVE_UCX 1" >>confdefs.h
+
+    fi
+
+
+
+
+  fi
+
+   if test -n "$x_ac_cv_ucx_dir"; then
+  HAVE_UCX_TRUE=
+  HAVE_UCX_FALSE='#'
+else
+  HAVE_UCX_TRUE='#'
+  HAVE_UCX_FALSE=
+fi
+
+
+
 
    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for initscr in -lncurses" >&5
 $as_echo_n "checking for initscr in -lncurses... " >&6; }
@@ -24066,8 +24227,24 @@ fi
 
 
 	x_ac_lua_pkg_name="lua"
-	#check for 5.2 if that fails check for 5.1
+	#check for 5.3 then 5.2 then 5.1
 	if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua5.3\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua5.3") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  x_ac_lua_pkg_name=lua5.3
+else
+  if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua-5.3\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua-5.3") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  x_ac_lua_pkg_name=lua-5.3
+else
+  if test -n "$PKG_CONFIG" && \
     { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua5.2\""; } >&5
   ($PKG_CONFIG --exists --print-errors "lua5.2") 2>&5
   ac_status=$?
@@ -24076,12 +24253,32 @@ fi
   x_ac_lua_pkg_name=lua5.2
 else
   if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua-5.2\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua-5.2") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  x_ac_lua_pkg_name=lua-5.2
+else
+  if test -n "$PKG_CONFIG" && \
     { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua5.1\""; } >&5
   ($PKG_CONFIG --exists --print-errors "lua5.1") 2>&5
   ac_status=$?
   $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
   test $ac_status = 0; }; then
   x_ac_lua_pkg_name=lua5.1
+else
+  if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"lua-5.1\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "lua-5.1") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  x_ac_lua_pkg_name=lua-5.1
+fi
+fi
+fi
+fi
 fi
 fi
 
@@ -24159,8 +24356,7 @@ fi
 	if test "x$x_ac_have_lua" = "xyes"; then
 	  saved_CFLAGS="$CFLAGS"
 	  saved_LIBS="$LIBS"
-	  # -DLUA_COMPAT_ALL is needed to support lua 5.2
-	  lua_CFLAGS="$lua_CFLAGS -DLUA_COMPAT_ALL"
+	  lua_CFLAGS="$lua_CFLAGS"
 	  CFLAGS="$CFLAGS $lua_CFLAGS"
 	  LIBS="$LIBS $lua_LIBS"
 	  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for whether we can link to liblua" >&5
@@ -24193,6 +24389,13 @@ $as_echo "$x_ac_have_lua $x_ac_lua_pkg_name" >&6; }
 	  if test "x$x_ac_have_lua" = "xno"; then
 	    { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: unable to link against lua libraries" >&5
 $as_echo "$as_me: WARNING: unable to link against lua libraries" >&2;}
+	  else
+
+$as_echo "#define HAVE_LUA 1" >>confdefs.h
+
+	    # We can not define something here to determine version for systems
+	    # that use just liblua we will not know what version we are using.
+	    # Use LUA_VERSION_NUM as in lua.h it will always be right.
 	  fi
 	  CFLAGS="$saved_CFLAGS"
 	  LIBS="$saved_LIBS"
@@ -24209,17 +24412,6 @@ else
   HAVE_LUA_FALSE=
 fi
 
-	if test "x$x_ac_have_lua" = "xyes" ; then
-		if test "x$x_ac_lua_pkg_name" = "xlua5.2" ; then
-
-$as_echo "#define HAVE_LUA_5_2 1" >>confdefs.h
-
-		elif test "x$x_ac_lua_pkg_name" = "xlua5.1"; then
-
-$as_echo "#define HAVE_LUA_5_1 1" >>confdefs.h
-
-		fi
-	fi
 
 
 
@@ -24582,6 +24774,56 @@ else
   HAVE_OPENSSL_TRUE='#'
   HAVE_OPENSSL_FALSE=
 fi
+
+
+
+
+
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for systemd presence" >&5
+$as_echo_n "checking for systemd presence... " >&6; }
+if ${_cv_systemd_presence+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"systemd\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "systemd") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  _cv_systemd_presence=yes
+else
+  _cv_systemd_presence=no
+fi
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $_cv_systemd_presence" >&5
+$as_echo "$_cv_systemd_presence" >&6; }
+
+	if test "x$_cv_systemd_presence" != "xno"; then
+
+$as_echo "#define HAVE_SYSTEMD 1" >>confdefs.h
+
+
+	    _cv_systemd_version=`$PKG_CONFIG --modversion systemd 2>/dev/null`
+
+	    SYSTEMD_TASKSMAX_OPTION=""
+	    if test "$_cv_systemd_version" -ge 227; then
+		    SYSTEMD_TASKSMAX_OPTION="TasksMax=infinity"
+	    fi
+
+
+	    # In the future we might want to enable the configure option
+	    #  --with-systemdsystemunitdir=DIR, so that users can specify
+	    # at configure time the directory to install the .service files.
+	    # https://www.freedesktop.org/software/systemd/man/daemon.html#Installing%20Systemd%20Service%20Files
+
+	    #AC_CACHE_CHECK([for systemd system unit dir],
+	    #		[_cv_systemd_systemunitdir],
+	    #		[PKG_CHECK_VAR([SYSTEMD_SYSTEM_UNIT_DIR],
+	    #				[systemd],
+	    #				[systemdsystemunitdir],
+	    #				[_cv_systemd_systemunitdir=$SYSTEMD_SYSTEM_UNIT_DIR],
+	    #				[_cv_systemd_systemunitdir=no])])
+	fi
 
 
 
@@ -25229,6 +25471,8 @@ _ACEOF
   if test x$_libcurl_with = xno || test x$libcurl_cv_lib_curl_usable != xyes ; then
      # This is the IF-NO path
      :
+     { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: unable to locate/link against libcurl-devel installation" >&5
+$as_echo "$as_me: WARNING: unable to locate/link against libcurl-devel installation" >&2;}
   else
      # This is the IF-YES path
      :
@@ -25487,6 +25731,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${BUILD_RRD_TRUE}" && test -z "${BUILD_RRD_FALSE}"; then
   as_fn_error $? "conditional \"BUILD_RRD\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${HAVE_UCX_TRUE}" && test -z "${HAVE_UCX_FALSE}"; then
+  as_fn_error $? "conditional \"HAVE_UCX\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${HAVE_SOME_CURSES_TRUE}" && test -z "${HAVE_SOME_CURSES_FALSE}"; then

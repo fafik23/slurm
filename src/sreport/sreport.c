@@ -47,14 +47,17 @@
 #include "src/sreport/user_reports.h"
 #include "src/common/xsignal.h"
 #include "src/common/proc_args.h"
+#include "src/common/strlcpy.h"
 
 #define BUFFER_SIZE		4096
 #define OPT_LONG_LOCAL		0x101
+#define OPT_LONG_FEDR		0x102
 
 char *command_name;
 int exit_code;		/* sreport's exit code, =1 on any error at any time */
 int exit_flag;		/* program to terminate if =1 */
 char *fed_name = NULL;	/* Operating in federation mode */
+bool federation_flag;	/* --federation option */
 int input_words;	/* number of words of input permitted */
 bool local_flag;	/* --local option */
 int quiet_flag;		/* quiet=1, verbose=-1, normal=0 */
@@ -93,9 +96,10 @@ main (int argc, char **argv)
 	static struct option long_options[] = {
 		{"all_clusters", 0, 0, 'a'},
 		{"cluster",  1, 0, 'M'},
+		{"federation", no_argument, 0, OPT_LONG_FEDR},
 		{"help",     0, 0, 'h'},
 		{"immediate",0, 0, 'i'},
-		{"local",          no_argument,       0,    OPT_LONG_LOCAL},
+		{"local",    no_argument, 0, OPT_LONG_LOCAL},
 		{"noheader", 0, 0, 'n'},
 		{"parsable", 0, 0, 'p'},
 		{"parsable2",0, 0, 'P'},
@@ -111,6 +115,7 @@ main (int argc, char **argv)
 	command_name      = argv[0];
 	exit_code         = 0;
 	exit_flag         = 0;
+	federation_flag   = false;
 	input_field_count = 0;
 	local_flag        = false;
 	quiet_flag        = 0;
@@ -131,9 +136,16 @@ main (int argc, char **argv)
 	}
 	xfree(temp);
 
-	temp = getenv("SREPORT_CLUSTER");
-	if (temp)
+	if (slurmctld_conf.fed_params &&
+	    strstr(slurmctld_conf.fed_params, "fed_display"))
+		federation_flag = true;
+
+	if (getenv("SREPORT_CLUSTER")) {
 		cluster_flag = xstrdup(optarg);
+		local_flag = true;
+	}
+	if (getenv("SREPORT_FEDERATION"))
+		federation_flag = true;
 	if (getenv("SREPORT_LOCAL"))
 		local_flag = true;
 	temp = getenv("SREPORT_TRES");
@@ -155,11 +167,15 @@ main (int argc, char **argv)
 		case (int)'a':
 			all_clusters_flag = 1;
 			break;
+		case OPT_LONG_FEDR:
+			federation_flag = true;
+			break;
 		case OPT_LONG_LOCAL:
 			local_flag = true;
 			break;
 		case (int) 'M':
 			cluster_flag = xstrdup(optarg);
+			federation_flag = true;
 			break;
 		case (int)'n':
 			print_fields_have_header = 0;
@@ -223,7 +239,8 @@ main (int argc, char **argv)
 		}
 	}
 
-	if (!all_clusters_flag && !cluster_flag && !local_flag)
+	if (federation_flag && !all_clusters_flag && !cluster_flag &&
+	    !local_flag)
 		cluster_flag = _build_cluster_string();
 
 	my_uid = getuid();
@@ -274,7 +291,7 @@ static char *_build_cluster_string(void)
 	char *cluster_str = NULL;
 	slurmdb_federation_rec_t *fed = NULL;
 	slurmdb_federation_cond_t fed_cond;
-	List fed_list;
+	List fed_list = NULL;
 	List cluster_list = list_create(NULL);
 
 	list_append(cluster_list, slurmctld_conf.cluster_name);
@@ -291,6 +308,7 @@ static char *_build_cluster_string(void)
 	}
 	slurm_destroy_federation_rec(fed);
 	FREE_NULL_LIST(cluster_list);
+	FREE_NULL_LIST(fed_list);
 
 	return cluster_str;
 }
@@ -362,7 +380,8 @@ static char *_getline(const char *prompt)
 	line = malloc(len * sizeof(char));
 	if (!line)
 		return NULL;
-	return strncpy(line, buf, len);
+	strlcpy(line, buf, len);
+	return line;
 }
 #endif
 
@@ -812,6 +831,7 @@ void _usage (void) {
 sreport [<OPTION>] [<COMMAND>]                                             \n\
     Valid <OPTION> values are:                                             \n\
      -a or --all_clusters: Use all clusters instead of current             \n\
+     --federation: Generate reports for the federation if a member of one  \n\
      -h or --help: equivalent to \"help\" command                          \n\
      --local: Report local cluster, even when in federation of clusters    \n\
      -n or --noheader: equivalent to \"noheader\" command                  \n\

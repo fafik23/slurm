@@ -168,6 +168,7 @@ int	bg_recover = DEFAULT_RECOVER;
 uint32_t cluster_cpus = 0;
 time_t	last_proc_req_start = 0;
 bool	ping_nodes_now = false;
+pthread_cond_t purge_thread_cond = PTHREAD_COND_INITIALIZER;
 int	sched_interval = 60;
 slurmctld_config_t slurmctld_config;
 diag_stats_t slurmctld_diag_stats;
@@ -188,6 +189,7 @@ static time_t	next_stats_reset = 0;
 static int	new_nice = 0;
 static char	node_name_short[MAX_SLURM_NAME];
 static char	node_name_long[MAX_SLURM_NAME];
+static pthread_mutex_t purge_thread_lock = PTHREAD_MUTEX_INITIALIZER;
 static int	recover   = DEFAULT_RECOVER;
 static pthread_mutex_t sched_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t server_thread_cond = PTHREAD_COND_INITIALIZER;
@@ -209,6 +211,7 @@ static int          _accounting_mark_all_nodes_down(char *reason);
 static void *       _assoc_cache_mgr(void *no_data);
 static void         _become_slurm_user(void);
 static void         _default_sigaction(int sig);
+static void         _get_fed_updates();
 static void         _init_config(void);
 static void         _init_pidfile(void);
 static void         _kill_old_slurmctld(void);
@@ -232,6 +235,7 @@ static void         _test_thread_limit(void);
 inline static void  _update_cred_key(void);
 static bool	    _verify_clustername(void);
 static void	    _create_clustername_file(void);
+static void *       _purge_files_thread(void *no_data);
 static void         _update_nice(void);
 inline static void  _usage(char *prog_name);
 static bool         _valid_controller(void);
@@ -243,6 +247,7 @@ int main(int argc, char **argv)
 	int cnt, error_code, i;
 	pthread_attr_t thread_attr;
 	struct stat stat_buf;
+	struct rlimit rlim;
 	/* Locks: Write configuration, job, node, and partition */
 	slurmctld_lock_t config_write_lock = {
 		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
@@ -284,7 +289,7 @@ int main(int argc, char **argv)
 
 	if (daemonize) {
 		slurmctld_config.daemonize = 1;
-		if (daemon(1, 1))
+		if (xdaemon())
 			error("daemon(): %m");
 		log_set_timefmt(slurmctld_conf.log_fmt);
 		log_alter(log_opts, LOG_DAEMON,
@@ -301,11 +306,14 @@ int main(int argc, char **argv)
 	 * (init_pidfile() exits if it can't initialize pid file).
 	 * On Linux we also need to make this setuid job explicitly
 	 * able to write a core dump.
-	 * This also has to happen after daemon(), which closes all fd's,
-	 * so we keep the write lock of the pidfile.
 	 */
 	_init_pidfile();
 	_become_slurm_user();
+
+	/*
+	 * Create StateSaveLocation directory if necessary.
+	 */
+	set_slurmctld_state_loc();
 
 	if (create_clustername_file)
 		_create_clustername_file();
@@ -337,10 +345,10 @@ int main(int argc, char **argv)
 		debug ("Unable to set dumpable to 1");
 #endif /* PR_SET_DUMPABLE */
 
-	/*
-	 * Create StateSaveLocation directory if necessary.
-	 */
-	set_slurmctld_state_loc();
+	/* Warn if the stack size is not unlimited */
+	if ((getrlimit(RLIMIT_STACK, &rlim) == 0) &&
+	    (rlim.rlim_cur != RLIM_INFINITY))
+		info("Stack size set to %ld", rlim.rlim_max);
 
 	test_core_limit();
 	_test_thread_limit();
@@ -584,6 +592,18 @@ int main(int argc, char **argv)
 		start_power_mgr(&slurmctld_config.thread_id_power);
 
 		/*
+		 * create attached thread for purging completed job files
+		 */
+		slurm_attr_init(&thread_attr);
+		while (pthread_create(&slurmctld_config.thread_id_purge_files,
+				      &thread_attr, _purge_files_thread,
+				      NULL)) {
+			error("pthread_create error %m");
+			sleep(1);
+		}
+		slurm_attr_destroy(&thread_attr);
+
+		/*
 		 * process slurm background activities, could run as pthread
 		 */
 		_slurmctld_background(NULL);
@@ -593,9 +613,12 @@ int main(int argc, char **argv)
 		slurm_priority_fini();
 		slurmctld_plugstack_fini();
 		shutdown_state_save();
+		slurm_cond_signal(&purge_thread_cond); /* wake up last time */
+		pthread_join(slurmctld_config.thread_id_purge_files, NULL);
 		pthread_join(slurmctld_config.thread_id_sig,  NULL);
 		pthread_join(slurmctld_config.thread_id_rpc,  NULL);
 		pthread_join(slurmctld_config.thread_id_save, NULL);
+		slurmctld_config.thread_id_purge_files = (pthread_t) 0;
 		slurmctld_config.thread_id_sig  = (pthread_t) 0;
 		slurmctld_config.thread_id_rpc  = (pthread_t) 0;
 		slurmctld_config.thread_id_save = (pthread_t) 0;
@@ -835,7 +858,7 @@ static void *_slurmctld_signal_hand(void *no_data)
 {
 	int sig;
 	int i, rc;
-	int sig_array[] = {SIGINT, SIGTERM, SIGHUP, SIGABRT, 0};
+	int sig_array[] = {SIGINT, SIGTERM, SIGHUP, SIGABRT, SIGUSR2, 0};
 	sigset_t set;
 
 #if HAVE_SYS_PRCTL_H
@@ -872,6 +895,10 @@ static void *_slurmctld_signal_hand(void *no_data)
 			slurmctld_shutdown();
 			dump_core = true;
 			return NULL;
+		case SIGUSR2:
+			info("Logrotate signal (SIGUSR2) received");
+			update_logging();
+			break;
 		default:
 			error("Invalid signal (%d) received", sig);
 		}
@@ -1656,7 +1683,6 @@ static void *_slurmctld_background(void *no_data)
 	static time_t last_reboot_msg_time;
 	time_t now;
 	int no_resp_msg_interval, ping_interval, purge_job_interval;
-	int group_time, group_force;
 	int i;
 	uint32_t job_limit;
 	DEF_TIMERS;
@@ -1865,17 +1891,13 @@ static void *_slurmctld_background(void *no_data)
 		/* Process any pending agent work */
 		agent_trigger(RPC_RETRY_INTERVAL, true);
 
-		group_time  = slurmctld_conf.group_info & GROUP_TIME_MASK;
-		if (group_time &&
-		    (difftime(now, last_group_time) >= group_time)) {
-			if (slurmctld_conf.group_info & GROUP_FORCE)
-				group_force = 1;
-			else
-				group_force = 0;
+		if (slurmctld_conf.group_time &&
+		    (difftime(now, last_group_time)
+		     >= slurmctld_conf.group_time)) {
 			now = time(NULL);
 			last_group_time = now;
 			lock_slurmctld(part_write_lock);
-			load_part_uid_allow_list(group_force);
+			load_part_uid_allow_list(slurmctld_conf.group_force);
 			unlock_slurmctld(part_write_lock);
 		}
 
@@ -2070,9 +2092,7 @@ extern void ctld_assoc_mgr_init(slurm_trigger_callbacks_t *callbacks)
 	}
 
 	/* Now load the usage from a flat file since it isn't kept in
-	   the database No need to check for an error since if this
-	   fails we will get an error message and we will go on our
-	   way.  If we get an error we can't do anything about it.
+	   the database
 	*/
 	load_assoc_usage(slurmctld_conf.state_save_location);
 	load_qos_usage(slurmctld_conf.state_save_location);
@@ -2331,7 +2351,7 @@ static void _parse_commandline(int argc, char **argv)
 	bool bg_recover_override = 0;
 
 	opterr = 0;
-	while ((c = getopt(argc, argv, "BcdDf:hL:n:rRvV")) != -1)
+	while ((c = getopt(argc, argv, "BcdDf:hiL:n:rRvV")) != -1)
 		switch (c) {
 		case 'B':
 			bg_recover = 0;
@@ -2354,6 +2374,9 @@ static void _parse_commandline(int argc, char **argv)
 		case 'h':
 			_usage(argv[0]);
 			exit(0);
+			break;
+		case 'i':
+			ignore_state_errors = true;
 			break;
 		case 'L':
 			xfree(debug_logfile);
@@ -2525,8 +2548,14 @@ void update_logging(void)
 
 	if (daemonize) {
 		log_opts.stderr_level = LOG_LEVEL_QUIET;
-		if (slurmctld_conf.slurmctld_logfile)
+		if (!slurmctld_conf.slurmctld_logfile &&
+		    (slurmctld_conf.slurmctld_syslog_debug == LOG_LEVEL_QUIET)){
+			/* Insure fatal errors get logged somewhere */
 			log_opts.syslog_level = LOG_LEVEL_FATAL;
+		} else {
+			log_opts.syslog_level =
+				slurmctld_conf.slurmctld_syslog_debug;
+		}
 	} else
 		log_opts.syslog_level = LOG_LEVEL_QUIET;
 
@@ -2534,6 +2563,8 @@ void update_logging(void)
 		  slurmctld_conf.slurmctld_logfile);
 
 	log_set_timefmt(slurmctld_conf.log_fmt);
+
+	debug("Log file re-opened");
 
 	/*
 	 * SchedLogLevel restore
@@ -2608,8 +2639,8 @@ static bool _verify_clustername(void)
 			      "StateSaveLocation WILL CAUSE CORRUPTION.\n"
 			      "Remove %s to override this safety check if "
 			      "this is intentional (e.g., the ClusterName "
-			      "has changed).", name,
-			      slurmctld_conf.cluster_name, filename);
+			      "has changed).", slurmctld_conf.cluster_name,
+			      name, filename);
 			exit(1);
 		}
 	} else if (slurmctld_conf.cluster_name)
@@ -2728,8 +2759,10 @@ static void *_assoc_cache_mgr(void *no_data)
 			slurm_mutex_unlock(&assoc_cache_mutex);
 			return NULL;
 		}
-		/* Make sure not to have job_write_lock or assoc_mgr locks when
-		 * refresh_lists is called or you may get deadlock.
+		/*
+		 * Make sure not to have the job_write_lock, assoc_mgr or the
+		 * slurmdbd_lock locked when refresh_lists is called or you may
+		 * get deadlock.
 		 */
 		assoc_mgr_refresh_lists(acct_db_conn, 0);
 		if (g_tres_count != slurmctld_tres_cnt) {
@@ -2847,6 +2880,8 @@ end_it:
 	/* This needs to be after the lock and after we update the
 	   jobs so if we need to send them we are set. */
 	_accounting_cluster_ready();
+	_get_fed_updates();
+
 	return NULL;
 }
 
@@ -3015,4 +3050,81 @@ static void  _set_work_dir(void)
 		} else
 			info("chdir to /var/tmp");
 	}
+}
+
+/*
+ * _purge_files_thread - separate thread to remove job batch/environ files
+ * from the state directory. Runs async from purge_old_jobs to avoid
+ * holding locks while the files are removed, which can cause performance
+ * problems under high throughput conditions.
+ *
+ * Uses the purge_cond to wakeup on demand, then works through the global
+ * purge_files_list of job_ids and removes their files.
+ */
+static void *_purge_files_thread(void *no_data)
+{
+	int *job_id;
+
+	/*
+	 * Use the purge_files_list as a queue. _delete_job_details()
+	 * in job_mgr.c always enqueues (at the end), while
+	 *_purge_files_thread consumes off the front.
+	 *
+	 * There is a potential race condition if the job numbers have
+	 * wrapped between _purge_thread removing the state files and
+	 * get_next_job_id trying to re-assign it. This is mitigated
+	 * the the call to _dup_job_file_test() in job_mgr.c ensuring
+	 * there is no existing directory for an id before assigning it.
+	 */
+
+	/*
+	 * pthread_cond_wait requires a lock to release and reclaim.
+	 * the List structure is already handling locking for itself,
+	 * so this lock isn't actually useful, and the thread calling
+	 * pthread_cond_signal isn't required to have the lock. So
+	 * lock it once and hold it until slurmctld shuts down.
+	 */
+	slurm_mutex_lock(&purge_thread_lock);
+	while (!slurmctld_config.shutdown_time) {
+		slurm_cond_wait(&purge_thread_cond, &purge_thread_lock);
+		debug2("%s: starting, %d jobs to purge", __func__,
+		       list_count(purge_files_list));
+
+		/*
+		 * Use list_dequeue here (instead of list_flush) as it will not
+		 * hold up the list lock when we try to enqueue jobs that need
+		 * to be freed.
+		 */
+		while ((job_id = list_dequeue(purge_files_list))) {
+			debug2("%s: purging files from job %d",
+			       __func__, *job_id);
+			delete_job_desc_files(*job_id);
+			xfree(job_id);
+		}
+	}
+	slurm_mutex_unlock(&purge_thread_lock);
+	return NULL;
+}
+
+static void _get_fed_updates()
+{
+	List fed_list = NULL;
+	slurmdb_update_object_t update = {0};
+	slurmdb_federation_cond_t fed_cond;
+
+	slurmdb_init_federation_cond(&fed_cond, 0);
+	fed_cond.cluster_list = list_create(NULL);
+	list_append(fed_cond.cluster_list, slurmctld_conf.cluster_name);
+
+	fed_list = acct_storage_g_get_federations(acct_db_conn,
+						  slurmctld_conf.slurm_user_id,
+						  &fed_cond);
+	FREE_NULL_LIST(fed_cond.cluster_list);
+
+	if (fed_list) {
+		update.objects = fed_list;
+		fed_mgr_update_feds(&update);
+	}
+
+	FREE_NULL_LIST(fed_list);
 }

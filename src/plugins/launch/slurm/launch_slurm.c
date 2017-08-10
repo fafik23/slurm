@@ -1,7 +1,7 @@
 /*****************************************************************************\
  *  launch_slurm.c - Define job launch using slurm.
  *****************************************************************************
- *  Copyright (C) 2012 SchedMD LLC
+ *  Copyright (C) 2012-2017 SchedMD LLC
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
@@ -46,6 +46,7 @@
 #include "src/common/slurm_xlator.h"
 #include "src/api/pmi_server.h"
 #include "src/srun/libsrun/allocate.h"
+#include "src/srun/libsrun/fname.h"
 #include "src/srun/libsrun/launch.h"
 #include "src/srun/libsrun/multi_prog.h"
 
@@ -91,8 +92,9 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 static srun_job_t *local_srun_job = NULL;
 static uint32_t *local_global_rc = NULL;
 static pthread_mutex_t launch_lock = PTHREAD_MUTEX_INITIALIZER;
+static opt_t *opt_save = NULL;
 
-static task_state_t task_state;
+static List task_state_list = NULL;
 static time_t launch_start_time;
 static bool retry_step_begin = false;
 static int  retry_step_cnt = 0;
@@ -103,12 +105,12 @@ extern char **environ;
 static char *_hostset_to_string(hostset_t hs)
 {
 	size_t n = 1024;
-	size_t maxsize = 1024*64;
+	size_t maxsize = 1024 * 64;
 	char *str = NULL;
 
 	do {
 		str = xrealloc(str, n);
-	} while (hostset_ranged_string(hs, n*=2, str) < 0 && (n < maxsize));
+	} while ((hostset_ranged_string(hs, n*=2, str) < 0) && (n < maxsize));
 
 	/*
 	 *  If string was truncated, indicate this with a '+' suffix.
@@ -184,8 +186,8 @@ static char *_task_array_to_string(int ntasks, uint32_t taskids[])
 	return str;
 }
 
-static void _update_task_exit_state(
-	uint32_t ntasks, uint32_t taskids[], int abnormal)
+static void _update_task_exit_state(task_state_t task_state, uint32_t ntasks,
+				    uint32_t *taskids, int abnormal)
 {
 	int i;
 	task_state_type_t t = abnormal ? TS_ABNORMAL_EXIT : TS_NORMAL_EXIT;
@@ -196,20 +198,20 @@ static void _update_task_exit_state(
 
 static int _kill_on_bad_exit(void)
 {
-	if (opt.kill_bad_exit == NO_VAL)
+	if (!opt_save || opt_save->kill_bad_exit == NO_VAL)
 		return slurm_get_kill_on_bad_exit();
-	return opt.kill_bad_exit;
+	return opt_save->kill_bad_exit;
 }
 
 static void _setup_max_wait_timer(void)
 {
 	/*  If these are the first tasks to finish we need to
 	 *   start a timer to kill off the job step if the other
-	 *   tasks don't finish within opt.max_wait seconds.
+	 *   tasks don't finish within opt_save->max_wait seconds.
 	 */
-	verbose("First task exited. Terminating job in %ds.", opt.max_wait);
+	verbose("First task exited. Terminating job in %ds",opt_save->max_wait);
 	srun_max_timer = true;
-	alarm(opt.max_wait);
+	alarm(opt_save->max_wait);
 }
 
 static const char *_taskstr(int n)
@@ -220,12 +222,11 @@ static const char *_taskstr(int n)
 		return "tasks";
 }
 
-static int
-_is_openmpi_port_error(int errcode)
+static int _is_openmpi_port_error(int errcode)
 {
 	if (errcode != OPEN_MPI_PORT_ERROR)
 		return 0;
-	if (opt.resv_port_cnt == NO_VAL)
+	if (opt_save && (opt_save->resv_port_cnt == NO_VAL))
 		return 0;
 	if (difftime(time(NULL), launch_start_time) > slurm_get_msg_timeout())
 		return 0;
@@ -258,33 +259,49 @@ _handle_openmpi_port_error(const char *tasks, const char *hosts,
 static void _task_start(launch_tasks_response_msg_t *msg)
 {
 	MPIR_PROCDESC *table;
-	int taskid;
+	int task_id;
 	int i;
+	task_state_t task_state;
 
-	if (msg->count_of_pids)
+	if (msg->count_of_pids) {
 		verbose("Node %s, %d tasks started",
 			msg->node_name, msg->count_of_pids);
-	else
-		/* This message should be displayed through the api,
-		   hense it is a debug2 instead of an error.
-		*/
+	} else {
+		/*
+		 * This message should be displayed through the API,
+		 * hence it is a debug2() instead of error().
+		 */
 		debug2("No tasks started on node %s: %s",
-		      msg->node_name, slurm_strerror(msg->return_code));
+		       msg->node_name, slurm_strerror(msg->return_code));
+	}
 
-
+	task_state = task_state_find(msg->job_id, msg->step_id, NO_VAL,
+				     task_state_list);
+	if (!task_state) {
+		error("%s: Could not locate task state for step %u.%u",
+		      __func__, msg->job_id, msg->step_id);
+	}
 	for (i = 0; i < msg->count_of_pids; i++) {
-		taskid = msg->task_ids[i];
-		table = &MPIR_proctable[taskid];
+		task_id = msg->task_ids[i];
+		if (task_id >= MPIR_proctable_size) {
+			error("%s: task_id too large (%d >= %d)", __func__,
+			      task_id, MPIR_proctable_size);
+			continue;
+		}
+		table = &MPIR_proctable[task_id];
 		table->host_name = xstrdup(msg->node_name);
 		/* table->executable_name is set elsewhere */
 		table->pid = msg->local_pids[i];
 
-		if (msg->return_code == 0) {
-			task_state_update(task_state,
-					  taskid, TS_START_SUCCESS);
+		if (!task_state) {
+			error("%s: Could not update task state for task ID %u",
+			      __func__, task_id);
+		} else if (msg->return_code == 0) {
+			task_state_update(task_state, task_id,
+					  TS_START_SUCCESS);
 		} else {
-			task_state_update(task_state,
-					  taskid, TS_START_FAILURE);
+			task_state_update(task_state, task_id,
+					  TS_START_FAILURE);
 		}
 	}
 
@@ -298,7 +315,7 @@ static void _task_finish(task_exit_msg_t *msg)
 	int normal_exit = 0;
 	static int reduce_task_exit_msg = -1;
 	static int msg_printed = 0, oom_printed = 0, last_task_exit_rc;
-
+	task_state_t task_state;
 	const char *task_str = _taskstr(msg->num_tasks);
 
 	if (reduce_task_exit_msg == -1) {
@@ -342,7 +359,8 @@ static void _task_finish(task_exit_msg_t *msg)
 	slurm_mutex_lock(&launch_lock);
 	if ((msg->return_code & 0xff) == SIG_OOM) {
 		if (!oom_printed)
-			error("%s: %s %s: Out Of Memory", hosts, task_str, tasks);
+			error("%s: %s %s: Out Of Memory", hosts, task_str,
+			     tasks);
 		oom_printed = 1;
 		*local_global_rc = msg->return_code;
 	} else if (WIFEXITED(msg->return_code)) {
@@ -386,13 +404,22 @@ static void _task_finish(task_exit_msg_t *msg)
 	xfree(tasks);
 	xfree(hosts);
 
-	_update_task_exit_state(msg->num_tasks, msg->task_id_list,
-				!normal_exit);
+	task_state = task_state_find(msg->job_id, msg->step_id, NO_VAL,
+				     task_state_list);
+	if (task_state) {
+		_update_task_exit_state(task_state, msg->num_tasks,
+					msg->task_id_list, !normal_exit);
+	} else {
+		error("%s: Could not find task state for step %u.%u", __func__,
+		      msg->job_id, msg->step_id);
+	}
 
-	if (task_state_first_abnormal_exit(task_state) && _kill_on_bad_exit())
+	if (task_state_first_abnormal_exit(task_state_list) &&
+	    _kill_on_bad_exit())
 		_step_signal(SIG_TERM_KILL);
 
-	if (task_state_first_exit(task_state) && (opt.max_wait > 0))
+	if (task_state_first_exit(task_state_list) && opt_save &&
+	    (opt_save->max_wait > 0))
 		_setup_max_wait_timer();
 
 	last_task_exit_rc = msg->return_code;
@@ -457,34 +484,37 @@ extern int init(void)
  */
 extern int fini(void)
 {
-	task_state_destroy(task_state);
+	FREE_NULL_LIST(task_state_list);
 
 	return SLURM_SUCCESS;
 }
 
-extern int launch_p_setup_srun_opt(char **rest)
+extern int launch_p_setup_srun_opt(char **rest, opt_t *opt_local)
 {
-	if (opt.debugger_test && opt.parallel_debug)
+	if (opt_local->debugger_test && opt_local->parallel_debug)
 		MPIR_being_debugged  = 1;
 
 	/* We need to do +2 here just in case multi-prog is needed (we
 	   add an extra argv on so just make space for it).
 	*/
-	opt.argv = (char **) xmalloc((opt.argc + 2) * sizeof(char *));
+	opt_local->argv = (char **) xmalloc((opt_local->argc + 2) *
+					    sizeof(char *));
 
 	return 0;
 }
 
-extern int launch_p_handle_multi_prog_verify(int command_pos)
+extern int launch_p_handle_multi_prog_verify(int command_pos, opt_t *opt_local)
 {
-	if (opt.multi_prog) {
-		if (opt.argc < 1) {
+	if (opt_local->multi_prog) {
+		if (opt_local->argc < 1) {
 			error("configuration file not specified");
 			exit(error_exit);
 		}
-		_load_multi(&opt.argc, opt.argv);
-		if (verify_multi_name(opt.argv[command_pos], &opt.ntasks,
-				      &opt.ntasks_set, &opt.multi_prog_cmds))
+		_load_multi(&opt_local->argc, opt_local->argv);
+		if (verify_multi_name(opt_local->argv[command_pos],
+				      &opt_local->ntasks,
+				      &opt_local->ntasks_set,
+				      &opt_local->multi_prog_cmds))
 			exit(error_exit);
 		return 1;
 	} else
@@ -493,11 +523,12 @@ extern int launch_p_handle_multi_prog_verify(int command_pos)
 
 extern int launch_p_create_job_step(srun_job_t *job, bool use_all_cpus,
 				    void (*signal_function)(int),
-				    sig_atomic_t *destroy_job)
+				    sig_atomic_t *destroy_job, opt_t *opt_local,
+				    int pack_offset)
 {
 	if (launch_common_create_job_step(job, use_all_cpus,
-					  signal_function,
-					  destroy_job) != SLURM_SUCCESS)
+					  signal_function, destroy_job,
+					  opt_local) != SLURM_SUCCESS)
 		return SLURM_ERROR;
 
 	/* set the jobid for totalview */
@@ -509,14 +540,14 @@ extern int launch_p_create_job_step(srun_job_t *job, bool use_all_cpus,
 	return SLURM_SUCCESS;
 }
 
-static char **_build_user_env(void)
+static char **_build_user_env(opt_t *opt_local)
 {
 	char **dest_array = NULL;
 	char *tmp_env, *tok, *save_ptr = NULL, *eq_ptr, *value;
 	bool all;
 
 	all = false;
-	tmp_env = xstrdup(opt.export_env);
+	tmp_env = xstrdup(opt_local->export_env);
 	tok = strtok_r(tmp_env, ",", &save_ptr);
 	while (tok) {
 
@@ -540,79 +571,103 @@ static char **_build_user_env(void)
 	xfree(tmp_env);
 
 	if (all)
-		env_array_merge(&dest_array, (const char **)environ);
+		env_array_merge(&dest_array, (const char **) environ);
 	else
-		env_array_merge_slurm(&dest_array, (const char **)environ);
+		env_array_merge_slurm(&dest_array, (const char **) environ);
 
 	return dest_array;
 }
 
-extern int launch_p_step_launch(
-	srun_job_t *job, slurm_step_io_fds_t *cio_fds, uint32_t *global_rc,
-	slurm_step_launch_callbacks_t *step_callbacks)
+static void _task_state_del(void *x)
+{
+	task_state_t task_state = (task_state_t) x;
+
+	task_state_destroy(task_state);
+}
+
+extern int launch_p_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
+				uint32_t *global_rc,
+				slurm_step_launch_callbacks_t *step_callbacks,
+				opt_t *opt_local)
 {
 	slurm_step_launch_params_t launch_params;
 	slurm_step_launch_callbacks_t callbacks;
-	int rc = 0;
-	bool first_launch = 0;
+	int i, rc = 0;
+	task_state_t task_state;
+	bool first_launch = false;
 
 	slurm_step_launch_params_t_init(&launch_params);
 	memcpy(&callbacks, step_callbacks, sizeof(callbacks));
 
+	task_state = task_state_find(job->jobid, job->stepid, job->pack_offset,
+				     task_state_list);
 	if (!task_state) {
-		task_state = task_state_create(job->ntasks);
+		task_state = task_state_create(job->jobid, job->stepid,
+					       job->pack_offset, job->ntasks);
 		local_srun_job = job;
 		local_global_rc = global_rc;
 		*local_global_rc = NO_VAL;
-		first_launch = 1;
-	} else
+		if (!task_state_list)
+			task_state_list = list_create(_task_state_del);
+		list_append(task_state_list, task_state);
+		first_launch = true;
+	} else {
+		/* Launching extra POE tasks */
 		task_state_alter(task_state, job->ntasks);
+	}
 
-	launch_params.gid = opt.gid;
+	launch_params.gid = opt_local->gid;
 	launch_params.alias_list = job->alias_list;
-	launch_params.argc = opt.argc;
-	launch_params.argv = opt.argv;
-	launch_params.multi_prog = opt.multi_prog ? true : false;
-	launch_params.cwd = opt.cwd;
-	launch_params.slurmd_debug = opt.slurmd_debug;
-	launch_params.buffered_stdio = !opt.unbuffered;
-	launch_params.labelio = opt.labelio ? true : false;
+	launch_params.argc = opt_local->argc;
+	launch_params.argv = opt_local->argv;
+	launch_params.multi_prog = opt_local->multi_prog ? true : false;
+	launch_params.cwd = opt_local->cwd;
+	launch_params.slurmd_debug = opt_local->slurmd_debug;
+	launch_params.buffered_stdio = !opt_local->unbuffered;
+	launch_params.labelio = opt_local->labelio ? true : false;
 	launch_params.remote_output_filename =fname_remote_string(job->ofname);
 	launch_params.remote_input_filename = fname_remote_string(job->ifname);
 	launch_params.remote_error_filename = fname_remote_string(job->efname);
+	launch_params.pack_offset = job->pack_offset;
+	if (opt_local->pack_grp_bits) {
+		i = bit_ffs(opt_local->pack_grp_bits);
+		if (i >= 0)
+			launch_params.pack_offset = i;
+	}
 	launch_params.partition = job->partition;
-	launch_params.profile = opt.profile;
-	launch_params.task_prolog = opt.task_prolog;
-	launch_params.task_epilog = opt.task_epilog;
-	launch_params.cpu_bind = opt.cpu_bind;
-	launch_params.cpu_bind_type = opt.cpu_bind_type;
-	launch_params.mem_bind = opt.mem_bind;
-	launch_params.mem_bind_type = opt.mem_bind_type;
-	launch_params.accel_bind_type = opt.accel_bind_type;
-	launch_params.open_mode = opt.open_mode;
-	if (opt.acctg_freq >= 0)
-		launch_params.acctg_freq = opt.acctg_freq;
-	launch_params.pty = opt.pty;
-	if (opt.cpus_set)
-		launch_params.cpus_per_task	= opt.cpus_per_task;
+	launch_params.profile = opt_local->profile;
+	launch_params.task_prolog = opt_local->task_prolog;
+	launch_params.task_epilog = opt_local->task_epilog;
+	launch_params.cpu_bind = opt_local->cpu_bind;
+	launch_params.cpu_bind_type = opt_local->cpu_bind_type;
+	launch_params.mem_bind = opt_local->mem_bind;
+	launch_params.mem_bind_type = opt_local->mem_bind_type;
+	launch_params.accel_bind_type = opt_local->accel_bind_type;
+	launch_params.open_mode = opt_local->open_mode;
+	if (opt_local->acctg_freq)
+		launch_params.acctg_freq = opt_local->acctg_freq;
+	launch_params.pty = opt_local->pty;
+	if (opt_local->cpus_set)
+		launch_params.cpus_per_task	= opt_local->cpus_per_task;
 	else
 		launch_params.cpus_per_task	= 1;
-	launch_params.cpu_freq_min      = opt.cpu_freq_min;
-	launch_params.cpu_freq_max      = opt.cpu_freq_max;
-	launch_params.cpu_freq_gov      = opt.cpu_freq_gov;
-	launch_params.task_dist         = opt.distribution;
-	launch_params.ckpt_dir		= opt.ckpt_dir;
-	launch_params.restart_dir       = opt.restart_dir;
-	launch_params.preserve_env      = opt.preserve_env;
-	launch_params.spank_job_env     = opt.spank_job_env;
-	launch_params.spank_job_env_size = opt.spank_job_env_size;
-	launch_params.user_managed_io   = opt.user_managed_io;
-	launch_params.ntasks_per_board  = job->ntasks_per_board;
-	launch_params.ntasks_per_core   = job->ntasks_per_core;
-	launch_params.ntasks_per_socket = job->ntasks_per_socket;
+	launch_params.cpu_freq_min       = opt_local->cpu_freq_min;
+	launch_params.cpu_freq_max       = opt_local->cpu_freq_max;
+	launch_params.cpu_freq_gov       = opt_local->cpu_freq_gov;
+	launch_params.task_dist          = opt_local->distribution;
+	launch_params.ckpt_dir		 = opt_local->ckpt_dir;
+	launch_params.restart_dir        = opt_local->restart_dir;
+	launch_params.preserve_env       = opt_local->preserve_env;
+	launch_params.spank_job_env      = opt_local->spank_job_env;
+	launch_params.spank_job_env_size = opt_local->spank_job_env_size;
+	launch_params.user_managed_io    = opt_local->user_managed_io;
+	launch_params.ntasks_per_board   = job->ntasks_per_board;
+	launch_params.ntasks_per_core    = job->ntasks_per_core;
+	launch_params.ntasks_per_socket  = job->ntasks_per_socket;
+	launch_params.no_alloc           = opt_local->no_alloc;
 
-	if (opt.export_env)
-		launch_params.env = _build_user_env();
+	if (opt_local->export_env)
+		launch_params.env = _build_user_env(opt_local);
 
 	memcpy(&launch_params.local_fds, cio_fds, sizeof(slurm_step_io_fds_t));
 
@@ -622,22 +677,32 @@ extern int launch_p_step_launch(
 	} else {
 		launch_params.parallel_debug = false;
 	}
-	/* Normally this isn't used, but if an outside process (other
-	   than srun (poe) is using this logic to launch tasks then we
-	   can use this to signal the step.
-	*/
+	/*
+	 * Normally this isn't used, but if an outside process (other
+	 * than srun (poe) is using this logic to launch tasks then we
+	 * can use this to signal the step.
+	 */
 	callbacks.task_start = _task_start;
-	/* If poe is using this code with multi-prog it always returns
-	   1 for each task which could be confusing since no real
-	   error happened.
-	*/
+	/*
+	 * If poe is using this code with multi-prog it always returns
+	 * 1 for each task which could be confusing since no real
+	 * error happened.
+	 */
 	if (!launch_params.multi_prog
 	    || (!callbacks.step_signal
 		|| (callbacks.step_signal == launch_g_fwd_signal))) {
 		callbacks.task_finish = _task_finish;
+		slurm_mutex_lock(&launch_lock);
+		if (!opt_save) {
+			/*
+			 * Save opt_local paramters since _task_finish()
+			 * will lack the values
+			 */
+			opt_save = xmalloc(sizeof(opt_t));
+			memcpy(opt_save, opt_local, sizeof(opt_t));
+		}
+		slurm_mutex_unlock(&launch_lock);
 	}
-
-	mpir_init(job->ntasks);
 
 	update_job_state(job, SRUN_JOB_LAUNCHING);
 	launch_start_time = time(NULL);
@@ -652,9 +717,9 @@ extern int launch_p_step_launch(
 			goto cleanup;
 		}
 	} else {
-		if (slurm_step_launch_add(job->step_ctx, &launch_params,
-					  job->nodelist, job->fir_nodeid)
-		    != SLURM_SUCCESS) {
+		if (slurm_step_launch_add(job->step_ctx, job->step_ctx,
+					  &launch_params, job->nodelist,
+					  job->fir_nodeid) != SLURM_SUCCESS) {
 			rc = errno;
 			*local_global_rc = errno;
 			error("Application launch add failed: %m");
@@ -669,14 +734,14 @@ extern int launch_p_step_launch(
 		update_job_state(job, SRUN_JOB_RUNNING);
 		/* Only set up MPIR structures if the step launched
 		 * correctly. */
-		if (opt.multi_prog)
+		if (opt_local->multi_prog)
 			mpir_set_multi_name(job->ntasks,
 					    launch_params.argv[0]);
 		else
 			mpir_set_executable_names(launch_params.argv[0]);
 		MPIR_debug_state = MPIR_DEBUG_SPAWNED;
 
-		if (opt.debugger_test)
+		if (opt_local->debugger_test)
 			mpir_dump_proctable();
 		else
 			MPIR_Breakpoint(job);
@@ -686,27 +751,26 @@ extern int launch_p_step_launch(
 	}
 
 cleanup:
-
 	return rc;
 }
 
-extern int launch_p_step_wait(srun_job_t *job, bool got_alloc)
+extern int launch_p_step_wait(srun_job_t *job, bool got_alloc, opt_t *opt_local,
+			      int pack_offset)
 {
 	int rc = 0;
 
+//FIXME-PACK: can we create multiple steps in a single RPC or use threads?
 	slurm_step_launch_wait_finish(job->step_ctx);
 	if ((MPIR_being_debugged == 0) && retry_step_begin &&
 	    (retry_step_cnt < MAX_STEP_RETRIES)) {
 		retry_step_begin = false;
 		slurm_step_ctx_destroy(job->step_ctx);
-		if (got_alloc) {
-			if (create_job_step(job, true) < 0)
-				exit(error_exit);
-		} else {
-			if (create_job_step(job, false) < 0)
-				exit(error_exit);
-		}
-		task_state_destroy(task_state);
+		if (got_alloc) 
+			rc = create_job_step(job, true, opt_local, pack_offset);
+		else
+			rc = create_job_step(job, false, opt_local,pack_offset);
+		if (rc < 0)
+			exit(error_exit);
 		rc = -1;
 	}
 	return rc;
@@ -740,7 +804,7 @@ static int _step_signal(int signal)
 
 extern void launch_p_print_status(void)
 {
-	task_state_print(task_state, (log_f)info);
+	task_state_print(task_state_list, (log_f)info);
 }
 
 extern void launch_p_fwd_signal(int signal)

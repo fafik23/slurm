@@ -549,16 +549,18 @@ static int _load_fed_parts(slurm_msg_t *req_msg,
 						    new_msg->last_update);
 			new_rec_cnt = orig_msg->record_count +
 				      new_msg->record_count;
-			orig_msg->partition_array = xrealloc(
-						orig_msg->partition_array,
-						sizeof(partition_info_t) *
-						new_rec_cnt);
-			(void) memcpy(orig_msg->partition_array +
-				      orig_msg->record_count,
-				      new_msg->partition_array,
-				      sizeof(partition_info_t) *
-				      new_msg->record_count);
-			orig_msg->record_count = new_rec_cnt;
+			if (new_msg->record_count) {
+				orig_msg->partition_array =
+					xrealloc(orig_msg->partition_array,
+						 sizeof(partition_info_t) *
+						 new_rec_cnt);
+				(void) memcpy(orig_msg->partition_array +
+					      orig_msg->record_count,
+					      new_msg->partition_array,
+					      sizeof(partition_info_t) *
+					      new_msg->record_count);
+				orig_msg->record_count = new_rec_cnt;
+			}
 			xfree(new_msg->partition_array);
 			xfree(new_msg);
 		}
@@ -598,8 +600,7 @@ extern int slurm_load_partitions(time_t update_time,
 		cluster_name = xstrdup(working_cluster_rec->name);
 	else
 		cluster_name = slurm_get_cluster_name();
-	if (!working_cluster_rec &&
-	    (show_flags & SHOW_GLOBAL) &&
+	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
 	    cluster_in_federation(ptr, cluster_name)) {
 		/* In federation. Need full info from all clusters */
@@ -608,7 +609,7 @@ extern int slurm_load_partitions(time_t update_time,
 	} else {
 		/* Report local cluster info only */
 		show_flags |= SHOW_LOCAL;
-		show_flags &= (~SHOW_GLOBAL);
+		show_flags &= (~SHOW_FEDERATION);
 	}
 
 	slurm_msg_t_init(&req_msg);
@@ -617,7 +618,7 @@ extern int slurm_load_partitions(time_t update_time,
 	req_msg.msg_type = REQUEST_PARTITION_INFO;
 	req_msg.data     = &req;
 
-	if (show_flags & SHOW_GLOBAL) {
+	if (show_flags & SHOW_FEDERATION) {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_parts(&req_msg, resp, show_flags, cluster_name,
 				     fed);

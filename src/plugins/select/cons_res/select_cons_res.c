@@ -194,6 +194,7 @@ static bool select_state_initializing = true;
 static int select_node_cnt = 0;
 static int preempt_reorder_cnt = 1;
 static bool preempt_strict_order = false;
+static int  bf_window_scale      = 0;
 
 struct select_nodeinfo {
 	uint16_t magic;		/* magic number */
@@ -416,13 +417,25 @@ static void _destroy_part_data(struct part_res_record *this_ptr)
 	}
 }
 
+static int _sort_part_prio(void *x, void *y)
+{
+	struct part_res_record *part1 = *(struct part_res_record **) x;
+	struct part_res_record *part2 = *(struct part_res_record **) y;
+
+	if (part1->part_ptr->priority_tier > part2->part_ptr->priority_tier)
+		return -1;
+	if (part1->part_ptr->priority_tier < part2->part_ptr->priority_tier)
+		return 1;
+	return 0;
+}
 
 /* (re)create the global select_part_record array */
 static void _create_part_data(void)
 {
+	List part_rec_list = NULL;
 	ListIterator part_iterator;
 	struct part_record *p_ptr;
-	struct part_res_record *this_ptr;
+	struct part_res_record *this_ptr, *last_ptr = NULL;
 	int num_parts;
 
 	_destroy_part_data(select_part_record);
@@ -433,11 +446,10 @@ static void _create_part_data(void)
 		return;
 	info("cons_res: preparing for %d partitions", num_parts);
 
-	select_part_record = xmalloc(sizeof(struct part_res_record));
-	this_ptr = select_part_record;
-
+	part_rec_list = list_create(NULL);
 	part_iterator = list_iterator_create(part_list);
 	while ((p_ptr = (struct part_record *) list_next(part_iterator))) {
+		this_ptr = xmalloc(sizeof(struct part_res_record));
 		this_ptr->part_ptr = p_ptr;
 		this_ptr->num_rows = p_ptr->max_share;
 		if (this_ptr->num_rows & SHARED_FORCE)
@@ -449,15 +461,22 @@ static void _create_part_data(void)
 			this_ptr->num_rows = 1;
 		/* we'll leave the 'row' array blank for now */
 		this_ptr->row = NULL;
-		num_parts--;
-		if (num_parts) {
-			this_ptr->next =xmalloc(sizeof(struct part_res_record));
-			this_ptr = this_ptr->next;
-		}
+		list_append(part_rec_list, this_ptr);
 	}
 	list_iterator_destroy(part_iterator);
 
-	/* should we sort the select_part_record list by priority here? */
+	/* Sort the select_part_records by priority */
+	list_sort(part_rec_list, _sort_part_prio);
+	part_iterator = list_iterator_create(part_rec_list);
+	while ((this_ptr = (struct part_res_record *)list_next(part_iterator))){
+		if (last_ptr)
+			last_ptr->next = this_ptr;
+		else
+			select_part_record = this_ptr;
+		last_ptr = this_ptr;
+	}
+	list_iterator_destroy(part_iterator);
+	list_destroy(part_rec_list);
 }
 
 
@@ -1927,7 +1946,10 @@ static int _will_run_test(struct job_record *job_ptr, bitstr_t *bitmap,
 			}
 			if (!last_job_ptr)	/* Should never happen */
 				break;
-			time_window *= 2;
+			if (bf_window_scale)
+				time_window += bf_window_scale;
+			else
+				time_window *= 2;
 			rc = cr_job_test(job_ptr, bitmap, min_nodes,
 					 max_nodes, req_nodes,
 					 SELECT_MODE_WILL_RUN, tmp_cr_type,
@@ -2120,6 +2142,16 @@ extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 			      preempt_reorder_cnt);
 		}
 	}
+        if (sched_params &&
+            (tmp_ptr = strstr(sched_params, "bf_window_linear="))) {
+		bf_window_scale = atoi(tmp_ptr + 17);
+		if (bf_window_scale <= 0) {
+			fatal("Invalid SchedulerParameters bf_window_linear: %d",
+			      bf_window_scale);
+		}
+	} else
+		bf_window_scale = 0;
+
 	if (sched_params && strstr(sched_params, "pack_serial_at_end"))
 		pack_serial_at_end = true;
 	else

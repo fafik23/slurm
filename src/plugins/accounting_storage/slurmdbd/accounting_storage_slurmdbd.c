@@ -185,6 +185,13 @@ static int _setup_job_start_msg(dbd_job_start_msg_t *req,
 	req->job_id        = job_ptr->job_id;
 	req->array_job_id  = job_ptr->array_job_id;
 	req->array_task_id = job_ptr->array_task_id;
+	if (job_ptr->pack_job_id) {
+		req->pack_job_id     = job_ptr->pack_job_id;
+		req->pack_job_offset = job_ptr->pack_job_offset;
+	} else {
+		//req->pack_job_id   = 0;
+		req->pack_job_offset = NO_VAL;
+	}
 
 	build_array_str(job_ptr);
 	if (job_ptr->array_recs && job_ptr->array_recs->task_id_str) {
@@ -2553,10 +2560,11 @@ extern int jobacct_storage_p_job_start(void *db_conn,
 	 */
 	if ((req.db_index && !IS_JOB_RESIZING(job_ptr))
 	    || (!req.db_index && IS_JOB_FINISHED(job_ptr))) {
-		/* This is to ensure we don't do this multiple times for the
-		   same job.  This can happen when an account is being
-		   deleted and hense the associations dealing with it.
-		*/
+		/*
+		 * This is to ensure we don't do this multiple times for the
+		 * same job.  This can happen when an account is being
+		 * deleted and hense the associations dealing with it.
+		 */
 		if (!req.db_index)
 			job_ptr->db_index = NO_VAL64;
 
@@ -2881,7 +2889,7 @@ extern List jobacct_storage_p_get_jobs_cond(void *db_conn, uid_t uid,
 	rc = slurm_send_recv_slurmdbd_msg(SLURM_PROTOCOL_VERSION, &req, &resp);
 
 	if (rc != SLURM_SUCCESS)
-		error("slurmdbd: DBD_GET_JOBS_COND failure: %m");
+		error("slurmdbd: DBD_GET_JOBS_COND failure: %s", slurm_strerror(rc));
 	else if (resp.msg_type == PERSIST_RC) {
 		persist_rc_msg_t *msg = resp.data;
 		if (msg->rc == SLURM_SUCCESS) {
@@ -3053,10 +3061,12 @@ extern int acct_storage_p_get_stats(void *db_conn, slurmdb_stats_rec_t **stats)
 			slurm_seterrno(msg->rc);
 			info("RC:%d %s", msg->rc, msg->comment);
 		}
+		rc = msg->rc;
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_STATS) {
 		error("slurmdbd: response type not DBD_GOT_STATS: %u",
 		      resp.msg_type);
+		rc = SLURM_ERROR;
 	} else {
 		*stats = (slurmdb_stats_rec_t *) resp.data;
 	}

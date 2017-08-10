@@ -78,6 +78,7 @@ typedef cpuset_t cpu_set_t;
 #include "src/common/plugrack.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/strlcpy.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/assoc_mgr.h"
@@ -1707,7 +1708,7 @@ extern int gres_gresid_to_gresname(uint32_t gres_id, char* gres_name,
 	while ((gres_slurmd_conf = (gres_slurmd_conf_t *) list_next(iter))) {
 		if (gres_slurmd_conf->plugin_id != gres_id)
 			continue;
-		strncpy(gres_name, gres_slurmd_conf->name, gres_name_len);
+		strlcpy(gres_name, gres_slurmd_conf->name, gres_name_len);
 		found = 1;
 		break;
 	}
@@ -2924,11 +2925,20 @@ static int _get_gres_req_cnt(
 		}
 
 		if (type && ((cnt == -1) || (type != num))) {
-			type[0] = '\0';
-			if (num && type != num)
+			char tmp_char = '\0';
+
+			if (num && type != num) {
+				tmp_char = num[0];
 				num[0] = '\0';
+			}
 			type++;
 			*type_out = xstrdup(type);
+			/*
+			 * Since we don't want to change the original char sent
+			 * in we want to set this back to the way it was.
+			 */
+			if (tmp_char)
+				num[0] = tmp_char;
 		}
 	} else {
 		/* Did not find this GRES name, check for zero value */
@@ -3044,7 +3054,7 @@ extern int gres_plugin_job_state_validate(char **req_config, List *gres_list)
 				break;
 			}
 			if (new_req_config != NULL)
-			    xstrcat(new_req_config, ",");
+				xstrcat(new_req_config, ",");
 			xstrcat(new_req_config, tok);
 			gres_ptr = xmalloc(sizeof(gres_state_t));
 			gres_ptr->plugin_id = gres_context[i].plugin_id;
@@ -3513,6 +3523,7 @@ static uint32_t _job_test(void *job_gres_data, void *node_gres_data,
 	uint32_t *cpus_avail = NULL;  /* CPUs initially avail from this GRES */
 	uint32_t cpu_cnt = 0;
 	bitstr_t *alloc_cpu_bitmap = NULL;
+	bitstr_t *avail_cpu_bitmap = NULL;
 
 	if (node_gres_ptr->no_consume)
 		use_total_gres = true;
@@ -3604,6 +3615,7 @@ static uint32_t _job_test(void *job_gres_data, void *node_gres_data,
 			bit_nset(alloc_cpu_bitmap, 0, cpus_ctld - 1);
 		}
 
+		avail_cpu_bitmap = bit_copy(alloc_cpu_bitmap);
 		cpus_addnt = xmalloc(sizeof(uint32_t)*node_gres_ptr->topo_cnt);
 		cpus_avail = xmalloc(sizeof(uint32_t)*node_gres_ptr->topo_cnt);
 		for (i = 0; i < node_gres_ptr->topo_cnt; i++) {
@@ -3679,6 +3691,9 @@ static uint32_t _job_test(void *job_gres_data, void *node_gres_data,
 				bit_or(alloc_cpu_bitmap,
 				       node_gres_ptr->
 				       topo_cpus_bitmap[top_inx]);
+				if (cpu_bitmap)
+					bit_and(alloc_cpu_bitmap,
+						avail_cpu_bitmap);
 			} else {
 				bit_and(alloc_cpu_bitmap,
 					node_gres_ptr->
@@ -3700,6 +3715,7 @@ static uint32_t _job_test(void *job_gres_data, void *node_gres_data,
 			}
 		}
 		FREE_NULL_BITMAP(alloc_cpu_bitmap);
+		FREE_NULL_BITMAP(avail_cpu_bitmap);
 		xfree(cpus_addnt);
 		xfree(cpus_avail);
 		return cpu_cnt;

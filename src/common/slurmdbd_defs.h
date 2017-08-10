@@ -269,6 +269,8 @@ typedef struct dbd_job_start_msg {
 	char *   nodes;		/* hosts allocated to the job */
 	char *   node_inx;      /* ranged bitmap string of hosts
 				 * allocated to the job */
+	uint32_t pack_job_id;	/* ID of pack job leader or 0 */
+	uint32_t pack_job_offset; /* Pack job component ID, zero-origin */
 	char *   partition;	/* partition job is running on */
 	uint32_t priority;	/* job priority */
 	uint32_t qos_id;        /* qos job is running with */
@@ -409,6 +411,9 @@ extern int slurm_open_slurmdbd_conn(const slurm_trigger_callbacks_t *callbacks);
 
 /* Close the SlurmDBD socket connection */
 extern int slurm_close_slurmdbd_conn(void);
+
+/* Return true if connection to slurmdbd is active, false otherwise. */
+extern bool slurmdbd_conn_active(void);
 
 /* Send an RPC to the SlurmDBD. Do not wait for the reply. The RPC
  * will be queued and processed later if the SlurmDBD is not responding.

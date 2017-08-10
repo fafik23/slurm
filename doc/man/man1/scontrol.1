@@ -38,6 +38,9 @@ Causes the \fIshow\fR command to provide additional details where available.
 Repeating the option more than once (e.g., "\-dd") will cause the \fIshow job\fR
 command to also list the batch script, if the job was a batch job.
 .TP
+\fB\-\-federation\fR
+Report jobs from from federation if a member of one.
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print a help message describing the usage of scontrol.
 .TP
@@ -47,12 +50,13 @@ By default, neither partitions that are configured as hidden nor those partition
 unavailable to user's group will be displayed (i.e. this is the default behavior).
 .TP
 \fB\-\-local\fR
-Show only jobs local to this cluster. Ignore other clusters in this federation
-(if any). This option implicitly sets the \fB\-\-local\fR option.
+Show only information local to this cluster. Ignore other clusters in the
+federated if a member of one. Overrides \-\-federation.
 .TP
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
 The cluster to issue commands to. Only one cluster name may be specified.
 Note that the SlurmDBD must be up for this option to work properly.
+This option implicitly sets the \fB\-\-local\fR option.
 
 .TP
 \fB\-o\fR, \fB\-\-oneliner\fR
@@ -62,7 +66,7 @@ Print information one line per record.
 Print no warning or informational messages, only fatal error messages.
 .TP
 \fB\-\-sibling\fR
-Show all sibling jobs on a federated cluster.
+Show all sibling jobs on a federated cluster. Implies \-\-federation.
 .TP
 \fB\-u\fR, \fB\-\-uid\fR=<\fIuid\fR>
 Attempt to update a job as user <uid> instead of the invoking user id.
@@ -179,6 +183,9 @@ Note that when a job is held by a system administrator using the \fBhold\fP
 command, only a system administrator may release the job for execution (also
 see the \fBuhold\fP command). When the job is held by its owner, it may also
 be released by the job's owner.
+Additionally, attempting to hold a running job will have not suspend or cancel
+it. But, it will set the job priority to 0 and update the job reason field,
+which would hold the job if it was requeued at a later time.
 
 .TP
 \fBnotify\fP \fIjob_id\fP \fImessage\fP
@@ -242,8 +249,8 @@ Most configuration parameters can be changed by just running this command,
 however, Slurm daemons should be shutdown and restarted if any of these
 parameters are to be changed: AuthType, BackupAddr, BackupController,
 ControlAddr, ControlMach, PluginDir, StateSaveLocation, SlurmctldPort
-or SlurmdPort. The slurmctld daemon must be restarted if nodes are added to
-or removed from the cluster.
+or SlurmdPort. The slurmctld daemon and all slurmd daemons must be
+restarted if nodes are added to or removed from the cluster.
 
 .TP
 \fBrelease\fP \fIjob_list\fP
@@ -1404,15 +1411,18 @@ If no plugin is specified, the reservation applies to all configured burst
 buffer plugins.
 "type" specifies a Cray generic burst buffer resource, for example "nodes".
 if "type" is not specified, the number is a measure of storage space.
-The "units" may be "N" (nodes), "GB" (gigabytes), "TB" (terabytes),
-"PB" (petabytes), etc. with the default units being gigabytes for reservations
-of storage space.
+The "units" may be "N" (nodes), "K|KiB", "M|MiB", "G|GiB", "T|TiB", "P|PiB"
+(for powers of 1024) and "KB", "MB", "GB", "TB", "PB" (for powers of 1000).
+The default units are bytes for reservations of storage space.
 For example "BurstBuffer=cray:2TB" (reserve 2TB of storage plus
 3 nodes from the Cray plugin) or
 "BurstBuffer=100GB" (reserve 100 GB of storage from all configured burst buffer
 plugins).
 Jobs using this reservation are not restricted to these burst buffer resources,
 but may use these reserved resources plus any which are generally available.
+NOTE: Usually Slurm interprets KB, MB, GB, TB, PB, TB units as powers of 1024,
+but for Burst Buffers size specifications Slurm supports both IEC/SI formats.
+This is because the CRAY API for managing DataWarps supports both formats.
 
 .TP
 \fICoreCnt\fP=<num>
@@ -1802,6 +1812,9 @@ Commandline options will always override these settings.)
 .TP 20
 \fBSCONTROL_ALL\fR
 \fB\-a, \-\-all\fR
+.TP
+\fBSCONTROL_FEDERATION\fR
+\fB\-\-federation\fR
 .TP
 \fBSCONTROL_LOCAL\fR
 \fB\-\-local\fR

@@ -140,6 +140,7 @@ int node_record_count __attribute__((weak_import));
 time_t last_node_update __attribute__((weak_import));
 int slurmctld_primary __attribute__((weak_import));
 void *acct_db_conn  __attribute__((weak_import)) = NULL;
+bool  ignore_state_errors __attribute__((weak_import)) = true;
 #else
 slurmctld_config_t slurmctld_config;
 slurm_ctl_conf_t slurmctld_conf;
@@ -150,6 +151,7 @@ int node_record_count;
 time_t last_node_update;
 int slurmctld_primary;
 void *acct_db_conn = NULL;
+bool ignore_state_errors = true;
 #endif
 
 static blade_info_t *blade_array = NULL;
@@ -1469,6 +1471,8 @@ extern int select_p_state_restore(char *dir_name)
 	debug3("Version in blade_state header is %u", protocol_version);
 
 	if (protocol_version == (uint16_t)NO_VAL) {
+		if (!ignore_state_errors)
+			fatal("Can not recover blade state, data version incompatible, start with '-i' to ignore this");
 		error("***********************************************");
 		error("Can not recover blade state, "
 		      "data version incompatible");
@@ -1562,6 +1566,8 @@ extern int select_p_state_restore(char *dir_name)
 unpack_error:
 	slurm_mutex_unlock(&blade_mutex);
 
+	if (!ignore_state_errors)
+		fatal("Incomplete blade data checkpoint file, you may get unexpected issues if jobs were running. Start with '-i' to ignore this");
 	error("Incomplete blade data checkpoint file, you may get "
 	      "unexpected issues if jobs were running.");
 	free_buf(buffer);

@@ -510,6 +510,23 @@ char *slurm_get_msg_aggr_params(void)
 	return msg_aggr_params;
 }
 
+/* slurm_get_reboot_program
+ * RET char * - RebootProgram from slurm.conf, MUST be xfreed by caller
+ */
+extern char *slurm_get_reboot_program(void)
+{
+	char *reboot_program = NULL;
+	slurm_ctl_conf_t *conf;
+
+	if (slurmdbd_conf) {
+	} else {
+		conf = slurm_conf_lock();
+		reboot_program = xstrdup(conf->reboot_program);
+		slurm_conf_unlock();
+	}
+	return reboot_program;
+}
+
 /* slurm_get_tcp_timeout
  * get default tcp timeout value from slurmctld_conf object
  */
@@ -3776,6 +3793,9 @@ int slurm_send_node_msg(int fd, slurm_msg_t * msg)
 		persist_msg.data_size = msg->data_size;
 
 		buffer = slurm_persist_msg_pack(msg->conn, &persist_msg);
+		if (!buffer)    /* pack error */
+			return SLURM_ERROR;
+
 		rc = slurm_persist_send_msg(msg->conn, buffer);
 		free_buf(buffer);
 
@@ -4332,6 +4352,7 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 	uint16_t slurmctld_timeout;
 	slurm_addr_t ctrl_addr;
 	static bool use_backup = false;
+	slurmdb_cluster_rec_t *save_comm_cluster_rec = comm_cluster_rec;
 
 	/* Just in case the caller didn't initialize his slurm_msg_t, and
 	 * since we KNOW that we are only sending to one node (the controller),
@@ -4341,6 +4362,8 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 	request_msg->ret_list = NULL;
 	request_msg->forward_struct = NULL;
 
+tryagain:
+	retry = 1;
 	if (comm_cluster_rec)
 		request_msg->flags |= SLURM_GLOBAL_AUTH_KEY;
 
@@ -4391,6 +4414,24 @@ extern int slurm_send_recv_controller_msg(slurm_msg_t * request_msg,
 		if (rc == -1)
 			break;
 	}
+
+	if (!rc && (response_msg->msg_type == RESPONSE_SLURM_REROUTE_MSG)) {
+		reroute_msg_t *rr_msg = (reroute_msg_t *)response_msg->data;
+
+		/* Don't expect mutliple hops but in the case it does
+		 * happen, free the previous rr cluster_rec. */
+		if (comm_cluster_rec &&
+		    (comm_cluster_rec != save_comm_cluster_rec))
+			slurmdb_destroy_cluster_rec(comm_cluster_rec);
+
+		comm_cluster_rec = rr_msg->working_cluster_rec;
+		slurmdb_setup_cluster_rec(comm_cluster_rec);
+		rr_msg->working_cluster_rec = NULL;
+		goto tryagain;
+	}
+
+	if (comm_cluster_rec != save_comm_cluster_rec)
+		slurmdb_destroy_cluster_rec(comm_cluster_rec);
 
 cleanup:
 	if (rc != 0)
@@ -4646,33 +4687,14 @@ extern int slurm_send_recv_controller_rc_msg(slurm_msg_t *req, int *rc,
 {
 	int ret_c;
 	slurm_msg_t resp;
-	slurmdb_cluster_rec_t *save_comm_cluster_rec = comm_cluster_rec;
 
-tryagain:
 	if (!slurm_send_recv_controller_msg(req, &resp, comm_cluster_rec)) {
-		if (resp.msg_type == RESPONSE_SLURM_REROUTE_MSG) {
-			reroute_msg_t *rr_msg = (reroute_msg_t *)resp.data;
-
-			/* Don't expect mutliple hops but in the case it does
-			 * happen, free the previous rr cluster_rec. */
-			if (comm_cluster_rec &&
-			    (comm_cluster_rec != save_comm_cluster_rec))
-				slurmdb_destroy_cluster_rec(comm_cluster_rec);
-
-			comm_cluster_rec = rr_msg->working_cluster_rec;
-			slurmdb_setup_cluster_rec(comm_cluster_rec);
-			rr_msg->working_cluster_rec = NULL;
-			goto tryagain;
-		}
 		*rc = slurm_get_return_code(resp.msg_type, resp.data);
 		slurm_free_msg_data(resp.msg_type, resp.data);
 		ret_c = 0;
 	} else {
 		ret_c = -1;
 	}
-
-	if (comm_cluster_rec != save_comm_cluster_rec)
-		slurmdb_destroy_cluster_rec(comm_cluster_rec);
 
 	return ret_c;
 }

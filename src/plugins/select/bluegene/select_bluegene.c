@@ -72,6 +72,7 @@ void *acct_db_conn  __attribute__((weak_import)) = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import)) = NULL;
 uint32_t g_qos_count __attribute__((weak_import));
 List assoc_mgr_qos_list __attribute__((weak_import)) = NULL;
+bool  ignore_state_errors __attribute__((weak_import)) = true;
 #else
 slurmctld_config_t slurmctld_config;
 slurm_ctl_conf_t slurmctld_conf;
@@ -86,6 +87,7 @@ void *acct_db_conn = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 uint32_t g_qos_count;
 List assoc_mgr_qos_list = NULL;
+bool ignore_state_errors = true;
 #endif
 
 /*
@@ -654,6 +656,8 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 		safe_unpack16(&protocol_version, buffer);
 
 	if (protocol_version == (uint16_t)NO_VAL) {
+		if (!ignore_state_errors)
+			fatal("Can not recover block state, data version incompatible, start with '-i' to ignore this");
 		error("***********************************************");
 		error("Can not recover block state, "
 		      "data version incompatible");
@@ -809,9 +813,11 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 	return SLURM_SUCCESS;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete block data checkpoint file, start with '-i' to ignore this");
+	error("Incomplete block data checkpoint file");
 	FREE_NULL_BITMAP(usable_mp_bitmap);
 	slurm_mutex_unlock(&block_state_mutex);
-	error("Incomplete block data checkpoint file");
 	free_buf(buffer);
 
 	return SLURM_FAILURE;

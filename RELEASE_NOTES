@@ -1,5 +1,5 @@
 RELEASE NOTES FOR SLURM VERSION 17.11
-6 February 2017
+28 July 2017
 
 IMPORTANT NOTES:
 THE MAXJOBID IS NOW 67,108,863. ANY PRE-EXISTING JOBS WILL CONTINUE TO RUN BUT
@@ -29,6 +29,9 @@ of Slurm will result in loss of state information.
 If using SPANK plugins that use the Slurm APIs, they should be recompiled when
 upgrading Slurm to a new major release.
 
+NOTE: The slurmctld is now set to fatal if there are any problems with
+      any state files.  To avoid this use the new '-i' flag.
+
 NOTE: systemd services files are installed automatically, but not enabled.
       You will need to manually enable them on the appropriate systems:
       - Controller: systemctl enable slurmctld
@@ -48,8 +51,25 @@ NOTE: If you interact with any memory values in a job_submit plugin, you will
       need to test against NO_VAL64 instead of NO_VAL, and change your printf
       format as well.
 
+NOTE: The SLURM_ID_HASH used for Cray systems has changed to fully use the
+      entire 64 bits of the hash.  Previously the stepid was multiplied by
+      10,000,000,000 to make it easy to read both the jobid as well as the
+      stepid in the hash separated by at least a couple of zeros, but this
+      lead to overflow on the hash with steps like the batch and extern step
+      where they used all 32 bits to represent the step.  While the new method
+      ruins the easy readability it fixes the more important overflow issue.
+      This most likely will go unnoticed by most, just a note of the change.
+
 HIGHLIGHTS
 ==========
+ -- Added new advanced reservation flag of "flex", which permits jobs requesting
+    the reservation to begin prior to the reservation's start time and use
+    resources inside or outside of the reservation. A typical use case is to
+    prevent jobs not explicitly requesting the reservation from using those
+    reserved resources rather than forcing jobs requesting the reservation to
+    use those resources in the time frame reserved.
+ -- The sprio command has been modified to report a job's priority information
+    for every partition the job has been submitted to.
  -- Add the configure option --with-shared-libslurm which will link to
     libslurm.so instead of libslurm.o thus reducing the footprint of all the
     binaries.
@@ -64,12 +84,63 @@ RPMBUILD CHANGES
 
 CONFIGURATION FILE CHANGES (see man appropriate man page for details)
 =====================================================================
+ -- Add FederationParameters=fed_display slurm.conf option to configure status
+    commands to display a federated view by default if the cluster is a member
+    of a federation.
+ -- Add PrivateData=events configuration option.
+ -- Change name of acct_gather_infiniband to acct_gather_interconnect.
+ -- Add NoDecay flag to QOS.
+ -- Add SchedulerParameters option of bf_max_job_user_part to specifiy the
+    maximum number of jobs per user for any single partition. This differs from
+    bf_max_job_user in that a separate counter is applied to each partition
+    rather than having a single counter per user applied to all partitions.
+ -- Changed default ProctrackType to cgroup.
+ -- Add bf_max_time to SchedulerParameters.
+ -- Add bf_max_job_assoc to SchedulerParameters.
+ -- Add new SchedulerParameters option bf_window_linear to control the rate at
+    which the backfill test window expands. This can be used on a system with
+    a modest number of running jobs (hundreds of jobs) to help prevent expected
+    start times of pending jobs to get pushed forward in time. On systems with
+    large numbers of running jobs, performance of the backfill scheduler will
+    suffer and fewer jobs will be evaluated.
+ -- Add slurm.conf configuration parameters SlurmctldSyslogDebug and
+    SlurmdSyslogDebug to control which messages from the slurmctld and slurmd
+    daemons get written to syslog.
+ -- Add slurmdbd.conf configuration parameter DebugLevelSyslog to control which
+    messages from the slurmdbd daemon get written to syslog.
 
 COMMAND CHANGES (see man pages for details)
 ===========================================
+ -- The '-q' option to srun has changed from being the short form of
+    '--quit-on-interrupt' to '--qos'.
+ -- Modify all daemons to re-open log files on receipt of SIGUSR2 signal. This
+    is much than using SIGHUP to re-read the configuration file and rebuild
+    various tables.
+ -- Add scancel "--hurry" option to avoid staging out any burst buffer data.
+ -- Add new advanced reservation flags of "weekday" (repeat on each weekday;
+    Monday through Friday) and "weekend" (repeat on each weekend day; Saturday
+    and Sunday).
+ -- Node "OS" field expanded from "sysname" to "sysname release version" (e.g.
+    change from "Linux" to
+    "Linux 4.8.0-28-generic #28-Ubuntu SMP Sat Feb 8 09:15:00 UTC 2017").
+ -- scontrol modified to report core IDs for reservation containing individual
+    cores.
+ -- Add ability to define features on clusters for directing federated jobs to
+    different clusters.
+ -- Modify slurm_load_jobs() function to load job information from all clusters
+    in a federation.
+ -- Add squeue --local and --sibling options to modify filtering of jobs on
+    federated clusters.
+ -- Add sprio -p/--partition option to filter jobs by partition name.
+ -- Add sprio --local and --sibling options for use in federation of clusters.
+ -- Add sprio "%c" format to print cluster name in federation mode.
+ -- Extend the output of the seff utility to also include the job's wall-clock
+    time.
 
 OTHER CHANGES
 =============
+ -- KNL features: Always keep active and available features in the same order:
+    first site-specific features, next MCDRAM modes, last NUMA modes.
 
 API CHANGES
 ===========
@@ -95,6 +166,8 @@ In job_fed_details_t: Rename siblings to siblings_active.
 In job_info_request_msg: Added job_ids to be able to request job info for
 		       specific jobs.
 In job_step_kill_msg_t: Added sibling string to remove active sibling job.
+In slurm_ctl_conf_t: Added group_force and group_time. (Were both in group_info
+		     previously.)
 
 Added the following struct definitions
 ======================================
@@ -104,6 +177,7 @@ Added reroute_msg_t to route a message to a different cluster.
 
 Removed members from the following struct definitions
 =====================================================
+In slurm_ctl_conf_t: Removed group_info.
 
 Changed the following enums and #defines
 ========================================

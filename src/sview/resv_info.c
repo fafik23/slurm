@@ -1104,28 +1104,37 @@ extern void admin_edit_resv(GtkCellRendererText *cell,
 			    const char *new_text,
 			    gpointer data)
 {
-	GtkTreeStore *treestore = GTK_TREE_STORE(data);
-	GtkTreePath *path = gtk_tree_path_new_from_string(path_string);
+	GtkTreeStore *treestore = NULL;
+	GtkTreePath *path = NULL;
 	GtkTreeIter iter;
-	resv_desc_msg_t *resv_msg = xmalloc(sizeof(resv_desc_msg_t));
+	resv_desc_msg_t *resv_msg = NULL;
 
 	char *temp = NULL;
 	char *old_text = NULL;
 	const char *type = NULL;
 
-	int column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell),
-						       "column"));
+	int column;
 
 	if (!new_text || !xstrcmp(new_text, ""))
 		goto no_input;
 
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(type);
+		goto no_input;
+	}
+
+	column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell), "column"));
+	path = gtk_tree_path_new_from_string(path_string);
+	treestore = GTK_TREE_STORE(data);
 	gtk_tree_model_get_iter(GTK_TREE_MODEL(treestore), &iter, path);
 
-	slurm_init_resv_desc_msg(resv_msg);
 	gtk_tree_model_get(GTK_TREE_MODEL(treestore), &iter,
 			   SORTID_NAME, &temp,
 			   column, &old_text,
 			   -1);
+
+	resv_msg = xmalloc(sizeof(resv_desc_msg_t));
+	slurm_init_resv_desc_msg(resv_msg);
 	resv_msg->name = xstrdup(temp);
 	g_free(temp);
 
@@ -1169,7 +1178,7 @@ extern void admin_edit_resv(GtkCellRendererText *cell,
 no_input:
 	slurm_free_resv_desc_msg(resv_msg);
 
-	gtk_tree_path_free (path);
+	gtk_tree_path_free(path);
 	g_free(old_text);
 	g_mutex_unlock(sview_mutex);
 }
@@ -1212,6 +1221,18 @@ extern void get_info_resv(GtkTable *table, display_data_t *display_data)
 		display_data_resv->set_menu = local_display_data->set_menu;
 		goto reset_curs;
 	}
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		view = ERROR_VIEW;
+		if (display_widget)
+			gtk_widget_destroy(display_widget);
+		label = gtk_label_new("Not available in a federated view");
+		gtk_table_attach_defaults(GTK_TABLE(table), label, 0, 1, 0, 1);
+		gtk_widget_show(label);
+		display_widget = gtk_widget_ref(label);
+		goto end_it;
+	}
+
 	if (display_widget && toggled) {
 		gtk_widget_destroy(display_widget);
 		display_widget = NULL;
@@ -1509,7 +1530,7 @@ extern void set_menus_resv(void *arg, void *arg2, GtkTreePath *path, int type)
 extern void popup_all_resv(GtkTreeModel *model, GtkTreeIter *iter, int id)
 {
 	char *name = NULL;
-	char title[100];
+	char title[100] = {0};
 	ListIterator itr = NULL;
 	popup_info_t *popup_win = NULL;
 	GError *error = NULL;
@@ -1632,7 +1653,7 @@ extern void select_admin_resv(GtkTreeModel *model, GtkTreeIter *iter,
 
 static void _admin_resv(GtkTreeModel *model, GtkTreeIter *iter, char *type)
 {
-	resv_desc_msg_t *resv_msg = xmalloc(sizeof(resv_desc_msg_t));
+	resv_desc_msg_t *resv_msg = NULL;
 	reservation_name_msg_t resv_name_msg;
 	char *resvid = NULL;
 	char tmp_char[100];
@@ -1641,7 +1662,15 @@ static void _admin_resv(GtkTreeModel *model, GtkTreeIter *iter, char *type)
 	int response = 0;
 	GtkWidget *label = NULL;
 	GtkWidget *entry = NULL;
-	GtkWidget *popup = gtk_dialog_new_with_buttons(
+	GtkWidget *popup = NULL;
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(type);
+		global_entry_changed = 0;
+		return;
+	}
+
+	popup = gtk_dialog_new_with_buttons(
 		type,
 		GTK_WINDOW(main_window),
 		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -1650,6 +1679,7 @@ static void _admin_resv(GtkTreeModel *model, GtkTreeIter *iter, char *type)
 
 	gtk_tree_model_get(model, iter, SORTID_NAME, &resvid, -1);
 
+	resv_msg = xmalloc(sizeof(resv_desc_msg_t));
 	slurm_init_resv_desc_msg(resv_msg);
 	memset(&resv_name_msg, 0, sizeof(reservation_name_msg_t));
 

@@ -87,6 +87,7 @@ List cluster_list = NULL;
 char *orig_cluster_name = NULL;
 switch_record_bitmaps_t *g_switch_nodes_maps = NULL;
 popup_pos_t popup_pos;
+char *federation_name = NULL;
 
 block_info_msg_t *g_block_info_ptr = NULL;
 front_end_info_msg_t *g_front_end_info_ptr;
@@ -367,6 +368,10 @@ static void _set_grid(GtkToggleAction *action)
 	if (action)
 		working_sview_config.show_grid
 			= gtk_toggle_action_get_active(action);
+
+	if (cluster_flags & CLUSTER_FLAG_FED)
+		return;
+
 	if (!working_sview_config.show_grid)
 		gtk_widget_hide(grid_window);
 	else
@@ -1088,7 +1093,7 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 	display_data_t *display_data;
 	GtkTreeIter iter;
 	slurmdb_cluster_rec_t *cluster_rec = NULL;
-	char *tmp, *ui_description;
+	char *tmp, *ui_description, *selected_name;
 	GError *error = NULL;
 	GtkWidget *node_tab = NULL;
 	int rc;
@@ -1160,6 +1165,17 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 		working_cluster_rec = cluster_rec;
 	cluster_dims = slurmdb_setup_cluster_dims();
 	cluster_flags = slurmdb_setup_cluster_flags();
+
+	gtk_tree_model_get(model, &iter, 0, &selected_name, -1);
+	if (!xstrncmp(selected_name, "FED:", strlen("FED:"))) {
+		cluster_flags |= CLUSTER_FLAG_FED;
+		federation_name = xstrdup(selected_name + strlen("FED:"));
+		gtk_widget_hide(grid_window);
+	} else {
+		xfree(federation_name);
+		if (working_sview_config.show_grid)
+			gtk_widget_show(grid_window);
+	}
 
 	display_data = main_display_data;
 	while (display_data++) {
@@ -1300,9 +1316,12 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 		refresh_main(NULL, NULL);
 	}
 
-	tmp = g_strdup_printf("Cluster changed to %s", cluster_rec->name);
+	tmp = g_strdup_printf("Cluster changed to %s",
+			      cluster_flags & CLUSTER_FLAG_FED ?
+			      selected_name : cluster_rec->name);
 	display_edit_note(tmp);
 	g_free(tmp);
+	g_free(selected_name);
 }
 
 static GtkWidget *_create_cluster_combo(void)
@@ -1315,6 +1334,7 @@ static GtkWidget *_create_cluster_combo(void)
 	GtkCellRenderer *renderer = NULL;
 	bool got_db = slurm_get_is_association_based_accounting();
 	int count = 0, spot = 0;
+	List fed_list = NULL;
 
 	if (!got_db)
 		return NULL;
@@ -1337,14 +1357,42 @@ static GtkWidget *_create_cluster_combo(void)
 	*/
 	working_cluster_rec = list_peek(cluster_list);
 	itr = list_iterator_create(cluster_list);
+
+	/* Build federated list */
 	while ((cluster_rec = list_next(itr))) {
-		if (model) {
-			gtk_list_store_append(model, &iter);
-			gtk_list_store_set(model, &iter,
-					   0, cluster_rec->name,
-					   1, cluster_rec,
-					   -1);
-		}
+		char *fed_name;
+
+		if (!model)
+			continue;
+		if (!cluster_rec->fed.name || !*cluster_rec->fed.name)
+			continue;
+
+		if (!fed_list)
+			fed_list = list_create(NULL);
+
+		if (list_find_first(fed_list, slurm_find_char_in_list,
+				    cluster_rec->fed.name))
+			continue;
+
+		fed_name = xstrdup_printf("FED:%s", cluster_rec->fed.name);
+		gtk_list_store_append(model, &iter);
+		gtk_list_store_set(model, &iter, 0, fed_name, 1, cluster_rec,
+				   -1);
+		list_append(fed_list, cluster_rec->fed.name);
+		count++;
+	}
+	FREE_NULL_LIST(fed_list);
+
+	/* Build cluster list */
+	list_iterator_reset(itr);
+	while ((cluster_rec = list_next(itr))) {
+		if (!model)
+			continue;
+
+		gtk_list_store_append(model, &iter);
+		gtk_list_store_set(model, &iter, 0, cluster_rec->name, 1,
+				   cluster_rec, -1);
+
 		if (!xstrcmp(cluster_rec->name, orig_cluster_name)) {
 			/* clear it since we found the current cluster */
 			working_cluster_rec = NULL;

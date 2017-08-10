@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "December 2016" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "July 2017" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -613,6 +613,9 @@ Front end node details
 \fBGres\fR
 Generic resource details
 .TP
+\fBHeteroJobs\fR
+Heterogeneous job details
+.TP
 \fBGang\fR
 Gang scheduling details
 .TP
@@ -868,6 +871,20 @@ This option is generally only useful for testing purposes.
 .RE
 
 .TP
+\fBFederationParameters\fR
+Used to define federation options. Multiple options may be comma separated.
+
+.RS
+.TP
+\fBfed_display\fR
+If set, then the client status commands (e.g. squeue, sinfo, sprio, etc.) will
+display information in a federated view by default. This option is functionally
+equivalent to using the \-\-federation options on each command. Use the client's
+\-\-local option to override the federated view and get a local view of the
+given cluster.
+.RE
+
+.TP
 \fBFirstJobId\fR
 The job id to be used for the first submitted to Slurm without a
 specific requested value. Job id values generated will incremented by 1
@@ -901,9 +918,9 @@ effective.
 If set to a non\-zero value, then information about which users are members
 of groups allowed to use a partition will be updated periodically, even when
 there have been no changes to the /etc/group file.
-Otherwise group member information will be updated periodically only after the
-/etc/group file is updated
-The default value is 0.
+If set to zero, group member information will be updated only after the
+/etc/group file is updated.
+The default value is 1.
 Also see the \fBGroupUpdateTime\fR parameter.
 
 .TP
@@ -911,8 +928,7 @@ Also see the \fBGroupUpdateTime\fR parameter.
 Controls how frequently information about which users are members of
 groups allowed to use a partition will be updated, and how long user
 group membership lists will be cached.
-The time interval is given in seconds with a default value of 600 seconds and
-a maximum value of 4095 seconds.
+The time interval is given in seconds with a default value of 600 seconds.
 A value of zero will prevent periodic updating of group membership information.
 Also see the \fBGroupUpdateForce\fR parameter.
 
@@ -963,10 +979,7 @@ Note that the \fBHealthCheckProgram\fR will be executed at the same time
 on all nodes to minimize its impact upon parallel programs.
 This program is will be killed if it does not terminate normally within
 60 seconds.
-When slurmd is first started, this program will be run repeatedly until
-it returns an exit code of 0, and will block slurmd from registering with
-slurmctld until this has been satisfied.
-The return code is otherwise ignored.
+This program will also be executed when the slurmd daemon is first started.
 By default, no program will be executed.
 
 .TP
@@ -1258,6 +1271,12 @@ Identifies options to the job launch plugin.
 Acceptable values include:
 .RS
 .TP 24
+\fBcray_net_exclusive\fR
+Allow jobs on a Cray Native cluster exclusive access to network resources.
+This should only be set on clusters providing exclusive access to each
+node to a single job at once, and not using parallel steps within the job,
+otherwise resources on the node can be oversubscribed.
+.TP 24
 \fBmem_sort\fR
 Sort NUMA memory at step start. User can override this default with
 SLURM_MEM_BIND environment variable or \-\-mem_bind=nosort command line option.
@@ -1495,9 +1514,12 @@ More information about MPI use is available here
 .TP
 \fBMpiParams\fR
 MPI parameters.
-Used to identify ports used by OpenMPI only and the input format is
-"ports=12000\-12999" to identify a range of communication ports to be used.
-
+Used to identify ports used by older versions of OpenMPI and native
+Cray systems.  The input format is "ports=12000\-12999" to identify a range of
+communication ports to be used.
+NOTE: This is not needed for modern versions of OpenMPI, taking it out can cause
+a small boost in scheduling performance.
+NOTE: This is require for Cray's PMI.
 .TP
 \fBMsgAggregationParams\fR
 Message aggregation parameters. Message aggregation
@@ -1966,6 +1988,10 @@ definitions unless they are coordinators of them.
 \fBcloud\fR
 Powered down nodes in the cloud are visible.
 .TP
+\fBevents\fR
+prevents users from viewing event information unless they have operator status
+or above.
+.TP
 \fBjobs\fR
 Prevents users from viewing jobs or job steps belonging
 to other users. (NON-SlurmDBD ACCOUNTING ONLY) Prevents users from viewing
@@ -2281,8 +2307,11 @@ the node down.
 in power save mode is assigned work to perform.
 For reasons of reliability, \fBResumeProgram\fR may execute more than once
 for a node when the \fBslurmctld\fR daemon crashes and is restarted.
-If \fBResumeProgram\fR is unable to restore a node to service, it should
-requeue any job associated with the node and set the node state to DRAIN.
+If \fBResumeProgram\fR is unable to restore a node to service with a responding
+slurmd and an updated BootTime, it should requeue any job associated with the
+node and set the node state to DOWN. If the node isn't actually rebooted
+(i.e. when multiple-slurmd is configured) starting slurmd with "-b" option
+might be useful.
 The program executes as \fBSlurmUser\fR.
 The argument to the program will be the names of nodes to
 be removed from power savings mode (using Slurm's hostlist
@@ -2498,11 +2527,8 @@ of newly arrived higher priority jobs, but will permit more queued jobs to be
 considered for backfill scheduling.
 .TP
 \fBbf_interval=#\fR
-The number of seconds between iterations.
+The number of seconds between backfill iterations.
 Higher values result in less overhead and better responsiveness.
-The backfill scheduler will start over after reaching this time limit
-(including time spent sleeping), even if the maximum job counts have not
-been reached.
 This option applies only to \fBSchedulerType=sched/backfill\fR.
 The default value is 30 seconds.
 
@@ -2530,6 +2556,20 @@ expected times.
 This has no impact upon the number of tasks from a job array that can be
 started immediately, only those tasks expected to start at some future time.
 The default value is 20 tasks.
+.TP
+\fBbf_max_job_assoc=#\fR
+The maximum number of jobs per user association to attempt starting with the
+backfill scheduler.
+This setting is similar to to \fBbf_max_job_user\fR but is handy if a user
+has multiple assocations equating to basically different users.
+One can set this limit to prevent users from flooding the backfill
+queue with jobs that cannot start and that prevent jobs from other users
+to start.
+The default value is 0, which means no limit.
+This option applies only to \fBSchedulerType=sched/backfill\fR.
+Also see the \fBbf_max_job_user\fR \fBbf_max_job_part\fR, \fBbf_max_job_test\fR
+and \fBbf_max_job_user_part=#\fR options.
+Set \fBbf_max_job_test\fR to a value much higher than \fBbf_max_job_assoc\fR.
 .TP
 \fBbf_max_job_part=#\fR
 The maximum number of jobs per partition to attempt starting with the backfill
@@ -2577,6 +2617,17 @@ This option applies only to \fBSchedulerType=sched/backfill\fR.
 Also see the \fBbf_max_job_part\fR, \fBbf_max_job_test\fR and
 \fBbf_max_job_user=#\fR options.
 .TP
+\fBbf_max_time=#\fR
+The maximum time the backfill scheduler can spend (including time spent sleeping
+when locks are released) before discontinuing, even if maximum job counts have
+not been reached.
+This option applies only to \fBSchedulerType=sched/backfill\fR.
+The default value is the value of bf_interval (which defaults to 30 seconds).
+NOTE: This needs to be high enough that scheduling isn't always disabled, and
+low enough that our interactive workload can get through in a reasonable period
+of time.  Certainly needs to be below 256 (the default RPC thread limit).
+Running around the middle (150) may give you good results.
+.TP
 \fBbf_min_age_reserve=#\fR
 The backfill and main scheduling logic will not reserve resources for pending
 jobs until they have been pending and runnable for at least the specified
@@ -2618,6 +2669,27 @@ In order to limit the amount of data managed by the backfill scheduler,
 if the value of \fBbf_window\fR is increased, then it is generally advisable
 to also increase \fBbf_resolution\fR.
 This option applies only to \fBSchedulerType=sched/backfill\fR.
+.TP
+\fBbf_window_linear=#\fR
+For performance reasons, the backfill scheduler will decrease precision in
+calculation of job expected termination times. By default, the precision starts
+at 30 seconds and that time interval doubles with each evaluation of currently
+executing jobs when trying to determine when a pending job can start. This
+algorithm can support an environment with many thousands of running jobs, but
+can result in the expected start time of pending jobs being gradually being
+deferred due to lack of precision. A value for bf_window_linear will cause
+the time interval to be increased by a constant amount on each iteration.
+The value is specified in units of seconds. For example, a value of 60 will
+cause the backfill scheduler on the first iteration to identify the job ending
+soonest and determine if the pending job can be started after that job plus
+all other jobs expected to end within 30 seconds (default initial value) of the
+first job. On the next iteration, the pending job will be evaluated for
+starting after the next job expected to end plus all jobs ending within
+90 seconds of that time (30 second default, plus the 60 second option value).
+The third iteration will have a 150 second window and the fourth 210 seconds.
+Without this option, the time windows will double on each iteration and thus
+be 30, 60, 120, 240 seconds, etc. The use of bf_window_linear is not recommended
+with more than a few hundred simultaneously executing jobs.
 .TP
 \fBbf_yield_interval=#\fR
 The backfill scheduler will periodically relinquish locks in order for other
@@ -2791,6 +2863,16 @@ preempt/partition_prio or preempt/qos plugins.)
 By default if the Prolog exits with a non-zero value the job is requeued in
 held state. By specifying this parameter the job will be requeued but not
 held so that the scheduler can dispatch it to another host.
+.TP
+\fBreduce_completing_frag\fR
+Setting this option will attempt to avoid completing jobs nodes when scheduling
+thus reducing potential fragmentation. This option is to be used in
+conjunction with \fBCompleteWait\fR. By default if a job is found
+completing then no jobs are scheduled. If this parameter is used the node in
+a completing job are taken out of consideration.
+NOTE: With this set there may be a slight performance penalty in scheduling
+depending on queue depth.
+NOTE: \fBCompleteWait\fR must be set for this to work.
 .TP
 \fBrequeue_setup_env_fail\fR
 By default if a job environment setup fails the job keeps running with
@@ -3165,6 +3247,52 @@ Configure SlurmctldPort to use a port outside of the configured SrunPortRange
 and RSIP's port range.
 
 .TP
+\fBSlurmctldSyslogDebug\fR
+The slurmctld daemon will log events to the syslog file at the specified
+level of detail (the \fBSlurmctldLogFile\fR file will include log messages
+at level of details specified be \fBSlurmctldDebug\fR configuration parameter).
+If the slurmctld daemon is run in the foreground (started with the \fB\-D\fR
+command line option) the \fBSlurmctldSyslogDebug\fR configuration parameter
+will be ignored.
+The default value is \fBquiet\fR unless there is no configured
+\fBSlurmctldLogFile\fR, in which case the default value will be \fBfatal\bR so
+that fatal errors are logged somewhere.
+
+.RS
+.TP 10
+\fBquiet\fR
+Log nothing
+.TP
+\fBfatal\fR
+Log only fatal errors
+.TP
+\fBerror\fR
+Log only errors
+.TP
+\fBinfo\fR
+Log errors and general informational messages
+.TP
+\fBverbose\fR
+Log errors and verbose informational messages
+.TP
+\fBdebug\fR
+Log errors and verbose informational messages and debugging messages
+.TP
+\fBdebug2\fR
+Log errors and verbose informational messages and more debugging messages
+.TP
+\fBdebug3\fR
+Log errors and verbose informational messages and even more debugging messages
+.TP
+\fBdebug4\fR
+Log errors and verbose informational messages and even more debugging messages
+.TP
+\fBdebug5\fR
+Log errors and verbose informational messages and even more debugging messages
+.RE
+
+
+.TP
 \fBSlurmctldTimeout\fR
 The interval, in seconds, that the backup controller waits for the
 primary controller to respond before assuming control.
@@ -3261,6 +3389,51 @@ Any "%h" within the name is replaced with the hostname on which the
 \fBslurmd\fR is running.
 Any "%n" within the name is replaced with the Slurm node name on which the
 \fBslurmd\fR is running.
+
+.TP
+\fBSlurmdSyslogDebug\fR
+The slurmd daemon will log events to the syslog file at the specified
+level of detail (the \fBSlurmdLogFile\fR file will include log messages
+at level of details specified be \fBSlurmdDebug\fR configuration parameter).
+If the slurmd daemon is run in the foreground (started with the \fB\-D\fR
+command line option) the \fBSlurmdSyslogDebug\fR configuration parameter
+will be ignored.
+The default value is \fBquiet\fR unless there is no configured
+\fBSlurmdLogFile\fR, in which case the default value will be \fBfatal\bR so
+that fatal errors are logged somewhere.
+
+.RS
+.TP 10
+\fBquiet\fR
+Log nothing
+.TP
+\fBfatal\fR
+Log only fatal errors
+.TP
+\fBerror\fR
+Log only errors
+.TP
+\fBinfo\fR
+Log errors and general informational messages
+.TP
+\fBverbose\fR
+Log errors and verbose informational messages
+.TP
+\fBdebug\fR
+Log errors and verbose informational messages and debugging messages
+.TP
+\fBdebug2\fR
+Log errors and verbose informational messages and more debugging messages
+.TP
+\fBdebug3\fR
+Log errors and verbose informational messages and even more debugging messages
+.TP
+\fBdebug4\fR
+Log errors and verbose informational messages and even more debugging messages
+.TP
+\fBdebug5\fR
+Log errors and verbose informational messages and even more debugging messages
+.RE
 
 .TP
 \fBSlurmdTimeout\fR
@@ -3470,10 +3643,6 @@ different operating systems.
 enables resource containment using Linux control cgroups.
 This enables the \-\-cpu_bind and/or \-\-mem_bind srun options.
 NOTE: see "man cgroup.conf" for configuration details.
-NOTE: This plugin writes to disk and can slightly impact performance.
-If you are running lots of short running jobs
-(less than a couple of seconds) this plugin slows down performance slightly.
-It should probably be avoided in an HTC environment.
 .TP
 \fBtask/none\fR
 for systems requiring no special handling of user tasks.
@@ -3692,6 +3861,8 @@ The length of time, in seconds, that Slurm will wait before deciding that
 processes in a job step are unkillable (after they have been signaled with
 SIGKILL) and execute \fBUnkillableStepProgram\fR as described above.
 The default timeout value is 60 seconds.
+If exceeded, the compute node will be drained to prevent future jobs from being
+scheduled on the node.
 
 .TP
 \fBUsePAM\fR
@@ -5301,7 +5472,7 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 .br
-Copyright (C) 2010-2016 SchedMD LLC.
+Copyright (C) 2010-2017 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
 For details, see <https://slurm.schedmd.com/>.

@@ -82,6 +82,7 @@ struct signv {
 	{ "TERM",	SIGTERM },
 	{ "USR1",	SIGUSR1 },
 	{ "USR2",	SIGUSR2 },
+	{ "URG",	SIGURG  },
 	{ "CONT",	SIGCONT },
 	{ "STOP",	SIGSTOP },
 	{ "TSTP",	SIGTSTP },
@@ -569,6 +570,13 @@ _xlate_job_step_ids(char **rest)
 				exit (1);
 			}
 			opt.array_id[buf_offset] = tmp_l;
+		} else if (next_str[0] == '+') {	/* Pack job component */
+			tmp_l = strtol(&next_str[1], &next_str, 10);
+			if (tmp_l < 0) {
+				error ("Invalid job id %s", id_args[i]);
+				exit (1);
+			}
+			opt.array_id[buf_offset] = NO_VAL;
 		} else {
 			opt.array_id[buf_offset] = NO_VAL;
 		}

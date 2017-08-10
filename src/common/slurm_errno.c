@@ -335,6 +335,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Reservation already started"				},
 	{ ESLURM_SUBMISSIONS_DISABLED,
 	  "System submissions disabled"				},
+	{ ESLURM_NOT_PACK_JOB,
+	  "Job not heterogeneous job"				},
+	{ ESLURM_NOT_PACK_JOB_LEADER,
+	  "Job not heterogeneous job leader"			},
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -442,6 +446,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Unacceptable name given. (No '.' in name allowed)"   },
 	{ ESLURM_OVER_ALLOCATE,
 	  "You can not allocate more than 100% of a resource"	},
+	{ ESLURM_RESULT_TOO_LARGE,
+	  "Query result exceeds size limit"			},
 
 	/* Federation Errors */
 	{ ESLURM_FED_CLUSTER_MAX_CNT,
@@ -454,6 +460,10 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Not a valid federated job"				},
 	{ ESLURM_INVALID_CLUSTER_NAME,
 	  "Invalid cluster name"				},
+	{ ESLURM_FED_JOB_LOCK,
+	  "Job locked by another sibling"			},
+	{ ESLURM_FED_NO_VALID_CLUSTERS,
+	  "No eligible clusters for federated job"		},
 
 	/* plugin and custom errors */
 	{ ESLURM_MISSING_TIME_LIMIT,

@@ -148,7 +148,6 @@ typedef enum {
 #define	FEDERATION_FLAG_ADD            0x20000000
 #define	FEDERATION_FLAG_REMOVE         0x40000000
 
-#define	FEDERATION_FLAG_LLC            0x00000001
 
 /* SLURM CLUSTER FEDERATION STATES */
 enum cluster_fed_states {
@@ -202,6 +201,7 @@ enum cluster_fed_states {
 #define CLUSTER_FLAG_CRAY_A 0x00000100 /* This cluster is a ALPS cray */
 #define CLUSTER_FLAG_FE     0x00000200 /* This cluster is a front end system */
 #define CLUSTER_FLAG_CRAY_N 0x00000400 /* This cluster is a Native cray */
+#define CLUSTER_FLAG_FED    0x00000800 /* This cluster is in a federation. */
 
 
 /* Cluster Combo flags */
@@ -604,7 +604,8 @@ typedef struct {
 	void *send; /* slurm_persist_conn_t we send information to this
 		     * cluster on. (We set this information) */
 	uint32_t state; /* state of cluster in federation */
-	uint32_t weight; /* weight of cluster in federation */
+	bool sync_recvd; /* true sync jobs from sib has been processed. */
+	bool sync_sent;  /* true after sib sent sync jobs to sibling */
 } slurmdb_cluster_fed_t;
 
 struct slurmdb_cluster_rec {
@@ -739,8 +740,10 @@ typedef struct {
 	uint32_t jobid;
 	char	*jobname;
 	uint32_t lft;
-	char	*partition;
 	char	*nodes;
+	char	*partition;
+	uint32_t pack_job_id;
+	uint32_t pack_job_offset;
 	uint32_t priority;
 	uint32_t qosid;
 	uint32_t req_cpus;
@@ -917,6 +920,7 @@ typedef struct {
 	double usage_thres; /* percent of effective usage of an
 			       association when breached will deny
 			       pending and new jobs */
+	time_t blocked_until; /* internal use only, DON'T PACK  */
 } slurmdb_qos_rec_t;
 
 typedef struct {
@@ -959,9 +963,9 @@ typedef struct {
 } slurmdb_reservation_rec_t;
 
 typedef struct {
-	uint32_t array_task_id;	/* task_id of a job array of NO_VAL
-				 * if N/A */
+	uint32_t array_task_id;		/* task_id of a job array or NO_VAL */
 	uint32_t jobid;
+	uint32_t pack_job_offset;	/* pack_job_offset or NO_VAL */
 	uint32_t stepid;
 } slurmdb_selected_step_t;
 
@@ -1555,12 +1559,33 @@ extern List slurmdb_get_info_cluster(char *cluster_names);
  * OUT: cluster_rec - record of selected cluster or NULL if none found or
  * 		      cluster_names is NULL
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
- * note cluster_rec needs to be freed with slurmdb_destroy_cluster_rec() when
+ *
+ * Note: Cluster_rec needs to be freed with slurmdb_destroy_cluster_rec() when
  * called
+ * Note: The will_runs are not threaded. Currently it relies on the
+ * working_cluster_rec to pack the job_desc's jobinfo. See previous commit for
+ * an example of how to thread this.
  */
 extern int slurmdb_get_first_avail_cluster(job_desc_msg_t *req,
 					   char *cluster_names,
 					   slurmdb_cluster_rec_t **cluster_rec);
+
+/*
+ * get the first cluster that will run a heterogeneous job
+ * IN: req - description of resource allocation request
+ * IN: cluster_names - comma separated string of cluster names
+ * OUT: cluster_rec - record of selected cluster or NULL if none found or
+ * 		      cluster_names is NULL
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ *
+ * Note: Cluster_rec needs to be freed with slurmdb_destroy_cluster_rec() when
+ * called
+ * Note: The will_runs are not threaded. Currently it relies on the
+ * working_cluster_rec to pack the job_desc's jobinfo. See previous commit for
+ * an example of how to thread this.
+ */
+extern int slurmdb_get_first_pack_cluster(List job_req_list,
+	char *cluster_names, slurmdb_cluster_rec_t **cluster_rec);
 
 /************** helper functions **************/
 extern void slurmdb_destroy_assoc_usage(void *object);

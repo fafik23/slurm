@@ -171,7 +171,7 @@ static void *_timer_thread(void *args)
 				continue;
 			if (!acct_gather_profile_test())
 				break;	/* Shutting down */
-			debug2("profile signalling type %s",
+			debug2("profile signaling type %s",
 			       acct_gather_profile_type_t_name(i));
 
 			/* signal poller to start */
@@ -524,7 +524,6 @@ extern void acct_gather_profile_endpoll(void)
 		slurm_mutex_lock(&acct_gather_profile_timer[i].notify_mutex);
 		slurm_cond_signal(&acct_gather_profile_timer[i].notify);
 		slurm_mutex_unlock(&acct_gather_profile_timer[i].notify_mutex);
-		pthread_cond_destroy(&acct_gather_profile_timer[i].notify);
 		acct_gather_profile_timer[i].freq = 0;
 		switch (i) {
 		case PROFILE_ENERGY:

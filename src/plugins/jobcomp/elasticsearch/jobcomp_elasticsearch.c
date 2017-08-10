@@ -606,7 +606,7 @@ static void _make_time_str(time_t * time, char *string, int size)
 extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 {
 	char usr_str[32], grp_str[32], start_str[32], end_str[32];
-	char time_str[32], *cluster = NULL, *qos, *state_string;
+	char time_str[32], *state_string;
 	time_t elapsed_time;
 	enum job_states job_state;
 	uint32_t time_limit;
@@ -684,6 +684,13 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 			   (unsigned long) job_ptr->array_task_id);
 	}
 
+	if (job_ptr->pack_job_id != NO_VAL) {
+		xstrfmtcat(buffer, ",\"pack_job_id\":%lu",
+			   (unsigned long) job_ptr->pack_job_id);
+		xstrfmtcat(buffer, ",\"pack_job_offset\":%lu",
+			   (unsigned long) job_ptr->pack_job_offset);
+	}
+
 	if (job_ptr->details && job_ptr->details->submit_time) {
 		_make_time_str(&job_ptr->details->submit_time,
 			       time_str, sizeof(time_str));
@@ -728,15 +735,12 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 	}
 
 	if (job_ptr->assoc_ptr != NULL) {
-		cluster = ((slurmdb_assoc_rec_t *) job_ptr->assoc_ptr)->cluster;
-		xstrfmtcat(buffer, ",\"cluster\":\"%s\"", cluster);
+		xstrfmtcat(buffer, ",\"cluster\":\"%s\"",
+			   job_ptr->assoc_ptr->cluster);
 	}
 
 	if (job_ptr->qos_ptr != NULL) {
-		slurmdb_qos_rec_t *assoc =
-			(slurmdb_qos_rec_t *) job_ptr->qos_ptr;
-		qos = assoc->name;
-		xstrfmtcat(buffer, ",\"qos\":\"%s\"", qos);
+		xstrfmtcat(buffer, ",\"qos\":\"%s\"", job_ptr->qos_ptr->name);
 	}
 
 	if (job_ptr->details && (job_ptr->details->num_tasks != NO_VAL)) {
@@ -851,8 +855,6 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 
 	return SLURM_SUCCESS;
 }
-
-
 
 extern void *_process_jobs(void *x)
 {

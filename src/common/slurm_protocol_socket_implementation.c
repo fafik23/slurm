@@ -60,6 +60,7 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/log.h"
 #include "src/common/fd.h"
+#include "src/common/strlcpy.h"
 #include "src/common/xsignal.h"
 #include "src/common/xmalloc.h"
 #include "src/common/util-net.h"
@@ -293,9 +294,10 @@ extern int slurm_send_timeout(int fd, char *buf, size_t size,
 
     done:
 	/* Reset fd flags to prior state, preserve errno */
-	if (fd_flags != SLURM_PROTOCOL_ERROR) {
+	if (fd_flags != -1) {
 		int slurm_err = slurm_get_errno();
-		fcntl(fd, F_SETFL, fd_flags);
+		if (fcntl(fd, F_SETFL, fd_flags) < 0)
+			error("%s: fcntl(F_SETFL) error: %m", __func__);
 		slurm_seterrno(slurm_err);
 	}
 
@@ -392,9 +394,10 @@ extern int slurm_recv_timeout(int fd, char *buffer, size_t size,
 
     done:
 	/* Reset fd flags to prior state, preserve errno */
-	if (fd_flags != SLURM_PROTOCOL_ERROR) {
+	if (fd_flags != -1) {
 		int slurm_err = slurm_get_errno();
-		fcntl(fd, F_SETFL, fd_flags);
+		if (fcntl(fd, F_SETFL, fd_flags) < 0)
+			error("%s: fcntl(F_SETFL) error: %m", __func__);
 		slurm_seterrno(slurm_err);
 	}
 
@@ -529,16 +532,22 @@ static int _slurm_connect (int __fd, struct sockaddr const * __addr,
 	 * in serious problems for slurmctld. Making the connect call
 	 * non-blocking and polling seems to fix the problem. */
 	static int timeout = 0;
-	int rc, flags, err;
+	int rc, flags, flags_save, err;
 	socklen_t len;
 	struct pollfd ufds;
 
 	flags = fcntl(__fd, F_GETFL);
-	fcntl(__fd, F_SETFL, flags | O_NONBLOCK);
+	flags_save = flags;
+	if (flags == -1) {
+		error("%s: fcntl(F_GETFL) error: %m", __func__);
+		flags = 0;
+	}
+	if (fcntl(__fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		error("%s: fcntl(F_SETFL) error: %m", __func__);
 
 	err = 0;
 	rc = connect(__fd , __addr , __len);
-	if (rc < 0 && errno != EINPROGRESS)
+	if ((rc < 0) && (errno != EINPROGRESS))
 		return -1;
 	if (rc == 0)
 		goto done;  /* connect completed immediately */
@@ -577,7 +586,10 @@ again:	rc = poll(&ufds, 1, timeout);
 	}
 
 done:
-	fcntl(__fd, F_SETFL, flags);
+	if (flags_save != -1) {
+		if (fcntl(__fd, F_SETFL, flags_save) < 0)
+			error("%s: fcntl(F_SETFL) error: %m", __func__);
+	}
 
 	/* NOTE: Connection refused is typically reported for
 	 * non-responsived nodes plus attempts to communicate
@@ -670,11 +682,11 @@ extern void slurm_get_addr (slurm_addr_t *addr, uint16_t *port, char *host,
 
 	if (he != NULL) {
 		*port = ntohs(addr->sin_port);
-		strncpy(host, he->h_name, buflen);
+		strlcpy(host, he->h_name, buflen);
 	} else {
 		error("Lookup failed: %s", host_strerror(h_err));
 		*port = 0;
-		strncpy(host, "", buflen);
+		host[0] = '\0';
 	}
 	return;
 }

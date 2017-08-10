@@ -602,7 +602,9 @@ int load_all_part_state(void)
 	if (state_fd < 0) {
 		info("No partition state file (%s) to recover",
 		     state_file);
-		error_code = ENOENT;
+		xfree(state_file);
+		unlock_state_files();
+		return ENOENT;
 	} else {
 		data_allocated = BUF_SIZE;
 		data = xmalloc(data_allocated);
@@ -636,6 +638,8 @@ int load_all_part_state(void)
 		safe_unpack16(&protocol_version, buffer);
 
 	if (protocol_version == (uint16_t)NO_VAL) {
+		if (!ignore_state_errors)
+			fatal("Can not recover partition state, data version incompatible, start with '-i' to ignore this");
 		error("**********************************************************");
 		error("Can not recover partition state, data version incompatible");
 		error("**********************************************************");
@@ -855,7 +859,9 @@ int load_all_part_state(void)
 	free_buf(buffer);
 	return error_code;
 
-      unpack_error:
+unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete partition data checkpoint file, start with '-i' to ignore this");
 	error("Incomplete partition data checkpoint file");
 	info("Recovered state of %d partitions", part_cnt);
 	free_buf(buffer);
@@ -1087,46 +1093,17 @@ static int _match_part_ptr(void *part_ptr, void *key)
 	return 0;
 }
 
-/* part_filter_set - Set the partition's hidden flag based upon a user's
- * group access. This must be followed by a call to part_filter_clear() */
-static int _part_filter_set(void *x, void *arg)
+/* partition is visible to the user. must had part read lock before calling */
+extern bool part_is_visible(struct part_record *part_ptr, uid_t uid)
 {
-	struct part_record *part_ptr = (struct part_record *) x;
-	uid_t *uid = (uid_t *) arg;
-
+	if (validate_slurm_user(uid))
+		return true;
 	if (part_ptr->flags & PART_FLAG_HIDDEN)
-		return 0;
+		return false;
+	if (validate_group(part_ptr, uid) == 0)
+		return false;
 
-	if (validate_group(part_ptr, *uid) == 0) {
-		part_ptr->flags |= PART_FLAG_HIDDEN;
-		part_ptr->flags |= PART_FLAG_HIDDEN_CLR;
-	}
-
-	return 0;
-}
-
-extern void part_filter_set(uid_t uid)
-{
-	list_for_each(part_list, _part_filter_set, &uid);
-}
-
-/* part_filter_clear - Clear the partition's hidden flag based upon a user's
- * group access. This must follow a call to part_filter_set() */
-static int _part_filter_clear(void *x, void *arg)
-{
-	struct part_record *part_ptr = (struct part_record *) x;
-
-	if (part_ptr->flags & PART_FLAG_HIDDEN_CLR) {
-		part_ptr->flags &= (~PART_FLAG_HIDDEN);
-		part_ptr->flags &= (~PART_FLAG_HIDDEN_CLR);
-	}
-
-	return 0;
-}
-
-extern void part_filter_clear(void)
-{
-	list_for_each(part_list, _part_filter_clear, NULL);
+	return true;
 }
 
 /*
@@ -1165,9 +1142,8 @@ extern void pack_all_part(char **buffer_ptr, int *buffer_size,
 	part_iterator = list_iterator_create(part_list);
 	while ((part_ptr = (struct part_record *) list_next(part_iterator))) {
 		xassert (part_ptr->magic == PART_MAGIC);
-		if (((show_flags & SHOW_ALL) == 0) && (uid != 0) &&
-		    ((part_ptr->flags & PART_FLAG_HIDDEN)
-		     || (validate_group (part_ptr, uid) == 0)))
+		if (((show_flags & SHOW_ALL) == 0) &&
+		    !part_is_visible(part_ptr, uid))
 			continue;
 		pack_part(part_ptr, buffer, protocol_version);
 		parts_packed++;

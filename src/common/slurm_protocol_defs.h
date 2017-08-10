@@ -152,7 +152,8 @@
 #define INFO_LINE(fmt, ...) \
 	info("%s (%s:%d) "fmt, __func__, THIS_FILE, __LINE__, ##__VA_ARGS__);
 
-#define YEAR_MINUTES 365 * 24 * 60
+#define YEAR_MINUTES (365 * 24 * 60)
+#define YEAR_SECONDS (365 * 24 * 60 * 60)
 
 /* These defines have to be here to avoid circular dependancy with
  * switch.h
@@ -196,7 +197,7 @@ typedef enum {
 	RESPONSE_ACCT_GATHER_ENERGY,	/* 1020 */
 	REQUEST_LICENSE_INFO,
 	RESPONSE_LICENSE_INFO,
-	DBD_MESSAGES_START = 1400, /* We can't repalce this with
+	DBD_MESSAGES_START = 1400, /* We can't replace this with
 				    * REQUEST_PERSIST_INIT since DBD_INIT is
 				    * packed in a way we can't tell the
 				    * protocol_version without unpacking
@@ -287,8 +288,8 @@ typedef enum {
 	RESPONSE_JOB_WILL_RUN,
 	REQUEST_JOB_ALLOCATION_INFO,
 	RESPONSE_JOB_ALLOCATION_INFO,
-	REQUEST_JOB_ALLOCATION_INFO_LITE,	/* DEFUNCT, LAST USED V17.02 */
-	RESPONSE_JOB_ALLOCATION_INFO_LITE,	/* DEFUNCT, LAST USED V17.02 */
+	REQUEST_JOB_PACK_ALLOCATION,
+	RESPONSE_JOB_PACK_ALLOCATION,
 	REQUEST_UPDATE_JOB_TIME,
 	REQUEST_JOB_READY,
 	RESPONSE_JOB_READY,		/* 4020 */
@@ -296,17 +297,14 @@ typedef enum {
 	REQUEST_JOB_NOTIFY,
 	REQUEST_JOB_SBCAST_CRED,
 	RESPONSE_JOB_SBCAST_CRED,
-	REQUEST_SIB_JOB_START,
-	REQUEST_SIB_JOB_CANCEL,
-	REQUEST_SIB_JOB_REQUEUE,
-	REQUEST_SIB_JOB_COMPLETE,
-	REQUEST_SIB_JOB_LOCK,
-	REQUEST_SIB_JOB_UNLOCK,		/* 4030 */
-	REQUEST_SIB_JOB_WILL_RUN,
-	REQUEST_SIB_SUBMIT_BATCH_JOB,
-	REQUEST_SIB_RESOURCE_ALLOCATION,
+
+	REQUEST_SIB_JOB_LOCK = 4050,
+	REQUEST_SIB_JOB_UNLOCK,
 	REQUEST_CTLD_MULT_MSG,
 	RESPONSE_CTLD_MULT_MSG,
+	REQUEST_SIB_MSG,
+	REQUEST_JOB_PACK_ALLOC_INFO,
+	REQUEST_SUBMIT_BATCH_JOB_PACK,
 
 	REQUEST_JOB_STEP_CREATE = 5001,
 	RESPONSE_JOB_STEP_CREATE,
@@ -762,10 +760,12 @@ typedef struct job_step_create_response_msg {
 #define LAUNCH_BUFFERED_IO	0x00000008
 #define LAUNCH_LABEL_IO		0x00000010
 #define LAUNCH_USER_MANAGED_IO	0x00000020
+#define LAUNCH_NO_ALLOC 	0x00000040
 
 typedef struct launch_tasks_request_msg {
 	uint32_t  job_id;
 	uint32_t  job_step_id;
+	uint32_t  pack_offset;	/* pack job offset of NO_VAL */
 	uint32_t  nnodes;	/* number of nodes in this job step       */
 	uint32_t  ntasks;	/* number of tasks in this job step   */
 	uint16_t  ntasks_per_board;/* number of tasks to invoke on each board */
@@ -1209,6 +1209,7 @@ typedef struct {
 				   cancel is happening from a user and being
 				   passed to a remote then the uid will be the
 				   user and not the SlurmUser. */
+	uint16_t sib_msg_type; /* fed_job_update_type */
 } sib_msg_t;
 
 typedef struct {
@@ -1434,7 +1435,7 @@ extern uint32_t slurm_get_return_code(slurm_msg_type_t type, void *data);
 extern void slurm_free_network_callerid_msg(network_callerid_msg_t *mesg);
 extern void slurm_free_network_callerid_resp(network_callerid_resp_t *resp);
 
-extern char *preempt_mode_string(uint16_t preempt_mode);
+extern const char *preempt_mode_string(uint16_t preempt_mode);
 extern uint16_t preempt_mode_num(const char *preempt_mode);
 
 extern char *log_num2string(uint16_t inx);
@@ -1450,6 +1451,7 @@ extern uint16_t bb_state_num(char *tok);
 extern char *health_check_node_state_str(uint32_t node_state);
 
 extern char *job_reason_string(enum job_state_reason inx);
+extern bool job_state_qos_grp_limit(enum job_state_reason state_reason);
 extern char *job_share_string(uint16_t shared);
 extern char *job_state_string(uint32_t inx);
 extern char *job_state_string_compact(uint32_t inx);
@@ -1501,6 +1503,10 @@ extern char * parse_part_enforce_type_2str (uint16_t type);
 
 /* Return true if this cluster_name is in a federation */
 extern bool cluster_in_federation(void *ptr, char *cluster_name);
+
+/* Find where cluster_name nodes start in the node_array */
+extern int get_cluster_node_offset(char *cluster_name,
+				   node_info_msg_t *node_info_ptr);
 
 /* Given a protocol opcode return its string
  * description mapping the slurm_msg_type_t

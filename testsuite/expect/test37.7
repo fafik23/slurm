@@ -1,6 +1,6 @@
 #!/usr/bin/expect
 ############################################################################
-# Purpose: Test CFederated Cluster States
+# Purpose: Test Federated Cluster States
 #
 # Reqs:    1. Using slurmdbd accounting storage type and is up
 #          2. fed_slurm_base is defined in globals.local - set to directory that
@@ -57,7 +57,7 @@ set my_sbatch    "${fed_slurm_base}/$fedc1/bin/sbatch"
 set my_srun      "${fed_slurm_base}/$fedc1/bin/srun"
 set my_salloc    "${fed_slurm_base}/$fedc1/bin/salloc"
 set my_squeue    "${fed_slurm_base}/$fedc1/bin/squeue"
-set min_job_age  [expr {[get_min_job_age] + 65}]
+set drain_time   10
 
 set eol "\r\n"
 
@@ -175,7 +175,7 @@ proc sbatch { mfed error } {
 	set job_id 0
 	set command "$my_sbatch -N$node_count --exclusive --output=/dev/null \
 		--error=/dev/null -t300 --requeue --wrap $script"
-	set regex "Submitted batch job ($number).+"
+	set regex "Submitted batch job ($number)"
 	set collect 1
 
 	if { $error } {
@@ -271,10 +271,8 @@ if {[test_federation_setup]} {
 	exit 0
 }
 
-if {[test_cluster_up $fedc1] ||
-    [test_cluster_up $fedc2] ||
-    [test_cluster_up $fedc3]} {
-	end_it 1
+if {[test_all_up]} {
+	exit 0
 }
 
 set user_name [get_my_user_name]
@@ -403,13 +401,8 @@ sleep 10
 
 squeue ""
 
-sleep $min_job_age
-
-scontrol jobs "No jobs in the system"
-
-scontrol fed ".+DRAIN.+ACTIVE.+"
-
-sleep 35
+log_info "Sleep $drain_time seconds until system is drained"
+sleep $drain_time
 
 scontrol fed ".+DRAINED.+ACTIVE.+"
 
@@ -460,15 +453,27 @@ sbatch  1 1
 
 squeue ""
 
-scontrol jobs "JobId.+"
-
-sleep $min_job_age
-
-scontrol jobs "No jobs in the system"
+log_info "Sleep $drain_time seconds until system is removed"
+sleep $drain_time
 
 scontrol fed ""
 
 sacctmgr_show "\\s+ACTIVE\\s+"
+
+# Once the system is drained, the controller will mark all jobs as non-requeueable.
+scontrol jobs "Requeue=0.+"
+
+
+#Make sure we can submit to removed cluster.
+
+set job_id [sbatch 1 0]
+
+if {[expr $job_id >> 26]} {
+	send_user "Removed cluster still giving federated job id\n"
+	end_it 1
+}
+
+wait_for_fed_job $job_id DONE $fedc1
 
 set matches 0
 

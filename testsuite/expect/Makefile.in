@@ -132,7 +132,8 @@ am__aclocal_m4_deps = $(top_srcdir)/auxdir/ax_check_zlib.m4 \
 	$(top_srcdir)/auxdir/x_ac_setproctitle.m4 \
 	$(top_srcdir)/auxdir/x_ac_sgi_job.m4 \
 	$(top_srcdir)/auxdir/x_ac_slurm_ssl.m4 \
-	$(top_srcdir)/configure.ac
+	$(top_srcdir)/auxdir/x_ac_systemd.m4 \
+	$(top_srcdir)/auxdir/x_ac_ucx.m4 $(top_srcdir)/configure.ac
 am__configure_deps = $(am__aclocal_m4_deps) $(CONFIGURE_DEPENDENCIES) \
 	$(ACLOCAL_M4)
 DIST_COMMON = $(srcdir)/Makefile.am $(am__DIST_COMMON)
@@ -351,6 +352,10 @@ SSL_LDFLAGS = @SSL_LDFLAGS@
 SSL_LIBS = @SSL_LIBS@
 STRIP = @STRIP@
 SUCMD = @SUCMD@
+SYSTEMD_TASKSMAX_OPTION = @SYSTEMD_TASKSMAX_OPTION@
+UCX_CPPFLAGS = @UCX_CPPFLAGS@
+UCX_LDFLAGS = @UCX_LDFLAGS@
+UCX_LIBS = @UCX_LIBS@
 UTIL_LIBS = @UTIL_LIBS@
 VERSION = @VERSION@
 ZLIB_CPPFLAGS = @ZLIB_CPPFLAGS@
@@ -1030,7 +1035,21 @@ EXTRA_DIST = \
 	test37.4			\
 	test37.5			\
 	test37.6			\
-	test37.7
+	test37.7			\
+	test37.8			\
+	test37.9			\
+	test37.10			\
+	test37.11			\
+	test37.12			\
+	test37.13			\
+	test37.14			\
+	test37.15			\
+	test37.16			\
+	test38.1                        \
+	test38.2                        \
+	test38.3                        \
+	test38.4                        \
+	test38.5
 
 all: all-am
 

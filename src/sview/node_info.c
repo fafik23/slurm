@@ -837,7 +837,8 @@ static void _selected_page(GtkMenuItem *menuitem,
 {
 	switch(display_data->extra) {
 	case NODE_PAGE:
-		popup_all_node_name(display_data->user_data, display_data->id);
+		popup_all_node_name(display_data->user_data, display_data->id,
+				    NULL);
 		break;
 	case ADMIN_PAGE:
 		admin_node_name(display_data->user_data,
@@ -1031,6 +1032,8 @@ extern int get_new_info_node(node_info_msg_t **info_ptr, int force)
 	}
 	last = now;
 
+	if (cluster_flags & CLUSTER_FLAG_FED)
+		show_flags |= SHOW_FEDERATION;
 	//if (working_sview_config.show_hidden)
 	show_flags |= SHOW_ALL;
 	if (g_node_info_ptr) {
@@ -1582,16 +1585,25 @@ extern void admin_edit_node(GtkCellRendererText *cell,
 			    const char *new_text,
 			    gpointer data)
 {
-	GtkTreeStore *treestore = GTK_TREE_STORE(data);
-	GtkTreePath *path = gtk_tree_path_new_from_string(path_string);
+	GtkTreeStore *treestore = NULL;
+	GtkTreePath *path = NULL;
 	GtkTreeIter iter;
 	char *nodelist = NULL;
-	int column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell),
-						       "column"));
+	int column;
+
 	if (!new_text || !xstrcmp(new_text, ""))
 		goto no_input;
 
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(new_text);
+		goto no_input;
+	}
+
+	treestore = GTK_TREE_STORE(data);
+	path = gtk_tree_path_new_from_string(path_string);
 	gtk_tree_model_get_iter(GTK_TREE_MODEL(treestore), &iter, path);
+
+	column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell), "column"));
 	switch(column) {
 	case SORTID_STATE:
 		gtk_tree_model_get(GTK_TREE_MODEL(treestore), &iter,
@@ -1604,8 +1616,9 @@ extern void admin_edit_node(GtkCellRendererText *cell,
 	default:
 		break;
 	}
-no_input:
+
 	gtk_tree_path_free(path);
+no_input:
 	g_mutex_unlock(sview_mutex);
 }
 
@@ -1997,19 +2010,21 @@ extern void set_menus_node(void *arg, void *arg2, GtkTreePath *path, int type)
 
 extern void popup_all_node(GtkTreeModel *model, GtkTreeIter *iter, int id)
 {
-	char *name = NULL;
+	char *name = NULL, *cluster_name = NULL;
 
 	gtk_tree_model_get(model, iter, SORTID_NAME, &name, -1);
+	gtk_tree_model_get(model, iter, SORTID_CLUSTER_NAME, &cluster_name, -1);
 	if (_DEBUG)
 		g_print("popup_all_node: name = %s\n", name);
-	popup_all_node_name(name, id);
+	popup_all_node_name(name, id, cluster_name);
 	/* this name gets g_strdup'ed in the previous function */
 	g_free(name);
+	g_free(cluster_name);
 }
 
-extern void popup_all_node_name(char *name, int id)
+extern void popup_all_node_name(char *name, int id, char *cluster_name)
 {
-	char title[100];
+	char title[100] = {0};
 	ListIterator itr = NULL;
 	popup_info_t *popup_win = NULL;
 	GError *error = NULL;
@@ -2043,6 +2058,15 @@ extern void popup_all_node_name(char *name, int id)
 		g_print("%s got %d\n", node, id);
 	}
 
+	if (cluster_name && federation_name &&
+	    (cluster_flags & CLUSTER_FLAG_FED)) {
+		char *tmp_cname =
+			xstrdup_printf(" (%s:%s)",
+				       federation_name, cluster_name);
+		strncat(title, tmp_cname, sizeof(title) - strlen(title) - 1);
+		xfree(tmp_cname);
+	}
+
 	itr = list_iterator_create(popup_list);
 	while ((popup_win = list_next(itr))) {
 		if (popup_win->spec_info)
@@ -2058,6 +2082,10 @@ extern void popup_all_node_name(char *name, int id)
 		else
 			popup_win = create_popup_info(NODE_PAGE, id, title);
 		popup_win->spec_info->search_info->gchar_data = g_strdup(name);
+
+		if (cluster_flags & CLUSTER_FLAG_FED)
+			popup_win->spec_info->search_info->cluster_name =
+				g_strdup(cluster_name);
 		if (!sview_thread_new((gpointer)popup_thr, popup_win,
 				      false, &error)) {
 			g_printerr ("Failed to create node popup thread: "
@@ -2141,7 +2169,14 @@ extern void select_admin_nodes(GtkTreeModel *model,
 
 extern void admin_node_name(char *name, char *old_value, char *type)
 {
-	GtkWidget *popup = gtk_dialog_new_with_buttons(
+	GtkWidget *popup = NULL;
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(type);
+		return;
+	}
+
+	popup = gtk_dialog_new_with_buttons(
 		type,
 		GTK_WINDOW(main_window),
 		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -2177,8 +2212,17 @@ extern void cluster_change_node(void)
 				display_data->name = "RackMidplane";
 				break;
 			}
+		} else if (cluster_flags & CLUSTER_FLAG_FED) {
+			switch(display_data->id) {
+			case SORTID_CLUSTER_NAME:
+				display_data->show = true;
+				break;
+			}
 		} else {
 			switch(display_data->id) {
+			case SORTID_CLUSTER_NAME:
+				display_data->show = false;
+				break;
 			case SORTID_RACK_MP:
 				display_data->name = NULL;
 				break;

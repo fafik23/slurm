@@ -145,7 +145,7 @@ _multi_cluster(List clusters)
 static int
 _proc_cluster(void)
 {
-	int rc;
+	int rc, rc2;
 
 	if (has_default_opt() && !has_job_steps()) {
 		rc = _signal_job_by_str();
@@ -165,7 +165,8 @@ _proc_cluster(void)
 	    (opt.wckey)) {
 		_filter_job_records();
 	}
-	rc = MAX(_cancel_jobs(), rc);
+	rc2 = _cancel_jobs();
+	rc = MAX(rc, rc2);
 	slurm_free_job_info_msg(job_buffer_ptr);
 
 	return rc;
@@ -182,7 +183,8 @@ _load_job_records (void)
 	/* We need the fill job array string representation for identifying
 	 * and killing job arrays */
 	setenv("SLURM_BITSTR_LEN", "0", 1);
-	error_code = slurm_load_jobs ((time_t) NULL, &job_buffer_ptr, SHOW_ALL);
+	error_code = slurm_load_jobs ((time_t) NULL, &job_buffer_ptr,
+				      SHOW_ALL | SHOW_FEDERATION);
 
 	if (error_code) {
 		slurm_perror ("slurm_load_jobs error");

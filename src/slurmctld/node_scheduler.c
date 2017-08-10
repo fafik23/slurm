@@ -110,7 +110,6 @@ static void _filter_nodes_in_set(struct node_set *node_set_ptr,
 				 char **err_msg);
 
 static bool _first_array_task(struct job_record *job_ptr);
-static void _launch_prolog(struct job_record *job_ptr);
 static void _log_node_set(uint32_t job_id, struct node_set *node_set_ptr,
 			  int node_set_size);
 static int  _match_feature(char *seek, struct node_set *node_set_ptr,
@@ -900,11 +899,8 @@ extern void filter_by_node_owner(struct job_record *job_ptr,
 	struct node_record *node_ptr;
 	int i;
 
-	if ((job_ptr->details->whole_node == 0) &&
-	    (job_ptr->part_ptr->flags & PART_FLAG_EXCLUSIVE_USER))
-		job_ptr->details->whole_node = WHOLE_NODE_USER;
-
-	if (job_ptr->details->whole_node == WHOLE_NODE_USER) {
+	if ((job_ptr->details->whole_node == WHOLE_NODE_USER) ||
+	    (job_ptr->part_ptr->flags & PART_FLAG_EXCLUSIVE_USER)) {
 		/* Need to remove all nodes allocated to any active job from
 		 * any other user */
 		job_iterator = list_iterator_create(job_list);
@@ -2187,11 +2183,14 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	time_t now = time(NULL);
 	bool configuring = false;
 	List preemptee_job_list = NULL;
-	slurmdb_qos_rec_t *qos_ptr = NULL;
-	slurmdb_assoc_rec_t *assoc_ptr = NULL;
 	uint32_t selected_node_cnt = NO_VAL;
 	uint64_t tres_req_cnt[slurmctld_tres_cnt];
 	bool can_reboot;
+	uint32_t qos_flags = 0;
+	/* QOS Read lock */
+	assoc_mgr_lock_t qos_read_lock =
+		{ READ_LOCK, NO_LOCK, READ_LOCK, NO_LOCK,
+		  NO_LOCK, NO_LOCK, NO_LOCK };
 
 	xassert(job_ptr);
 	xassert(job_ptr->magic == JOB_MAGIC);
@@ -2200,8 +2199,6 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		return ESLURM_ACCOUNTING_POLICY;
 
 	part_ptr = job_ptr->part_ptr;
-	qos_ptr = (slurmdb_qos_rec_t *)job_ptr->qos_ptr;
-	assoc_ptr = (slurmdb_assoc_rec_t *)job_ptr->assoc_ptr;
 
 	/* identify partition */
 	if (part_ptr == NULL) {
@@ -2214,8 +2211,12 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 
 	/* Quick check to see if this QOS is allowed on this
 	 * partition. */
+	assoc_mgr_lock(&qos_read_lock);
+	if (job_ptr->qos_ptr)
+		qos_flags = job_ptr->qos_ptr->flags;
 	if ((error_code = part_policy_valid_qos(
-		     job_ptr->part_ptr, qos_ptr)) != SLURM_SUCCESS) {
+		     job_ptr->part_ptr, job_ptr->qos_ptr)) != SLURM_SUCCESS) {
+		assoc_mgr_unlock(&qos_read_lock);
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = WAIT_QOS;
 		last_job_update = now;
@@ -2226,13 +2227,15 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	 * this partition. */
 	if ((error_code = part_policy_valid_acct(
 		     job_ptr->part_ptr,
-		     job_ptr->assoc_ptr ? assoc_ptr->acct : NULL))
+		     job_ptr->assoc_ptr ? job_ptr->assoc_ptr->acct : NULL))
 	    != SLURM_SUCCESS) {
+		assoc_mgr_unlock(&qos_read_lock);
 		xfree(job_ptr->state_desc);
 		job_ptr->state_reason = WAIT_ACCOUNT;
 		last_job_update = now;
 		return ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE;
 	}
+	assoc_mgr_unlock(&qos_read_lock);
 
 	if (job_ptr->priority == 0) {	/* user/admin hold */
 		if (job_ptr->state_reason != FAIL_BAD_CONSTRAINTS
@@ -2285,9 +2288,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	 * isn't set to override them */
 	/* info("req: %u-%u, %u", job_ptr->details->min_nodes, */
 	/*    job_ptr->details->max_nodes, part_ptr->max_nodes); */
-	error_code = get_node_cnts(job_ptr, qos_ptr, part_ptr,
+	error_code = get_node_cnts(job_ptr, qos_flags, part_ptr,
 				   &min_nodes, &req_nodes, &max_nodes);
-
 
 	if ((error_code == ESLURM_ACCOUNTING_POLICY) ||
 	    (error_code == ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE))
@@ -2483,8 +2485,7 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	job_ptr->start_time = job_ptr->time_last_active = now;
 	if ((job_ptr->time_limit == NO_VAL) ||
 	    ((job_ptr->time_limit > part_ptr->max_time) &&
-	     (!qos_ptr || (qos_ptr && !(qos_ptr->flags
-					& QOS_FLAG_PART_TIME_LIMIT))))) {
+	     !(qos_flags & QOS_FLAG_PART_TIME_LIMIT))) {
 		if (part_ptr->default_time != NO_VAL)
 			job_ptr->time_limit = part_ptr->default_time;
 		else
@@ -2512,8 +2513,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		/* Leave job queued, something is hosed */
 		error("select_g_job_begin(%u): %m", job_ptr->job_id);
 
-		/* Since we began the job earlier we have to cancel it */
-		(void) bb_g_job_cancel(job_ptr);
+		/* Cancel previously started job */
+		(void) bb_g_job_revoke_alloc(job_ptr);
 
 		error_code = ESLURM_NODES_BUSY;
 		job_ptr->start_time = 0;
@@ -2535,8 +2536,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 		/* Do not attempt to allocate the select_bitmap nodes since
 		 * select plugin failed to set job resources */
 
-		/* Since we began the bb job earlier we have to cancel it */
-		(void) bb_g_job_cancel(job_ptr);
+		/* Cancel previously started job */
+		(void) bb_g_job_revoke_alloc(job_ptr);
 
 		error_code = ESLURM_NODES_BUSY;
 		job_ptr->start_time = 0;
@@ -2558,9 +2559,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 			/* If we don't exit earlier the empty job_resrcs might
 			 * be dereferenced later */
 
-			/* Since we began the bb job earlier we have to cancel
-			 * it */
-			(void) bb_g_job_cancel(job_ptr);
+			/* Cancel previously started job */
+			(void) bb_g_job_revoke_alloc(job_ptr);
 
 			error_code = ESLURM_NODES_BUSY;
 			job_ptr->start_time = 0;
@@ -2624,10 +2624,13 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 	}
 
 	/* Request asynchronous launch of a prolog for a
-	 * non-batch job. */
-	if ((slurmctld_conf.prolog_flags & PROLOG_FLAG_ALLOC) ||
-	    (slurmctld_conf.prolog_flags & PROLOG_FLAG_CONTAIN))
-		_launch_prolog(job_ptr);
+	 * non-batch job as long as the node is not configuring for
+	 * a reboot first.  Job state could be changed above so we need to
+	 * recheck its state to see if it's currently configuring.
+	 * PROLOG_FLAG_CONTAIN also turns on PROLOG_FLAG_ALLOC. */
+	if ((slurmctld_conf.prolog_flags & PROLOG_FLAG_ALLOC) &&
+	    (!IS_JOB_CONFIGURING(job_ptr)))
+		launch_prolog(job_ptr);
 
       cleanup:
 	if (job_ptr->array_recs && job_ptr->array_recs->task_id_bitmap &&
@@ -2663,7 +2666,8 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
 /*
  * get_node_cnts - determine the number of nodes for the requested job.
  * IN job_ptr - pointer to the job record.
- * IN qos_ptr - pointer to the job's qos.
+ * IN qos_flags - Flags of the job_ptr's qos.  This is so we don't have to send
+ *                in a pointer or lock the qos read lock before calling.
  * IN part_ptr - pointer to the job's partition.
  * OUT min_nodes - The minimum number of nodes for the job.
  * OUT req_nodes - The number of node the select plugin should target.
@@ -2671,12 +2675,12 @@ extern int select_nodes(struct job_record *job_ptr, bool test_only,
  * RET SLURM_SUCCESS on success, ESLURM code from slurm_errno.h otherwise.
  */
 extern int get_node_cnts(struct job_record *job_ptr,
-			 slurmdb_qos_rec_t *qos_ptr,
+			 uint32_t qos_flags,
 			 struct part_record *part_ptr,
 			 uint32_t *min_nodes,
 			 uint32_t *req_nodes, uint32_t *max_nodes)
 {
-	int error_code = SLURM_SUCCESS;
+	int error_code = SLURM_SUCCESS, i;
 	uint32_t acct_max_nodes;
 	uint32_t wait_reason = 0;
 
@@ -2685,26 +2689,25 @@ extern int get_node_cnts(struct job_record *job_ptr,
 
 	/* On BlueGene systems don't adjust the min/max node limits
 	 * here.  We are working on midplane values. */
-	if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MIN_NODE))
+	if (qos_flags & QOS_FLAG_PART_MIN_NODE)
 		*min_nodes = job_ptr->details->min_nodes;
 	else
 		*min_nodes = MAX(job_ptr->details->min_nodes,
 				 part_ptr->min_nodes);
 	if (!job_ptr->details->max_nodes)
 		*max_nodes = part_ptr->max_nodes;
-	else if (qos_ptr && (qos_ptr->flags & QOS_FLAG_PART_MAX_NODE))
+	else if (qos_flags & QOS_FLAG_PART_MAX_NODE)
 		*max_nodes = job_ptr->details->max_nodes;
 	else
 		*max_nodes = MIN(job_ptr->details->max_nodes,
 				 part_ptr->max_nodes);
 
 	if (job_ptr->details->req_node_bitmap && job_ptr->details->max_nodes) {
-		error_code = bit_set_count(job_ptr->details->req_node_bitmap);
-		if (error_code > job_ptr->details->max_nodes) {
+		i = bit_set_count(job_ptr->details->req_node_bitmap);
+		if (i > job_ptr->details->max_nodes) {
 			info("Job %u required node list has more node than "
 			     "the job can use (%d > %u)",
-			     job_ptr->job_id, error_code,
-			     job_ptr->details->max_nodes);
+			     job_ptr->job_id, i, job_ptr->details->max_nodes);
 			error_code = ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
 			goto end_it;
 		}
@@ -2741,7 +2744,7 @@ end_it:
  * prolog at allocation stage. Then we ask slurmd to launch the prolog
  * asynchroniously and wait on REQUEST_COMPLETE_PROLOG message from slurmd.
  */
-static void _launch_prolog(struct job_record *job_ptr)
+extern void launch_prolog(struct job_record *job_ptr)
 {
 	prolog_launch_msg_t *prolog_msg_ptr;
 	agent_arg_t *agent_arg_ptr;

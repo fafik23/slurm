@@ -85,6 +85,7 @@
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_mpi.h"
+#include "src/common/strlcpy.h"
 #include "src/common/switch.h"
 #include "src/common/util-net.h"
 #include "src/common/xmalloc.h"
@@ -307,7 +308,7 @@ static uint32_t _get_exit_code(stepd_step_rec_t *job)
 			debug("get_exit_code task %u called abort", i);
 			break;
 		}
-		/* If signalled we need to cycle thru all the
+		/* If signaled we need to cycle thru all the
 		 * tasks in case one of them called abort
 		 */
 		if (WIFSIGNALED(job->task[i]->estatus)) {
@@ -938,7 +939,7 @@ _bit_getrange(int start, int size, int *first, int *last)
 /*
  * Send as many step completion messages as necessary to represent
  * all completed nodes in the job step.  There may be nodes that have
- * not yet signalled their completion, so there will be gaps in the
+ * not yet signaled their completion, so there will be gaps in the
  * completed node bitmap, requiring that more than one message be sent.
  */
 static void
@@ -1064,7 +1065,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 		error("spank extern task post-fork failed");
 
 	while ((wait4(pid, &status, 0, &rusage) < 0) && (errno == EINTR)) {
-		;	       /* Wait until above processs exits from signal */
+		;	       /* Wait until above process exits from signal */
 	}
 
 	jobacct = jobacct_gather_remove_task(pid);
@@ -1236,7 +1237,7 @@ job_manager(stepd_step_rec_t *job)
 		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
 		xfree(err_msg);
 		io_close_task_fds(job);
-		goto fail2;
+		goto fail3;
 	}
 
 	/* fork necessary threads for MPI */
@@ -1248,7 +1249,7 @@ job_manager(stepd_step_rec_t *job)
 			   job->jobid, job->stepid, conf->hostname);
 		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
 		xfree(err_msg);
-		goto fail2;
+		goto fail3;
 	}
 
 	if (!job->batch && job->accel_bind_type && (job->node_tasks <= 1))
@@ -1274,7 +1275,7 @@ job_manager(stepd_step_rec_t *job)
 	if ((rc = _fork_all_tasks(job, &io_initialized)) < 0) {
 		debug("_fork_all_tasks failed");
 		rc = ESLURMD_EXECVE_FAILED;
-		goto fail2;
+		goto fail3;
 	}
 
 	/*
@@ -1284,7 +1285,7 @@ job_manager(stepd_step_rec_t *job)
 	 * launch to happen.
 	 */
 	if ((rc != SLURM_SUCCESS) || !io_initialized)
-		goto fail2;
+		goto fail3;
 
 	io_close_task_fds(job);
 
@@ -1317,6 +1318,7 @@ job_manager(stepd_step_rec_t *job)
 
 	_set_job_state(job, SLURMSTEPD_STEP_ENDING);
 
+fail3:
 	if (!job->batch &&
 	    (switch_g_job_fini(job->switch_job) < 0)) {
 		error("switch_g_job_fini: %m");
@@ -1407,22 +1409,6 @@ fail1:
 
 	xfree(ckpt_type);
 	return(rc);
-}
-
-static int
-_pre_task_privileged(stepd_step_rec_t *job, int taskid, struct priv_state *sp)
-{
-	if (_reclaim_privileges(sp) < 0)
-		return SLURM_ERROR;
-
-	if (spank_task_privileged (job, taskid) < 0)
-		return error("spank_task_init_privileged failed");
-
-	if (task_g_pre_launch_priv(job) < 0)
-		return error("pre_launch_priv failed");
-
-	/* sp->gid_list should already be initialized */
-	return(_drop_privileges (job, true, sp, false));
 }
 
 struct exec_wait_info {
@@ -1729,15 +1715,6 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			if (conf->propagate_prio)
 				_set_prio_process(job);
 
-			/*
-			 *  Reclaim privileges and call any plugin hooks
-			 *  that may require elevated privs
-			 *  sprivs.gid_list is already set from the
-			 *  _drop_privileges call above, no not reinitialize.
-			 */
-			if (_pre_task_privileged(job, i, &sprivs) < 0)
-				exit(1);
-
  			if (_become_user(job, &sprivs) < 0) {
  				error("_become_user failed: %m");
 				/* child process, should not return */
@@ -1823,6 +1800,18 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 			      i, job->task[i]->pid, job->pgid);
 		}
 
+		if (spank_task_privileged(job, i) < 0) {
+			error("spank_task_privileged: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
+		if (task_g_pre_launch_priv(job, job->task[i]->pid) < 0) {
+			error("task_g_pre_launch_priv: %m");
+			rc = SLURM_ERROR;
+			goto fail2;
+		}
+
 		if (proctrack_g_add(job, job->task[i]->pid)
 		    == SLURM_ERROR) {
 			error("proctrack_g_add: %m");
@@ -1880,8 +1869,8 @@ fail4:
 	}
 fail3:
 	_reclaim_privileges (&sprivs);
-	FREE_NULL_LIST (exec_wait_list);
 fail2:
+	FREE_NULL_LIST(exec_wait_list);
 	io_close_task_fds(job);
 fail1:
 	pam_finish();
@@ -2314,6 +2303,8 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	resp_msg.msg_type = RESPONSE_LAUNCH_TASKS;
 	resp_msg.protocol_version = protocol_version;
 
+	resp.job_id        = msg->job_id;
+	resp.step_id       = msg->job_step_id;
 	resp.node_name     = name;
 	resp.return_code   = rc ? rc : -1;
 	resp.count_of_pids = 0;
@@ -2343,6 +2334,8 @@ _send_launch_resp(stepd_step_rec_t *job, int rc)
 	resp_msg.data		= &resp;
 	resp_msg.msg_type	= RESPONSE_LAUNCH_TASKS;
 
+	resp.job_id		= job->jobid;
+	resp.step_id		= job->stepid;
 	resp.node_name		= xstrdup(job->node_name);
 	resp.return_code	= rc;
 	resp.count_of_pids	= job->node_tasks;
@@ -2442,7 +2435,7 @@ _drop_privileges(stepd_step_rec_t *job, bool do_setuid,
 
 	if (!getcwd (ps->saved_cwd, sizeof (ps->saved_cwd))) {
 		error ("Unable to get current working directory: %m");
-		strncpy (ps->saved_cwd, "/tmp", sizeof (ps->saved_cwd));
+		strlcpy(ps->saved_cwd, "/tmp", sizeof(ps->saved_cwd));
 	}
 
 #ifdef HAVE_NATIVE_CRAY

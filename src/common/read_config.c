@@ -95,9 +95,12 @@ strong_alias(get_extra_conf_path, slurm_get_extra_conf_path);
 strong_alias(sort_key_pairs, slurm_sort_key_pairs);
 strong_alias(run_in_daemon, slurm_run_in_daemon);
 
-/* Instantiation of the "extern slurm_ctl_conf_t slurmcltd_conf"
- * found in slurmctld.h */
+/*
+ * Instantiation of the "extern slurm_ctl_conf_t slurmctld_conf" and
+ * "bool ignore_state_errors" found in slurmctld.h
+ */
 slurm_ctl_conf_t slurmctld_conf;
+bool ignore_state_errors = false;
 
 static pthread_mutex_t conf_lock = PTHREAD_MUTEX_INITIALIZER;
 static s_p_hashtbl_t *conf_hashtbl = NULL;
@@ -212,6 +215,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"ExtSensorsFreq", S_P_UINT16},
 	{"FairShareDampeningFactor", S_P_UINT16},
 	{"FastSchedule", S_P_UINT16},
+	{"FederationParameters", S_P_STRING},
 	{"FirstJobId", S_P_UINT32},
 	{"GetEnvTimeout", S_P_UINT16},
 	{"GresTypes", S_P_STRING},
@@ -322,6 +326,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"SlurmctldPidFile", S_P_STRING},
 	{"SlurmctldPlugstack", S_P_STRING},
 	{"SlurmctldPort", S_P_STRING},
+	{"SlurmctldSyslogDebug", S_P_STRING},
 	{"SlurmctldTimeout", S_P_UINT16},
 	{"SlurmdDebug", S_P_STRING},
 	{"SlurmdLogFile", S_P_STRING},
@@ -329,6 +334,7 @@ s_p_options_t slurm_conf_options[] = {
 	{"SlurmdPlugstack", S_P_STRING},
 	{"SlurmdPort", S_P_UINT32},
 	{"SlurmdSpoolDir", S_P_STRING},
+	{"SlurmdSyslogDebug", S_P_STRING},
 	{"SlurmdTimeout", S_P_UINT16},
 	{"SlurmSchedLogFile", S_P_STRING},
 	{"SlurmSchedLogLevel", S_P_UINT16},
@@ -368,43 +374,19 @@ s_p_options_t slurm_conf_options[] = {
 	{NULL}
 };
 
-static bool _is_valid_path (char *path, char *msg)
+static bool _is_valid_path(char *path, char *msg)
 {
-	/*
-	 *  Allocate temporary space for walking the list of dirs:
-	 */
-	int pathlen;
-	char *buf = NULL, *p, *entry;
+	char *saveptr = NULL, *buf, *entry;
 
 	if (path == NULL) {
 		error ("is_valid_path: path is NULL!");
-		goto out_false;
+		return false;
 	}
 
-	pathlen = strlen (path);
-	buf = xmalloc (pathlen + 2);
-
-	if (strlcpy (buf, path, pathlen + 1) > pathlen + 1) {
-		error ("is_valid_path: Failed to copy path!");
-		goto out_false;
-	}
-
-	/*
-	*  Ensure the path ends with a ':'
-	*/
-	if (buf [pathlen - 1] != ':') {
-		buf [pathlen] = ':';
-		buf [pathlen + 1] = '\0';
-	}
-
-
-	entry = buf;
-	while ((p = strchr (entry, ':'))) {
+	buf = xstrdup(path);
+	entry = strtok_r(buf, ":", &saveptr);
+	while (entry) {
 		struct stat st;
-		/*
-		*  NUL terminate colon and advance p
-		*/
-		*(p++) = '\0';
 
 		/*
 		*  Check to see if current path element is a valid dir
@@ -412,22 +394,21 @@ static bool _is_valid_path (char *path, char *msg)
 		if (stat (entry, &st) < 0) {
 			error ("%s: %s: %m", msg, entry);
 			goto out_false;
-		}
-		else if (!S_ISDIR (st.st_mode)) {
+		} else if (!S_ISDIR (st.st_mode)) {
 			error ("%s: %s: Not a directory", msg, entry);
 			goto out_false;
 		}
 		/*
 		*  Otherwise path element is valid, continue..
 		*/
-		entry = p;
+		entry = strtok_r(NULL, ":", &saveptr);
 	}
 
-	xfree (buf);
+	xfree(buf);
  	return true;
 
-  out_false:
-	xfree (buf);
+out_false:
+	xfree(buf);
 	return false;
 }
 
@@ -639,6 +620,7 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 		bool no_threads = false;
 		bool no_sockets_per_board = false;
 		uint16_t sockets_per_board = 0;
+		uint16_t calc_cpus;
 
 		n = xmalloc(sizeof(slurm_conf_node_t));
 		dflt = default_nodename_tbl;
@@ -815,11 +797,6 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 			/* In this case Boards=# is used.
 			 * CPUs=# or Procs=# are ignored.
 			 */
-			if (!no_cpus) {
-				error("NodeNames=%s CPUs=# or Procs=# "
-				      "with Boards=# is invalid and "
-				      "is ignored.", n->nodenames);
-			}
 			if (n->boards == 0) {
 				/* make sure boards is non-zero */
 				error("NodeNames=%s Boards=0 is "
@@ -853,7 +830,13 @@ static int _parse_nodename(void **dest, slurm_parser_enum_t type,
 				n->sockets = n->boards;
 			}
 			/* Node boards factored into sockets */
-			n->cpus = n->sockets * n->cores * n->threads;
+			calc_cpus = n->sockets * n->cores * n->threads;
+			if (!no_cpus && (n->cpus != calc_cpus)) {
+				error("NodeNames=%s CPUs=# or Procs=# "
+				      "with Boards=# is invalid and "
+				      "is ignored.", n->nodenames);
+			}
+			n->cpus = calc_cpus;
 		}
 
 		if (n->core_spec_cnt >= (n->sockets * n->cores)) {
@@ -1007,9 +990,9 @@ int slurm_conf_frontend_array(slurm_conf_frontend_t **ptr_array[])
 					   "NodeName", conf_hashtbl) ||
 			    (node_count == 0))
 				fatal("No front end nodes configured");
-			strncpy(addresses, node_ptr[0]->addresses,
+			strlcpy(addresses, node_ptr[0]->addresses,
 				sizeof(addresses));
-			strncpy(hostnames, node_ptr[0]->hostnames,
+			strlcpy(hostnames, node_ptr[0]->hostnames,
 				sizeof(hostnames));
 			local_front_end.addresses = addresses;
 			local_front_end.frontends = hostnames;
@@ -2359,6 +2342,7 @@ free_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr, bool purge_node_hash)
 	xfree (ctl_conf_ptr->epilog_slurmctld);
 	FREE_NULL_LIST(ctl_conf_ptr->ext_sensors_conf);
 	xfree (ctl_conf_ptr->ext_sensors_type);
+	xfree (ctl_conf_ptr->fed_params);
 	xfree (ctl_conf_ptr->gres_plugins);
 	xfree (ctl_conf_ptr->health_check_program);
 	xfree (ctl_conf_ptr->job_acct_gather_freq);
@@ -2493,10 +2477,12 @@ init_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr)
 	xfree (ctl_conf_ptr->epilog);
 	ctl_conf_ptr->epilog_msg_time		= (uint32_t) NO_VAL;
 	ctl_conf_ptr->fast_schedule		= (uint16_t) NO_VAL;
+	xfree(ctl_conf_ptr->fed_params);
 	ctl_conf_ptr->first_job_id		= NO_VAL;
 	ctl_conf_ptr->get_env_timeout		= 0;
 	xfree(ctl_conf_ptr->gres_plugins);
-	ctl_conf_ptr->group_info		= (uint16_t) NO_VAL;
+	ctl_conf_ptr->group_time		= 0;
+	ctl_conf_ptr->group_force		= 0;
 	ctl_conf_ptr->hash_val			= (uint32_t) NO_VAL;
 	ctl_conf_ptr->health_check_interval	= 0;
 	xfree(ctl_conf_ptr->health_check_program);
@@ -2582,6 +2568,7 @@ init_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr)
 	xfree (ctl_conf_ptr->slurmd_user_name);
 	ctl_conf_ptr->slurmctld_debug		= (uint16_t) NO_VAL;
 	xfree (ctl_conf_ptr->slurmctld_logfile);
+	ctl_conf_ptr->slurmctld_syslog_debug    = NO_VAL16;
 	xfree (ctl_conf_ptr->sched_logfile);
 	ctl_conf_ptr->sched_log_level		= (uint16_t) NO_VAL;
 	xfree (ctl_conf_ptr->slurmctld_pidfile);
@@ -2591,6 +2578,7 @@ init_slurm_conf (slurm_ctl_conf_t *ctl_conf_ptr)
 	ctl_conf_ptr->slurmctld_timeout		= (uint16_t) NO_VAL;
 	ctl_conf_ptr->slurmd_debug		= (uint16_t) NO_VAL;
 	xfree (ctl_conf_ptr->slurmd_logfile);
+	ctl_conf_ptr->slurmd_syslog_debug       = NO_VAL16;
 	xfree (ctl_conf_ptr->slurmd_pidfile);
 	xfree (ctl_conf_ptr->slurmd_plugstack);
  	ctl_conf_ptr->slurmd_port		= (uint32_t) NO_VAL;
@@ -3087,26 +3075,14 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 
 	(void) s_p_get_string(&conf->bb_type, "BurstBufferType", hashtbl);
 
-	if (s_p_get_uint16(&uint16_tmp, "GroupUpdateTime", hashtbl)) {
-		if (uint16_tmp > GROUP_TIME_MASK) {
-			error("GroupUpdateTime exceeds limit of %u",
-			      GROUP_TIME_MASK);
-			return SLURM_ERROR;
-		}
-		conf->group_info = uint16_tmp;
-	} else
-		conf->group_info = DEFAULT_GROUP_INFO;
-	if (s_p_get_uint16(&uint16_tmp, "CacheGroups", hashtbl) && uint16_tmp)
-		conf->group_info |= GROUP_CACHE;
+	if (s_p_get_uint16(&uint16_tmp, "CacheGroups", hashtbl))
+		debug("Ignoring obsolete CacheGroups option.");
 
 	if (!s_p_get_string(&conf->core_spec_plugin, "CoreSpecPlugin",
 	    hashtbl)) {
 		conf->core_spec_plugin =
 			xstrdup(DEFAULT_CORE_SPEC_PLUGIN);
 	}
-	if (s_p_get_uint16(&uint16_tmp, "GroupUpdateForce", hashtbl) &&
-	    uint16_tmp)
-		conf->group_info |= GROUP_FORCE;
 
 	if (!s_p_get_string(&conf->checkpoint_type, "CheckpointType", hashtbl))
 		conf->checkpoint_type = xstrdup(DEFAULT_CHECKPOINT_TYPE);
@@ -3204,10 +3180,19 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 	if (!s_p_get_uint16(&conf->fast_schedule, "FastSchedule", hashtbl))
 		conf->fast_schedule = DEFAULT_FAST_SCHEDULE;
 
+	(void) s_p_get_string(&conf->fed_params, "FederationParameters",
+			      hashtbl);
+
 	if (!s_p_get_uint32(&conf->first_job_id, "FirstJobId", hashtbl))
 		conf->first_job_id = DEFAULT_FIRST_JOB_ID;
 
 	(void) s_p_get_string(&conf->gres_plugins, "GresTypes", hashtbl);
+
+	if (!s_p_get_uint16(&conf->group_force, "GroupUpdateForce", hashtbl))
+		conf->group_force = DEFAULT_GROUP_FORCE;
+
+	if (!s_p_get_uint16(&conf->group_time, "GroupUpdateTime", hashtbl))
+		conf->group_time = DEFAULT_GROUP_TIME;
 
 	if (!s_p_get_uint16(&conf->inactive_limit, "InactiveLimit", hashtbl))
 		conf->inactive_limit = DEFAULT_INACTIVE_LIMIT;
@@ -3334,6 +3319,10 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 	(void) s_p_get_string(&conf->licenses, "Licenses", hashtbl);
 
 	if (s_p_get_string(&temp_str, "LogTimeFormat", hashtbl)) {
+		/*
+		 * If adding to this please update src/api/config_log.c to do
+		 * the reverse translation.
+		 */
 		if (xstrcasestr(temp_str, "iso8601_ms"))
 			conf->log_fmt = LOG_FMT_ISO8601_MS;
 		else if (xstrcasestr(temp_str, "iso8601"))
@@ -3866,6 +3855,8 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 			conf->private_data |= PRIVATE_DATA_ACCOUNTS;
 		if (xstrcasestr(temp_str, "cloud"))
 			conf->private_data |= PRIVATE_CLOUD_NODES;
+		if (xstrcasestr(temp_str, "event"))
+			conf->private_data |= PRIVATE_DATA_EVENTS;
 		if (xstrcasestr(temp_str, "job"))
 			conf->private_data |= PRIVATE_DATA_JOBS;
 		if (xstrcasestr(temp_str, "node"))
@@ -4078,6 +4069,17 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 	(void )s_p_get_string(&conf->slurmctld_logfile, "SlurmctldLogFile",
 			      hashtbl);
 
+	if (s_p_get_string(&temp_str, "SlurmctldSyslogDebug", hashtbl)) {
+		conf->slurmctld_syslog_debug = log_string2num(temp_str);
+		if (conf->slurmctld_syslog_debug == NO_VAL16) {
+			error("Invalid SlurmctldSyslogDebug %s", temp_str);
+			return SLURM_ERROR;
+		}
+		xfree(temp_str);
+		_normalize_debug_level(&conf->slurmctld_syslog_debug);
+	} else
+		conf->slurmctld_syslog_debug = LOG_LEVEL_QUIET;
+
 	if (s_p_get_string(&temp_str, "SlurmctldPort", hashtbl)) {
 		char *end_ptr = NULL;
 		long port_long;
@@ -4150,6 +4152,17 @@ _validate_and_set_defaults(slurm_ctl_conf_t *conf, s_p_hashtbl_t *hashtbl)
 
 	if (!s_p_get_string(&conf->slurmd_spooldir, "SlurmdSpoolDir", hashtbl))
 		conf->slurmd_spooldir = xstrdup(DEFAULT_SPOOLDIR);
+
+	if (s_p_get_string(&temp_str, "SlurmdSyslogDebug", hashtbl)) {
+		conf->slurmd_syslog_debug = log_string2num(temp_str);
+		if (conf->slurmd_syslog_debug == NO_VAL16) {
+			error("Invalid SlurmdSyslogDebug %s", temp_str);
+			return SLURM_ERROR;
+		}
+		xfree(temp_str);
+		_normalize_debug_level(&conf->slurmd_syslog_debug);
+	} else
+		conf->slurmd_syslog_debug = LOG_LEVEL_QUIET;
 
 	if (!s_p_get_uint16(&conf->slurmd_timeout, "SlurmdTimeout", hashtbl))
 		conf->slurmd_timeout = DEFAULT_SLURMD_TIMEOUT;
@@ -4649,6 +4662,11 @@ extern char * debug_flags2str(uint64_t debug_flags)
 			xstrcat(rc, ",");
 		xstrcat(rc, "Gres");
 	}
+	if (debug_flags & DEBUG_FLAG_HETERO_JOBS) {
+		if (rc)
+			xstrcat(rc, ",");
+		xstrcat(rc, "HeteroJobs");
+	}
 	if (debug_flags & DEBUG_FLAG_INTERCONNECT) {
 		if (rc)
 			xstrcat(rc, ",");
@@ -4820,8 +4838,10 @@ extern int debug_str2flags(char *debug_flags, uint64_t *flags_out)
 			(*flags_out) |= DEBUG_FLAG_FRONT_END;
 		else if (xstrcasecmp(tok, "Gang") == 0)
 			(*flags_out) |= DEBUG_FLAG_GANG;
-		else if (xstrcasecmp(tok, "Gres") == 0)
-			(*flags_out) |= DEBUG_FLAG_GRES;
+		else if (xstrcasecmp(tok, "HeteroJobs") == 0)
+			(*flags_out) |= DEBUG_FLAG_HETERO_JOBS;
+		else if (xstrcasecmp(tok, "Federation") == 0)
+			(*flags_out) |= DEBUG_FLAG_FEDR;
 		else if (xstrcasecmp(tok, "Interconnect") == 0)
 			(*flags_out) |= DEBUG_FLAG_INTERCONNECT;
 		else if (xstrcasecmp(tok, "Filesystem") == 0)

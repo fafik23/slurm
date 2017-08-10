@@ -491,11 +491,8 @@ static bb_job_t *_get_bb_job(struct job_record *job_ptr)
 	bb_job->account = xstrdup(job_ptr->account);
 	if (job_ptr->part_ptr)
 		bb_job->partition = xstrdup(job_ptr->part_ptr->name);
-	if (job_ptr->qos_ptr) {
-		slurmdb_qos_rec_t *qos_ptr =
-			(slurmdb_qos_rec_t *)job_ptr->qos_ptr;
-		bb_job->qos = xstrdup(qos_ptr->name);
-	}
+	if (job_ptr->qos_ptr)
+		bb_job->qos = xstrdup(job_ptr->qos_ptr->name);
 	bb_job->state = BB_STATE_PENDING;
 	bb_job->user_id = job_ptr->user_id;
 	bb_specs = xstrdup(job_ptr->burst_buffer);
@@ -934,6 +931,8 @@ static void _recover_bb_state(void)
 	buffer = create_buf(data, data_size);
 	safe_unpack16(&protocol_version, buffer);
 	if (protocol_version == (uint16_t)NO_VAL) {
+		if (!ignore_state_errors)
+			fatal("Can not recover burst_buffer/cray state, data version incompatible, start with '-i' to ignore this");
 		error("******************************************************************");
 		error("Can not recover burst_buffer/cray state, data version incompatible");
 		error("******************************************************************");
@@ -1005,6 +1004,8 @@ static void _recover_bb_state(void)
 	return;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete burst buffer data checkpoint file, start with '-i' to ignore this");
 	error("Incomplete burst buffer data checkpoint file");
 	xfree(account);
 	xfree(name);
@@ -3815,7 +3816,7 @@ static void *_start_pre_run(void *x)
 	pre_run_args_t *pre_run_args = (pre_run_args_t *) x;
 	char *resp_msg = NULL;
 	char jobid_buf[64];
-	bb_job_t *bb_job;
+	bb_job_t *bb_job = NULL;
 	int status = 0;
 	struct job_record *job_ptr;
 	bool run_kill_job = false;
@@ -3886,7 +3887,10 @@ static void *_start_pre_run(void *x)
 				true);
 	} else if (bb_job) {
 		/* Pre-run success and the job's BB record exists */
-		bb_job->state = BB_STATE_RUNNING;
+		if (bb_job->state == BB_STATE_ALLOC_REVOKE)
+			bb_job->state = BB_STATE_STAGED_IN;
+		else
+			bb_job->state = BB_STATE_RUNNING;
 	}
 	if (job_ptr)
 		prolog_running_decr(job_ptr);
@@ -3899,6 +3903,33 @@ static void *_start_pre_run(void *x)
 	_free_script_argv(pre_run_args->args);
 	xfree(pre_run_args);
 	return NULL;
+}
+
+/* Revoke allocation, but do not release resources.
+ * Executed after bb_p_job_begin() if there was an allocation failure.
+ * Does not release previously allocated resources.
+ *
+ * Returns a SLURM errno.
+ */
+extern int bb_p_job_revoke_alloc(struct job_record *job_ptr)
+{
+	bb_job_t *bb_job = NULL;
+	int rc = SLURM_SUCCESS;
+
+	slurm_mutex_lock(&bb_state.bb_mutex);
+	if (job_ptr)
+		bb_job = _get_bb_job(job_ptr);
+	if (bb_job) {
+		if (bb_job->state == BB_STATE_RUNNING)
+			bb_job->state = BB_STATE_STAGED_IN;
+		else if (bb_job->state == BB_STATE_PRE_RUN)
+			bb_job->state = BB_STATE_ALLOC_REVOKE;
+	} else {
+		rc = SLURM_ERROR;
+	}
+	slurm_mutex_unlock(&bb_state.bb_mutex);
+
+	return rc;
 }
 
 /*
@@ -4462,8 +4493,7 @@ static void *_create_persistent(void *x)
 					",%u,", assoc->id);
 			}
 			if (job_ptr->qos_ptr) {
-				slurmdb_qos_rec_t *qos_ptr =
-					(slurmdb_qos_rec_t *)job_ptr->qos_ptr;
+				slurmdb_qos_rec_t *qos_ptr = job_ptr->qos_ptr;
 				bb_alloc->qos_ptr = qos_ptr;
 				bb_alloc->qos = xstrdup(qos_ptr->name);
 			}

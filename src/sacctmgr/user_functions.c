@@ -706,7 +706,7 @@ extern int sacctmgr_add_user(int argc, char **argv)
 
 	wckey_cond->name_list = list_create(slurm_destroy_char);
 
-	for (i=0; i<argc; i++) {
+	for (i = 0; i < argc; i++) {
 		int end = parse_option_end(argv[i]);
 		if (!end)
 			command_len=strlen(argv[i]);
@@ -853,10 +853,12 @@ extern int sacctmgr_add_user(int argc, char **argv)
 			db_conn, my_uid, &account_cond);
 
 		if (!local_acct_list) {
-			exit_code=1;
+			exit_code = 1;
 			fprintf(stderr, " Problem getting accounts "
 				"from database.  Contact your admin.\n");
 			FREE_NULL_LIST(local_user_list);
+			xfree(default_acct);
+			xfree(default_wckey);
 			slurmdb_destroy_wckey_cond(wckey_cond);
 			slurmdb_destroy_assoc_cond(assoc_cond);
 			return SLURM_ERROR;
@@ -870,7 +872,9 @@ extern int sacctmgr_add_user(int argc, char **argv)
 			db_conn, my_uid, &query_assoc_cond);
 
 		if (!local_assoc_list) {
-			exit_code=1;
+			xfree(default_acct);
+			xfree(default_wckey);
+			exit_code = 1;
 			fprintf(stderr, " Problem getting assocs "
 				"from database.  Contact your admin.\n");
 			FREE_NULL_LIST(local_user_list);

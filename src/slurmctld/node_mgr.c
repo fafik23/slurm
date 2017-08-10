@@ -83,8 +83,6 @@
 #include "src/slurmctld/trigger_mgr.h"
 #include "src/plugins/select/bluegene/bg_enums.h"
 
-#define _DEBUG		0
-
 /* No need to change we always pack SLURM_PROTOCOL_VERSION */
 #define NODE_STATE_VERSION        "PROTOCOL_VERSION"
 
@@ -299,6 +297,7 @@ extern int load_all_node_state ( bool state_only )
 	Buf buffer;
 	char *ver_str = NULL;
 	hostset_t hs = NULL;
+	hostlist_t down_nodes = NULL;
 	bool power_save_mode = false;
 	uint16_t protocol_version = (uint16_t)NO_VAL;
 
@@ -311,8 +310,10 @@ extern int load_all_node_state ( bool state_only )
 	lock_state_files ();
 	state_fd = _open_node_state_file(&state_file);
 	if (state_fd < 0) {
-		info ("No node state file (%s) to recover", state_file);
-		error_code = ENOENT;
+		info("No node state file (%s) to recover", state_file);
+		xfree(state_file);
+		unlock_state_files();
+		return ENOENT;
 	}
 	else {
 		data_allocated = BUF_SIZE;
@@ -346,6 +347,8 @@ extern int load_all_node_state ( bool state_only )
 		safe_unpack16(&protocol_version, buffer);
 
 	if (!protocol_version || (protocol_version == (uint16_t)NO_VAL)) {
+		if (!ignore_state_errors)
+			fatal("Can not recover node state, data version incompatible, start with '-i' to ignore this");
 		error("*****************************************************");
 		error("Can not recover node state, data version incompatible");
 		error("*****************************************************");
@@ -640,6 +643,15 @@ extern int load_all_node_state ( bool state_only )
 
 		if (node_ptr) {
 			node_cnt++;
+
+			if (IS_NODE_DOWN(node_ptr)) {
+				if (down_nodes)
+					hostlist_push(down_nodes, node_name);
+				else
+					down_nodes = hostlist_create(
+							node_name);
+			}
+
 			if (node_ptr->node_state & NODE_STATE_POWER_UP) {
 				/* last_response value not saved,
 				 * make best guess */
@@ -685,10 +697,21 @@ fini:	info("Recovered state of %d nodes", node_cnt);
 		info("Cleared POWER_SAVE flag from nodes %s", node_names);
 		hostset_destroy(hs);
 	}
+
+	if (down_nodes) {
+		char *down_host_str = NULL;
+		down_host_str = hostlist_ranged_string_xmalloc(down_nodes);
+		info("Down nodes: %s", down_host_str);
+		xfree(down_host_str);
+		hostlist_destroy(down_nodes);
+	}
+
 	free_buf (buffer);
 	return error_code;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete node data checkpoint file, start with '-i' to ignore this");
 	error("Incomplete node data checkpoint file");
 	error_code = EFAULT;
 	xfree(features);
@@ -732,7 +755,6 @@ static bool _is_cloud_hidden(struct node_record *node_ptr)
 static bool _node_is_hidden(struct node_record *node_ptr, uid_t uid)
 {
 	int i;
-	bool shown = false;
 
 	if ((slurmctld_conf.private_data & PRIVATE_DATA_NODES)
 	    && (slurm_mcs_get_privatedata() == 1)
@@ -740,14 +762,15 @@ static bool _node_is_hidden(struct node_record *node_ptr, uid_t uid)
 	    && (mcs_g_check_mcs_label(uid, node_ptr->mcs_label) != 0))
 		return true;
 
-	for (i=0; i<node_ptr->part_cnt; i++) {
-		if (!(node_ptr->part_pptr[i]->flags & PART_FLAG_HIDDEN)) {
-			shown = true;
-			break;
+	if (!node_ptr->part_cnt)
+		return false;
+
+	for (i = 0; i < node_ptr->part_cnt; i++) {
+		/* return false if the node belongs to any visible partition */
+		if (part_is_visible(node_ptr->part_pptr[i], uid)) {
+			return false;
 		}
 	}
-	if (shown || (node_ptr->part_cnt == 0))
-		return false;
 
 	return true;
 }
@@ -776,7 +799,7 @@ extern void pack_all_node (char **buffer_ptr, int *buffer_size,
 	bool hidden;
 
 	xassert(verify_lock(CONFIG_LOCK, READ_LOCK));
-	xassert(verify_lock(PART_LOCK, WRITE_LOCK));
+	xassert(verify_lock(PART_LOCK, READ_LOCK));
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
@@ -794,7 +817,6 @@ extern void pack_all_node (char **buffer_ptr, int *buffer_size,
 		pack_time(now, buffer);
 
 		/* write node records */
-		part_filter_set(uid);
 		for (inx = 0; inx < node_record_count; inx++, node_ptr++) {
 			xassert (node_ptr->magic == NODE_MAGIC);
 			xassert (node_ptr->config_ptr->magic ==
@@ -828,7 +850,6 @@ extern void pack_all_node (char **buffer_ptr, int *buffer_size,
 			}
 			nodes_packed++;
 		}
-		part_filter_clear();
 	} else {
 		error("select_g_select_jobinfo_pack: protocol_version "
 		      "%hu not supported", protocol_version);
@@ -868,7 +889,7 @@ extern void pack_one_node (char **buffer_ptr, int *buffer_size,
 	bool hidden;
 
 	xassert(verify_lock(CONFIG_LOCK, READ_LOCK));
-	xassert(verify_lock(PART_LOCK, WRITE_LOCK));
+	xassert(verify_lock(PART_LOCK, READ_LOCK));
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
@@ -886,7 +907,6 @@ extern void pack_one_node (char **buffer_ptr, int *buffer_size,
 		pack_time(now, buffer);
 
 		/* write node records */
-		part_filter_set(uid);
 		if (node_name)
 			node_ptr = find_node_record(node_name);
 		else
@@ -911,7 +931,6 @@ extern void pack_one_node (char **buffer_ptr, int *buffer_size,
 				nodes_packed++;
 			}
 		}
-		part_filter_clear();
 	} else {
 		error("select_g_select_jobinfo_pack: protocol_version "
 		      "%hu not supported", protocol_version);
@@ -1281,6 +1300,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 
 	while ( (this_node_name = hostlist_shift (host_list)) ) {
 		int err_code = 0;
+		bool acct_updated = false;
 
 		node_ptr = find_node_record (this_node_name);
 		node_inx = node_ptr - node_record_table_ptr;
@@ -1389,6 +1409,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 						acct_db_conn,
 						node_ptr,
 						now);
+					acct_updated = true;
 				}
 				node_ptr->node_state &= (~NODE_STATE_DRAIN);
 				node_ptr->node_state &= (~NODE_STATE_FAIL);
@@ -1436,6 +1457,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 						acct_db_conn,
 						node_ptr,
 						now);
+					acct_updated = true;
 				}
 				node_ptr->node_state &= (~NODE_STATE_DRAIN);
 				state_val = base_state;
@@ -1460,6 +1482,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 						acct_db_conn,
 						node_ptr,
 						now);
+					acct_updated = true;
 				} else if (IS_NODE_IDLE(node_ptr)   &&
 					   (IS_NODE_DRAIN(node_ptr) ||
 					    IS_NODE_FAIL(node_ptr))) {
@@ -1467,6 +1490,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 						acct_db_conn,
 						node_ptr,
 						now);
+					acct_updated = true;
 				}	/* else already fully available */
 				node_ptr->node_state &= (~NODE_STATE_DRAIN);
 				node_ptr->node_state &= (~NODE_STATE_FAIL);
@@ -1587,7 +1611,7 @@ int update_node ( update_node_msg_t * update_node_msg )
 			}
 		}
 
-		if (!IS_NODE_DOWN(node_ptr) &&
+		if (!acct_updated && !IS_NODE_DOWN(node_ptr) &&
 		    !IS_NODE_DRAIN(node_ptr) && !IS_NODE_FAIL(node_ptr)) {
 			/* reason information is handled in
 			   clusteracct_storage_g_node_up()
@@ -2873,6 +2897,8 @@ extern int validate_nodes_via_front_end(
 					      node_record_table_ptr->name);
 	for (i = 0, node_ptr = node_record_table_ptr; i < node_record_count;
 	     i++, node_ptr++) {
+		bool acct_updated = false;
+
 		config_ptr = node_ptr->config_ptr;
 		node_ptr->last_response = MAX(now, node_ptr->last_response);
 
@@ -2937,6 +2963,7 @@ extern int validate_nodes_via_front_end(
 					clusteracct_storage_g_node_up(
 						acct_db_conn,
 						node_ptr, now);
+					acct_updated = true;
 				}
 			} else if (IS_NODE_DOWN(node_ptr) &&
 				   ((slurmctld_conf.ret2service == 2) ||
@@ -2964,6 +2991,7 @@ extern int validate_nodes_via_front_end(
 					clusteracct_storage_g_node_up(
 						acct_db_conn,
 						node_ptr, now);
+					acct_updated = true;
 				}
 			} else if (IS_NODE_ALLOCATED(node_ptr) &&
 				   (node_ptr->run_job_cnt == 0)) {
@@ -3003,7 +3031,7 @@ extern int validate_nodes_via_front_end(
 			memcpy(node_ptr->energy, reg_msg->energy,
 			       sizeof(acct_gather_energy_t));
 
-		if (slurmctld_init_db &&
+		if (!acct_updated && slurmctld_init_db &&
 		    !IS_NODE_DOWN(node_ptr) &&
 		    !IS_NODE_DRAIN(node_ptr) && !IS_NODE_FAIL(node_ptr)) {
 			/* reason information is handled in
@@ -3471,8 +3499,10 @@ extern void make_node_alloc(struct node_record *node_ptr,
 		(node_ptr->no_share_job_cnt)++;
 	}
 
-	if (job_ptr->details &&
-	    (job_ptr->details->whole_node == WHOLE_NODE_USER)) {
+	if ((job_ptr->details &&
+	     (job_ptr->details->whole_node == WHOLE_NODE_USER)) ||
+	    (job_ptr->part_ptr &&
+	     (job_ptr->part_ptr->flags & PART_FLAG_EXCLUSIVE_USER))) {
 		node_ptr->owner_job_cnt++;
 		node_ptr->owner = job_ptr->user_id;
 	}
@@ -3663,7 +3693,7 @@ void make_node_idle(struct node_record *node_ptr,
 				      node_ptr->name);
 			}
 			if (node_ptr->comp_job_cnt > 0)
-				return;		/* More jobs completing */
+				goto fini;	/* More jobs completing */
 		}
 	}
 
@@ -3676,20 +3706,12 @@ void make_node_idle(struct node_record *node_ptr,
 		}
 	}
 
-	if (job_ptr && job_ptr->details &&
-	    (job_ptr->details->whole_node == WHOLE_NODE_USER)) {
-		if (--node_ptr->owner_job_cnt == 0) {
-			node_ptr->owner = NO_VAL;
-			xfree(node_ptr->mcs_label);
-		}
-	}
-
 	node_flags = node_ptr->node_state & NODE_STATE_FLAGS;
 	if (IS_NODE_DOWN(node_ptr)) {
 		debug3("%s: %s node %s being left DOWN",
 		       __func__, jobid2str(job_ptr, jbuf,
 					   sizeof(jbuf)), node_ptr->name);
-		return;
+		goto fini;
 	}
 	bit_set(up_node_bitmap, inx);
 
@@ -3725,6 +3747,21 @@ void make_node_idle(struct node_record *node_ptr,
 		    !IS_NODE_COMPLETING(node_ptr))
 			bit_set(idle_node_bitmap, inx);
 		node_ptr->last_idle = now;
+	}
+
+fini:
+	if (job_ptr &&
+	    ((job_ptr->details &&
+	      (job_ptr->details->whole_node == WHOLE_NODE_USER)) ||
+	     (job_ptr->part_ptr &&
+	      (job_ptr->part_ptr->flags & PART_FLAG_EXCLUSIVE_USER)))) {
+		if (node_ptr->owner_job_cnt == 0) {
+			error("%s: node_ptr->owner_job_cnt underflow",
+			      __func__);
+		} else if (--node_ptr->owner_job_cnt == 0) {
+			node_ptr->owner = NO_VAL;
+			xfree(node_ptr->mcs_label);
+		}
 	}
 	last_node_update = now;
 }

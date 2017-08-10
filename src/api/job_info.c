@@ -61,6 +61,7 @@
 #include "src/common/parse_time.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 #include "src/common/uthash/uthash.h"
 #include "src/common/xmalloc.h"
@@ -411,11 +412,20 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 				   job_ptr->array_job_id,
 				   job_ptr->array_task_id);
 		}
+	} else if (job_ptr->pack_job_id) {
+		xstrfmtcat(out, "PackJobId=%u PackJobOffset=%u ",
+			   job_ptr->pack_job_id, job_ptr->pack_job_offset);
 	}
 	xstrfmtcat(out, "JobName=%s", job_ptr->name);
 	xstrcat(out, line_end);
 
-	/****** Line 2 ******/
+	/****** Line ******/
+	if (job_ptr->pack_job_id_set) {
+		xstrfmtcat(out, "PackJobIdSet=%s", job_ptr->pack_job_id_set);
+		xstrcat(out, line_end);
+	}
+
+	/****** Line ******/
 	user_name = uid_to_string((uid_t) job_ptr->user_id);
 	group_name = gid_to_string((gid_t) job_ptr->group_id);
 	xstrfmtcat(out, "UserId=%s(%u) GroupId=%s(%u) MCS_label=%s",
@@ -1198,20 +1208,23 @@ static int _load_fed_jobs(slurm_msg_t *req_msg,
 				local_job_cnt = orig_msg->record_count;
 			*job_info_msg_pptr = orig_msg;
 		} else {
-			/* Merge the job records into a single response message */
+			/* Merge job records into a single response message */
 			orig_msg->last_update = MIN(orig_msg->last_update,
 						    new_msg->last_update);
 			new_rec_cnt = orig_msg->record_count +
 				      new_msg->record_count;
-			orig_msg->job_array = xrealloc(orig_msg->job_array,
-						sizeof(slurm_job_info_t) *
-						new_rec_cnt);
-			(void) memcpy(orig_msg->job_array +
-				      orig_msg->record_count,
-				      new_msg->job_array,
-				      sizeof(slurm_job_info_t) *
-				      new_msg->record_count);
-			orig_msg->record_count = new_rec_cnt;
+			if (new_msg->record_count) {
+				orig_msg->job_array =
+					xrealloc(orig_msg->job_array,
+						 sizeof(slurm_job_info_t) *
+						 new_rec_cnt);
+				(void) memcpy(orig_msg->job_array +
+					      orig_msg->record_count,
+					      new_msg->job_array,
+					      sizeof(slurm_job_info_t) *
+					      new_msg->record_count);
+				orig_msg->record_count = new_rec_cnt;
+			}
 			xfree(new_msg->job_array);
 			xfree(new_msg);
 		}
@@ -1295,7 +1308,7 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 		cluster_name = xstrdup(working_cluster_rec->name);
 	else
 		cluster_name = slurm_get_cluster_name();
-	if ((show_flags & SHOW_GLOBAL) &&
+	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
 	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
 	    cluster_in_federation(ptr, cluster_name)) {
 		/* In federation. Need full info from all clusters */
@@ -1304,7 +1317,7 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 	} else {
 		/* Report local cluster info only */
 		show_flags |= SHOW_LOCAL;
-		show_flags &= (~SHOW_GLOBAL);
+		show_flags &= (~SHOW_FEDERATION);
 	}
 
 	slurm_msg_t_init(&req_msg);
@@ -1313,7 +1326,7 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 	req_msg.msg_type = REQUEST_JOB_INFO;
 	req_msg.data     = &req;
 
-	if (show_flags & SHOW_GLOBAL) {
+	if (show_flags & SHOW_FEDERATION) {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_jobs(&req_msg, job_info_msg_pptr, show_flags,
 				    cluster_name, fed);
@@ -1864,7 +1877,7 @@ slurm_network_callerid (network_callerid_msg_t req, uint32_t *job_id,
 		case RESPONSE_NETWORK_CALLERID:
 			resp = (network_callerid_resp_t*)resp_msg.data;
 			*job_id = resp->job_id;
-			strncpy(node_name, resp->node_name, node_name_size);
+			strlcpy(node_name, resp->node_name, node_name_size);
 			break;
 		case RESPONSE_SLURM_RC:
 			rc = ((return_code_msg_t *) resp_msg.data)->return_code;
@@ -2174,12 +2187,15 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 	int rc;
 
 	cluster_name = slurm_get_cluster_name();
-	if ((show_flags & SHOW_LOCAL) == 0) {
-		if (slurm_load_federation(&ptr) ||
-		    !cluster_in_federation(ptr, cluster_name)) {
-			/* Not in federation */
-			show_flags |= SHOW_LOCAL;
-		}
+	if ((show_flags & SHOW_FEDERATION) && !(show_flags & SHOW_LOCAL) &&
+	    (slurm_load_federation(&ptr) == SLURM_SUCCESS) &&
+	    cluster_in_federation(ptr, cluster_name)) {
+		/* In federation. Need full info from all clusters */
+		show_flags &= (~SHOW_LOCAL);
+	} else {
+		/* Report local cluster info only */
+		show_flags |= SHOW_LOCAL;
+		show_flags &= (~SHOW_FEDERATION);
 	}
 
 	memset(&factors_req, 0, sizeof(priority_factors_request_msg_t));
@@ -2193,13 +2209,13 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 
 	/* With -M option, working_cluster_rec is set and  we only get
 	 * information for that cluster */
-	if (working_cluster_rec || !ptr || (show_flags & SHOW_LOCAL)) {
-		rc = _load_cluster_job_prio(&req_msg, factors_resp,
-					    working_cluster_rec);
-	} else {
+	if (show_flags & SHOW_FEDERATION) {
 		fed = (slurmdb_federation_rec_t *) ptr;
 		rc = _load_fed_job_prio(&req_msg, factors_resp, show_flags,
 					cluster_name, fed);
+	} else {
+		rc = _load_cluster_job_prio(&req_msg, factors_resp,
+					    working_cluster_rec);
 	}
 
 	if (ptr)
