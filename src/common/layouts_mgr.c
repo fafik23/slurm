@@ -345,6 +345,29 @@ static void _entity_add_data(entity_t* e, const char* key, void* data)
  * used in both automerge and autoupdate calls when dealing with
  * advanced operations (SUM,MIN,MAX,AVG,...) while setting new key values
  */
+
+/* Base on http://jhnet.co.uk/articles/cpp_magic */
+#define SECOND(a, b, ...) b
+#define IS_PROBE(...) SECOND(__VA_ARGS__, 0)
+#define PROBE() ~, 1
+#define CAT(a,b) a ## b
+#define NOT(x) IS_PROBE(CAT(_NOT_, x))
+#define _NOT_0 PROBE()
+#define BOOL(x) NOT(NOT(x))
+#define IF_ELSE(condition) _IF_ELSE(BOOL(condition))
+#define _IF_ELSE(condition) CAT(_IF_, condition)
+#define _IF_1(...) __VA_ARGS__ _IF_1_ELSE
+#define _IF_0(...)             _IF_0_ELSE
+#define _IF_1_ELSE(...)
+#define _IF_0_ELSE(...) __VA_ARGS__
+
+#define TYPE_CHECK(type_t) IS_PROBE(CAT(_TC_, type_t))
+#define _TC_bool PROBE()
+#define _TC__Bool PROBE()
+
+#define DEF_MUL(type_t) _DEF_MUL(TYPE_CHECK(type_t))
+#define _DEF_MUL(condition) IF_ELSE(condition)(&&)(*)
+
 #define _entity_update_kv_helper(type_t, operator)			\
 	type_t* lvalue = (type_t*) oldvalue;				\
 	type_t* rvalue = (type_t*) value;				\
@@ -360,7 +383,7 @@ static void _entity_add_data(entity_t* e, const char* key, void* data)
 		*lvalue -= *rvalue;					\
 		break;							\
 	case S_P_OPERATOR_MUL:						\
-		*lvalue *= *rvalue;					\
+		*lvalue = *lvalue DEF_MUL(type_t) *rvalue;		\
 		break;							\
 	case S_P_OPERATOR_DIV:						\
 		if (*rvalue != (type_t) 0)				\
