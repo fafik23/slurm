@@ -1,6 +1,8 @@
 sudo: required
 language: c
 dist: trusty
+before_install:
+  - sudo apt-get update
 addons:
   mariadb: '10.3'
   apt:
