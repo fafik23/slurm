@@ -2,7 +2,7 @@ sudo: required
 language: c
 dist: trusty
 addons:
-  mariadb: '10.1'
+  mariadb: '10.3'
   apt:
     packages:
     - cmake
@@ -11,14 +11,18 @@ addons:
     - munge
     - expect
     - libhwloc-dev
+    - hwloc
     - libnuma1
     - libnuma-dev
     - libpam-dev
-    - libhwloc-dev
     - gdb
     - valgrind
     - libfreeipmi-dev
     - man2html
+    - liblz4-dev
+    - libmariadbd-dev
+    - freeipmi-tools
+    - rrdtool
 compiler:
   - clang
   - gcc
@@ -31,7 +35,6 @@ env:
 cache: ccache
 before_script:
   - export PATH=/usr/lib/ccache:$PATH
-  - export MIGRATION=1
   - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
@@ -39,3 +42,5 @@ script:
   - make -j install > /dev/null
   - testsuite/travis/build-travis.sh
   - sudo testsuite/travis/test-reg.sh
+after_script:
+  - sudo umount /tmp
