@@ -38,10 +38,10 @@ env:
   - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
 cache: ccache
 before_script:
-  - export PATH=/usr/lib/ccache:$PATH
   - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
+  - export PATH=/usr/lib/ccache:$PATH
   - make -j > /dev/null
   - make -j install > /dev/null
   - testsuite/travis/build-travis.sh
