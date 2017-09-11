@@ -24,7 +24,6 @@ addons:
     - libmariadbd-dev
     - freeipmi-tools
     - rrdtool
-    - libjson-c-dev
 compiler:
   - clang
   - gcc
