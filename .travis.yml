@@ -19,10 +19,12 @@ addons:
     - valgrind
     - libfreeipmi-dev
     - man2html
+    - liblz4
     - liblz4-dev
     - libmariadbd-dev
     - freeipmi-tools
     - rrdtool
+    - libjson-c-dev
 compiler:
   - clang
   - gcc
