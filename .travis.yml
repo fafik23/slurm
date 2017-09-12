@@ -8,6 +8,7 @@ addons:
   apt:
     packages:
     - cmake
+    - wget
     - libmunge-dev
     - liblua5.2-dev
     - munge
@@ -21,8 +22,6 @@ addons:
     - valgrind
     - libfreeipmi-dev
     - man2html
-    - liblz4-tool
-    - liblz4-dev
     - libmariadbd-dev
     - freeipmi-tools
     - rrdtool
@@ -39,6 +38,8 @@ env:
 cache: ccache
 before_script:
   - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
+  - wget https://github.com/lz4/lz4/archive/v1.8.0.tar.gz
+  - tar -xvzf v1.8.0.tar.gz && cd lz4-1.8.0 && make && sudo make install && cd .. && rm -rf  lz4-1.8.0  v1.8.0.tar.gz
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
   - export PATH=/usr/lib/ccache:$PATH
