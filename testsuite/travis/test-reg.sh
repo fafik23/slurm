@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH=/usr/lib/ccache:$PATH
 
 if [ -z "$TRAVIS_TAG" ]; then
     echo "Build is not for a git tag"
