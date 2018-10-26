@@ -7,11 +7,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -50,6 +50,7 @@ struct task_state_struct {
 	uint32_t job_id;
 	uint32_t step_id;
 	uint32_t pack_group;
+	uint32_t task_offset;
 	int n_tasks;
 	int n_started;
 	int n_abnormal;
@@ -67,7 +68,8 @@ struct task_state_struct {
  * Free memory using task_state_destroy()
  */
 extern task_state_t task_state_create(uint32_t job_id, uint32_t step_id,
-				      uint32_t pack_group, int ntasks)
+				      uint32_t pack_group, int ntasks,
+				      uint32_t task_offset)
 {
 	task_state_t ts = xmalloc(sizeof(*ts));
 
@@ -75,6 +77,7 @@ extern task_state_t task_state_create(uint32_t job_id, uint32_t step_id,
 	ts->job_id = job_id;
 	ts->step_id = step_id;
 	ts->pack_group = pack_group;
+	ts->task_offset = task_offset;
 	ts->n_tasks = ntasks;
 	ts->running = bit_alloc(ntasks);
 	ts->start_failed = bit_alloc(ntasks);
@@ -352,4 +355,16 @@ extern void task_state_print(List task_state_list, log_f fn)
 		_task_state_print(ts, fn);
 	}
 	list_iterator_destroy(iter);
+}
+
+/*
+ * Translate pack-job local task ID to a global task ID
+ */
+extern uint32_t task_state_global_id(task_state_t ts, uint32_t local_task_id)
+{
+	uint32_t global_task_id = local_task_id;
+
+	if (ts && (ts->task_offset != NO_VAL))
+		global_task_id += ts->task_offset;
+	return global_task_id;
 }

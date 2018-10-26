@@ -7,11 +7,11 @@
  *  Written by Jay Windley <jwindley@lnxi.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -65,8 +65,10 @@ typedef struct slurm_auth_ops {
         int          (*verify)    ( void *cred, char *auth_info );
         uid_t        (*get_uid)   ( void *cred, char *auth_info );
         gid_t        (*get_gid)   ( void *cred, char *auth_info );
-        int          (*pack)      ( void *cred, Buf buf );
-        void *       (*unpack)    ( Buf buf );
+        char *       (*get_host)  ( void *cred, char *auth_info );
+        int          (*pack)      ( void *cred, Buf buf,
+				    uint16_t protocol_version );
+        void *       (*unpack)    ( Buf buf, uint16_t protocol_version );
         int          (*print)     ( void *cred, FILE *fp );
         int          (*sa_errno)  ( void *cred );
         const char * (*sa_errstr) ( int slurm_errno );
@@ -81,6 +83,7 @@ static const char *syms[] = {
 	"slurm_auth_verify",
 	"slurm_auth_get_uid",
 	"slurm_auth_get_gid",
+	"slurm_auth_get_host",
 	"slurm_auth_pack",
 	"slurm_auth_unpack",
 	"slurm_auth_print",
@@ -222,20 +225,28 @@ gid_t g_slurm_auth_get_gid(void *cred, char *auth_info)
         return (*(ops.get_gid))(cred, auth_info);
 }
 
-int g_slurm_auth_pack(void *cred, Buf buf)
-{
-        if (slurm_auth_init(NULL) < 0)
-                return SLURM_ERROR;
-
-        return (*(ops.pack))(cred, buf);
-}
-
-void *g_slurm_auth_unpack(Buf buf)
+char *g_slurm_auth_get_host(void *cred, char *auth_info)
 {
 	if (slurm_auth_init(NULL) < 0)
                 return NULL;
 
-        return (*(ops.unpack))(buf);
+        return (*(ops.get_host))(cred, auth_info);
+}
+
+int g_slurm_auth_pack(void *cred, Buf buf, uint16_t protocol_version)
+{
+        if (slurm_auth_init(NULL) < 0)
+                return SLURM_ERROR;
+
+        return (*(ops.pack))(cred, buf, protocol_version);
+}
+
+void *g_slurm_auth_unpack(Buf buf, uint16_t protocol_version)
+{
+	if (slurm_auth_init(NULL) < 0)
+                return NULL;
+
+        return (*(ops.unpack))(buf, protocol_version);
 }
 
 int g_slurm_auth_print(void *cred, FILE *fp)

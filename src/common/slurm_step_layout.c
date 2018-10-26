@@ -6,22 +6,22 @@
  *  from other parts of SLURM.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
  *  This file is patterned after hostlist.c, written by Mark Grondona and
@@ -101,12 +101,10 @@ slurm_step_layout_t *slurm_step_layout_create(
 	step_layout->task_cnt  = step_layout_req->num_tasks;
 	if (cluster_flags & CLUSTER_FLAG_FE) {
 		/* Limited job step support on front-end systems.
-		 * All jobs execute through front-end on Blue Gene.
 		 * Normally we would not permit execution of job steps,
 		 * but can fake it by just allocating all tasks to
 		 * one of the allocated nodes. */
-		if ((cluster_flags & CLUSTER_FLAG_BG)
-		    || (cluster_flags & CLUSTER_FLAG_CRAY_A))
+		if (cluster_flags & CLUSTER_FLAG_CRAY_A)
 			step_layout->node_cnt  = step_layout_req->num_hosts;
 		else
 			step_layout->node_cnt  = 1;
@@ -204,7 +202,7 @@ slurm_step_layout_t *fake_slurm_step_layout_create(
 
 
 
-/* copys structure for step layout */
+/* copies structure for step layout */
 extern slurm_step_layout_t *slurm_step_layout_copy(
 	slurm_step_layout_t *step_layout)
 {
@@ -259,8 +257,8 @@ extern void pack_slurm_step_layout(slurm_step_layout_t *step_layout,
 				     buffer);
 		}
 	} else {
-		error("pack_slurm_step_layout: protocol_version "
-		      "%hu not supported", protocol_version);
+		error("%s: protocol_version %hu not supported",
+		      __func__, protocol_version);
 	}
 }
 
@@ -361,6 +359,7 @@ static int _init_task_layout(slurm_step_layout_req_t *step_layout_req,
 {
 	int cpu_cnt = 0, cpu_inx = 0, cpu_task_cnt = 0, cpu_task_inx = 0, i;
 	uint32_t cluster_flags = slurmdb_setup_cluster_flags();
+	hostlist_t hl;
 
 	uint16_t cpus[step_layout->node_cnt];
 	uint16_t cpus_per_task[1];
@@ -379,7 +378,7 @@ static int _init_task_layout(slurm_step_layout_req_t *step_layout_req,
 	}
 
 	if (((int)step_layout_req->cpus_per_task[0] < 1) ||
-	    (step_layout_req->cpus_per_task[0] == (uint16_t)NO_VAL)) {
+	    (step_layout_req->cpus_per_task[0] == NO_VAL16)) {
 		step_layout_req->cpus_per_task[0] = 1;
 		step_layout_req->cpus_task_reps[0] = step_layout_req->num_hosts;
 	}
@@ -390,15 +389,14 @@ static int _init_task_layout(slurm_step_layout_req_t *step_layout_req,
 				     * step_layout->node_cnt);
 	step_layout->tids  = xmalloc(sizeof(uint32_t *)
 				     * step_layout->node_cnt);
-	if (!(cluster_flags & CLUSTER_FLAG_BG)) {
-		hostlist_t hl = hostlist_create(step_layout->node_list);
-		/* make sure the number of nodes we think we have
-		 * is the correct number */
-		i = hostlist_count(hl);
-		if (step_layout->node_cnt > i)
-			step_layout->node_cnt = i;
-		hostlist_destroy(hl);
-	}
+	hl = hostlist_create(step_layout->node_list);
+	/* make sure the number of nodes we think we have
+	 * is the correct number */
+	i = hostlist_count(hl);
+	if (step_layout->node_cnt > i)
+		step_layout->node_cnt = i;
+	hostlist_destroy(hl);
+
 	debug("laying out the %u tasks on %u hosts %s dist %u",
 	      step_layout->task_cnt, step_layout->node_cnt,
 	      step_layout->node_list, step_layout->task_dist);
@@ -427,7 +425,7 @@ static int _init_task_layout(slurm_step_layout_req_t *step_layout_req,
 		}
 
 		if (step_layout->plane_size &&
-		    (step_layout->plane_size != (uint16_t)NO_VAL) &&
+		    (step_layout->plane_size != NO_VAL16) &&
 		    ((step_layout->task_dist & SLURM_DIST_STATE_BASE)
 		     != SLURM_DIST_PLANE)) {
 			/* plane_size when dist != plane is used to
@@ -480,13 +478,15 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 	int i=0, j, taskid = 0, task_cnt=0;
 	hostlist_iterator_t itr = NULL, itr_task = NULL;
 	char *host = NULL;
-	char *host_task = NULL;
+
 	hostlist_t job_alloc_hosts = NULL;
 	hostlist_t step_alloc_hosts = NULL;
 
+	int step_inx = 0, step_hosts_cnt = 0;
+	struct node_record **step_hosts_ptrs = NULL;
+	struct node_record *host_ptr = NULL;
+
 	debug2("job list is %s", step_layout->node_list);
-	job_alloc_hosts = hostlist_create(step_layout->node_list);
-	itr = hostlist_iterator_create(job_alloc_hosts);
 	if (!arbitrary_nodes) {
 		error("no hostlist given for arbitrary dist");
 		return SLURM_ERROR;
@@ -500,17 +500,37 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 		      step_layout->task_cnt,
 		      hostlist_count(step_alloc_hosts),
 		      hostlist_count(step_alloc_hosts));
+		hostlist_destroy(step_alloc_hosts);
 		return SLURM_ERROR;
 	}
-	itr_task = hostlist_iterator_create(step_alloc_hosts);
+
+	job_alloc_hosts = hostlist_create(step_layout->node_list);
+	itr             = hostlist_iterator_create(job_alloc_hosts);
+	itr_task        = hostlist_iterator_create(step_alloc_hosts);
+
+	/*
+	 * Build array of pointers so that we can do pointer comparisons rather
+	 * than strcmp's on nodes.
+	 */
+	step_hosts_cnt  = hostlist_count(step_alloc_hosts);
+	step_hosts_ptrs = xmalloc(sizeof(struct node_record *) *
+				  step_hosts_cnt);
+
+	step_inx = 0;
+	while((host = hostlist_next(itr_task))) {
+		step_hosts_ptrs[step_inx++] = find_node_record_no_alias(host);
+		free(host);
+	}
+
 	while((host = hostlist_next(itr))) {
+		host_ptr = find_node_record(host);
 		step_layout->tasks[i] = 0;
-		while((host_task = hostlist_next(itr_task))) {
-			if (!xstrcmp(host, host_task)) {
+
+		for (step_inx = 0; step_inx < step_hosts_cnt; step_inx++) {
+			if (host_ptr == step_hosts_ptrs[step_inx]) {
 				step_layout->tasks[i]++;
 				task_cnt++;
 			}
-			free(host_task);
 			if (task_cnt >= step_layout->task_cnt)
 				break;
 		}
@@ -521,20 +541,18 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 					       * step_layout->tasks[i]);
 		taskid = 0;
 		j = 0;
-		hostlist_iterator_reset(itr_task);
-		while((host_task = hostlist_next(itr_task))) {
-			if (!xstrcmp(host, host_task)) {
+
+		for (step_inx = 0; step_inx < step_hosts_cnt; step_inx++) {
+			if (host_ptr == step_hosts_ptrs[step_inx]) {
 				step_layout->tids[i][j] = taskid;
 				j++;
 			}
 			taskid++;
-			free(host_task);
 			if (j >= step_layout->tasks[i])
 				break;
 		}
 		i++;
 	reset_hosts:
-		hostlist_iterator_reset(itr_task);
 		free(host);
 		if (i > step_layout->task_cnt)
 			break;
@@ -543,6 +561,8 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 	hostlist_iterator_destroy(itr_task);
 	hostlist_destroy(job_alloc_hosts);
 	hostlist_destroy(step_alloc_hosts);
+	xfree(step_hosts_ptrs);
+
 	if (task_cnt != step_layout->task_cnt) {
 		error("Asked for %u tasks but placed %d. Check your nodelist",
 		      step_layout->task_cnt, task_cnt);
@@ -554,11 +574,11 @@ static int _task_layout_hostfile(slurm_step_layout_t *step_layout,
 
 static int _task_layout_block(slurm_step_layout_t *step_layout, uint16_t *cpus)
 {
-	static uint16_t select_params = (uint16_t) NO_VAL;
+	static uint16_t select_params = NO_VAL16;
 	int i, j, task_id = 0;
 	bool pack_nodes;
 
-	if (select_params == (uint16_t) NO_VAL)
+	if (select_params == NO_VAL16)
 		select_params = slurm_get_select_type_param();
 	if (step_layout->task_dist & SLURM_DIST_PACK_NODES)
 		pack_nodes = true;

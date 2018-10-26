@@ -6,11 +6,11 @@
  *  from other parts of SLURM
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
  *  This file is patterned after jobcomp_linux.c, written by Morris Jette and
@@ -78,14 +78,14 @@ int bg_recover = NOT_FROM_CONTROLLER;
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *	<application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "jobacct" for SLURM job completion logging) and <method>
- * is a description of how this plugin satisfies that application.  SLURM will
+ * the plugin (e.g., "jobacct" for Slurm job completion logging) and <method>
+ * is a description of how this plugin satisfies that application.  Slurm will
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
@@ -95,9 +95,6 @@ int bg_recover = NOT_FROM_CONTROLLER;
 const char plugin_name[] = "Job accounting gather cgroup plugin";
 const char plugin_type[] = "jobacct_gather/cgroup";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
-
-/* Other useful declarations */
-static slurm_cgroup_conf_t slurm_cgroup_conf;
 
 static void _prec_extra(jag_prec_t *prec)
 {
@@ -126,20 +123,25 @@ static void _prec_extra(jag_prec_t *prec)
 		debug2("%s: failed to collect memory.stat  pid %d ppid %d",
 		       __func__, prec->pid, prec->ppid);
 	} else {
-		/* This number represents the amount of "dirty" private memory
-		   used by the cgroup.  From our experience this is slightly
-		   different than what proc presents, but is probably more
-		   accurate on what the user is actually using.
-		*/
-		ptr = strstr(memory_stat, "total_rss");
-		sscanf(ptr, "total_rss %lu", &total_rss);
-		prec->rss = total_rss / 1024; /* convert from bytes to KB */
+		/*
+		 * This number represents the amount of "dirty" private memory
+		 * used by the cgroup.  From our experience this is slightly
+		 * different than what proc presents, but is probably more
+		 * accurate on what the user is actually using.
+		 */
+		if ((ptr = strstr(memory_stat, "total_rss"))) {
+			sscanf(ptr, "total_rss %lu", &total_rss);
+			prec->tres_data[TRES_ARRAY_MEM].size_read = total_rss;
+		}
 
-		/* total_pgmajfault is what is reported in proc, so we use
-		 * the same thing here. */
+		/*
+		 * total_pgmajfault is what is reported in proc, so we use
+		 * the same thing here.
+		 */
 		if ((ptr = strstr(memory_stat, "total_pgmajfault"))) {
 			sscanf(ptr, "total_pgmajfault %lu", &total_pgpgin);
-			prec->pages = total_pgpgin;
+			prec->tres_data[TRES_ARRAY_PAGES].size_read =
+				total_pgpgin;
 		}
 	}
 
@@ -208,29 +210,20 @@ extern int init (void)
 	if (_run_in_daemon()) {
 		jag_common_init(0);
 
-		/* read cgroup configuration */
-		if (read_slurm_cgroup_conf(&slurm_cgroup_conf))
-			return SLURM_ERROR;
-
 		/* initialize cpuinfo internal data */
 		if (xcpuinfo_init() != XCPUINFO_SUCCESS) {
-			free_slurm_cgroup_conf(&slurm_cgroup_conf);
 			return SLURM_ERROR;
 		}
 
 		/* enable cpuacct cgroup subsystem */
-		if (jobacct_gather_cgroup_cpuacct_init(&slurm_cgroup_conf) !=
-		    SLURM_SUCCESS) {
+		if (jobacct_gather_cgroup_cpuacct_init() != SLURM_SUCCESS) {
 			xcpuinfo_fini();
-			free_slurm_cgroup_conf(&slurm_cgroup_conf);
 			return SLURM_ERROR;
 		}
 
 		/* enable memory cgroup subsystem */
-		if (jobacct_gather_cgroup_memory_init(&slurm_cgroup_conf) !=
-		    SLURM_SUCCESS) {
+		if (jobacct_gather_cgroup_memory_init() != SLURM_SUCCESS) {
 			xcpuinfo_fini();
-			free_slurm_cgroup_conf(&slurm_cgroup_conf);
 			return SLURM_ERROR;
 		}
 
@@ -238,10 +231,9 @@ extern int init (void)
 		 *
 		 * Enable blkio subsystem.
 		 */
-		/* if (jobacct_gather_cgroup_blkio_init(&slurm_cgroup_conf) */
+		/* if (jobacct_gather_cgroup_blkio_init() */
 		/*     != SLURM_SUCCESS) { */
 		/* 	xcpuinfo_fini(); */
-		/* 	free_slurm_cgroup_conf(&slurm_cgroup_conf); */
 		/* 	return SLURM_ERROR; */
 		/* } */
 	}
@@ -253,13 +245,10 @@ extern int init (void)
 extern int fini (void)
 {
 	if (_run_in_daemon()) {
-		jobacct_gather_cgroup_cpuacct_fini(&slurm_cgroup_conf);
-		jobacct_gather_cgroup_memory_fini(&slurm_cgroup_conf);
-		/* jobacct_gather_cgroup_blkio_fini(&slurm_cgroup_conf); */
+		jobacct_gather_cgroup_cpuacct_fini();
+		jobacct_gather_cgroup_memory_fini();
+		/* jobacct_gather_cgroup_blkio_fini(); */
 		acct_gather_energy_fini();
-
-		/* unload configuration */
-		free_slurm_cgroup_conf(&slurm_cgroup_conf);
 	}
 	return SLURM_SUCCESS;
 }
@@ -328,7 +317,16 @@ extern char* jobacct_cgroup_create_slurm_cg(xcgroup_ns_t* ns)
 	/* we do it here as we do not have access to the conf structure */
 	/* in libslurm (src/common/xcgroup.c) */
 	xcgroup_t slurm_cg;
-	char* pre = (char*) xstrdup(slurm_cgroup_conf.cgroup_prepend);
+	char *pre;
+	slurm_cgroup_conf_t *cg_conf;
+
+	/* read cgroup configuration */
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
+
+	pre = xstrdup(cg_conf->cgroup_prepend);
+
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
 
 #ifdef MULTIPLE_SLURMD
 	if (conf->node_name != NULL) {
@@ -358,4 +356,3 @@ extern char* jobacct_cgroup_create_slurm_cg(xcgroup_ns_t* ns)
 
 	return pre;
 }
-

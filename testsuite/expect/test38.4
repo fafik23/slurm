@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Validate salloc pack job environment variables.
 #
@@ -12,22 +12,22 @@
 # Copyright (C) 2017 SchedMD LLC.
 # Written by Isaac Hartung <ihartung@schedmd.com>
 #
-# This file is part of SLURM, a resource management program.
+# This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
-# SLURM is free software; you can redistribute it and/or modify it under
+# Slurm is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
 # Software Foundation; either version 2 of the License, or (at your option)
 # any later version.
 #
-# SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+# Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 # details.
 #
 # You should have received a copy of the GNU General Public License along
-# with SLURM; if not, write to the Free Software Foundation, Inc.,
+# with Slurm; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 
@@ -39,9 +39,15 @@ set test_id      "38.4"
 set exit_code    0
 set file_out     "test$test_id.out"
 
-set eol "\r\n"
-
 print_header $test_id
+
+# find out if we have enough nodes to test functionality
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
+if { $node_count < 3 } {
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 3)\n"
+	exit $exit_code
+}
 
 proc salloc {} {
 	global number salloc bin_sleep file_out job_id
@@ -56,6 +62,10 @@ proc salloc {} {
 
 	spawn {*}$command
 	expect {
+		-re "Job submit/allocate failed" {
+			log_warn "Unable to execute test due to system configuration"
+			end_it 0
+		}
 		-re "Granted job allocation ($number)" {
 			incr matches
 			if {$job_id == 0} {
@@ -103,7 +113,6 @@ proc cancel_all_jobs { } {
 	global scancel job_id
 	if {$job_id != 0} {
 		exec $scancel $job_id
-		sleep 5
 	}
 }
 

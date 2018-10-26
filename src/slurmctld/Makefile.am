@@ -4,7 +4,7 @@
 AUTOMAKE_OPTIONS = foreign
 CLEANFILES = core.*
 
-AM_CPPFLAGS = -I$(top_srcdir) $(BG_INCLUDES)
+AM_CPPFLAGS = -I$(top_srcdir)
 
 # noinst_LTLIBRARIES = libslurmctld.la
 # libslurmctld_la_LDFLAGS  = $(LIB_LDFLAGS) -module --export-dynamic
@@ -26,6 +26,8 @@ slurmctld_SOURCES =     \
 	gang.h		\
 	groups.c	\
 	groups.h	\
+	heartbeat.c	\
+	heartbeat.h	\
 	job_mgr.c 	\
 	job_scheduler.c	\
 	job_scheduler.h	\

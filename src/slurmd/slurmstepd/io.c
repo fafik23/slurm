@@ -6,11 +6,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -56,6 +56,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include "src/common/cbuf.h"
@@ -533,8 +534,10 @@ _local_file_write(eio_obj_t *obj, List objs)
 					io_hdr_packed_size();
 	}
 
-	/* This code to make a buffer, fill it, unpack its contents, and free
-	   it is just used to read the header to get the global task id. */
+	/*
+	 * This code to make a buffer, fill it, unpack its contents, and free
+	 * it is just used to read the header to get the global task id.
+	 */
 	header_tmp_buf = create_buf(client->out_msg->data,
 				    client->out_msg->length);
 	if (!header_tmp_buf) {
@@ -545,8 +548,10 @@ _local_file_write(eio_obj_t *obj, List objs)
 	header_tmp_buf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(header_tmp_buf);
 
-	/* A zero-length message indicates the end of a stream from one
-	   of the tasks.  Just free the message and return. */
+	/*
+	 * A zero-length message indicates the end of a stream from one
+	 * of the tasks.  Just free the message and return.
+	 */
 	if (header.length == 0) {
 		_free_outgoing_msg(client->out_msg, client->job);
 		client->out_msg = NULL;
@@ -558,6 +563,7 @@ _local_file_write(eio_obj_t *obj, List objs)
 		(client->out_msg->length - client->out_remaining);
 	n = write_labelled_message(obj->fd, buf, client->out_remaining,
 				   header.gtaskid, client->job->pack_offset,
+				   client->job->pack_task_offset,
 				   client->labelio, client->taskid_width);
 	if (n < 0) {
 		client->out_eof = true;
@@ -861,8 +867,6 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 	slurm_addr_t pty_addr;
 	uint16_t port_u;
 	struct window_info *win_info;
-	pthread_attr_t attr;
-	pthread_t win_id;
 
 #if 0
 	/* NOTE: SLURM_LAUNCH_NODE_IPADDR is not available at this point */
@@ -906,10 +910,7 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 	win_info->task   = task;
 	win_info->job    = job;
 	win_info->pty_fd = pty_fd;
-	slurm_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	if (pthread_create(&win_id, &attr, &_window_manager, (void *) win_info))
-		error("pthread_create(pty_conn): %m");
+	slurm_thread_create_detached(NULL, _window_manager, win_info);
 }
 #endif
 
@@ -1060,6 +1061,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 	} else {
 		/* create pipe and eio object */
 		int pout[2];
+		struct termios tio;
 #if HAVE_PTY_H
 		if (!(job->flags & LAUNCH_BUFFERED_IO)) {
 #if HAVE_SETRESUID
@@ -1070,6 +1072,12 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 			if (openpty(pout, pout + 1, NULL, NULL, NULL) < 0) {
 				error("%s: stdout openpty: %m", __func__);
 				return SLURM_ERROR;
+			}
+			memset(&tio, 0, sizeof(tio));
+			if (tcgetattr(pout[1], &tio) == 0) {
+				tio.c_oflag &= ~OPOST;
+				if (tcsetattr(pout[1], 0, &tio) != 0)
+					error("%s: tcsetattr: %m", __func__);
 			}
 #if HAVE_SETRESUID
 			if (setresuid(0, getuid(), 0) < 0)
@@ -1182,27 +1190,9 @@ io_init_tasks_stdio(stepd_step_rec_t *job)
 	return rc;
 }
 
-int
-io_thread_start(stepd_step_rec_t *job)
+extern void io_thread_start(stepd_step_rec_t *job)
 {
-	pthread_attr_t attr;
-	int rc = 0, retries = 0;
-
-	slurm_attr_init(&attr);
-
-	while (pthread_create(&job->ioid, &attr, &_io_thr, (void *)job)) {
-		error("io_thread_start: pthread_create error %m");
-		if (++retries > MAX_RETRIES) {
-			error("io_thread_start: Can't create pthread");
-			rc = -1;
-			break;
-		}
-		usleep(10);	/* sleep and again */
-	}
-
-	slurm_attr_destroy(&attr);
-
-	return rc;
+	slurm_thread_create(&job->ioid, _io_thr, job);
 }
 
 
@@ -1715,19 +1705,19 @@ io_dup_stdio(stepd_step_task_info_t *t)
 {
 	if (dup2(t->stdin_fd, STDIN_FILENO  ) < 0) {
 		error("dup2(stdin): %m");
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	fd_set_noclose_on_exec(STDIN_FILENO);
 
 	if (dup2(t->stdout_fd, STDOUT_FILENO) < 0) {
 		error("dup2(stdout): %m");
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	fd_set_noclose_on_exec(STDOUT_FILENO);
 
 	if (dup2(t->stderr_fd, STDERR_FILENO) < 0) {
 		error("dup2(stderr): %m");
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	fd_set_noclose_on_exec(STDERR_FILENO);
 
@@ -1878,18 +1868,12 @@ alloc_io_buf(void)
 {
 	struct io_buf *buf;
 
-	buf = (struct io_buf *)xmalloc(sizeof(struct io_buf));
-	if (!buf)
-		return NULL;
+	buf = xmalloc(sizeof(struct io_buf));
 	buf->ref_count = 0;
 	buf->length = 0;
 	/* The following "+ 1" is just temporary so I can stick a \0 at
 	   the end and do a printf of the data pointer */
 	buf->data = xmalloc(MAX_MSG_LEN + io_hdr_packed_size() + 1);
-	if (!buf->data) {
-		xfree(buf);
-		return NULL;
-	}
 
 	return buf;
 }

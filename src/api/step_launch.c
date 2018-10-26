@@ -7,11 +7,11 @@
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -103,29 +103,11 @@ static pid_t  srun_ppid = (pid_t) 0;
 static uid_t  slurm_uid;
 static bool   force_terminated_job = false;
 static int    task_exit_signal = 0;
-#ifdef HAVE_NATIVE_CRAY
-/* On a Cray we need to validate the gid
- * before the launch of the tasks.  Since a native
- * Cray really isn't a cluster but a distributed system this should
- * be ok.
- * This could be hacked by a user, but the only damage they
- * could really do is set SLURM_USER_NAME to be something
- * other than the actual name.  Running any getpwXXX commands
- * on a cray compute node is not scalable and could
- * potentially cause all sorts of issues and timeouts when
- * talking with LDAP or NIS when done on the compute node.  We
- * have not seen this issue on a regular cluster, so we do
- * the validating there instead when not on a Cray.
- */
-static bool   validate_gid = true;
-#else
-static bool   validate_gid = false;
-#endif
+
 static void _exec_prog(slurm_msg_t *msg);
 static int  _msg_thr_create(struct step_launch_state *sls, int num_nodes);
 static void _handle_msg(void *arg, slurm_msg_t *msg);
 static int  _cr_notify_step_launch(slurm_step_ctx_t *ctx);
-static int  _start_io_timeout_thread(step_launch_state_t *sls);
 static void *_check_io_timeout(void *_sls);
 
 static struct io_operations message_socket_ops = {
@@ -146,7 +128,7 @@ static struct io_operations message_socket_ops = {
  * IN ptr - pointer to a structure allocated by the user.
  *      The structure will be initialized.
  */
-void slurm_step_launch_params_t_init (slurm_step_launch_params_t *ptr)
+extern void slurm_step_launch_params_t_init(slurm_step_launch_params_t *ptr)
 {
 	static slurm_step_io_fds_t fds = SLURM_STEP_IO_FDS_INITIALIZER;
 
@@ -159,12 +141,17 @@ void slurm_step_launch_params_t_init (slurm_step_launch_params_t *ptr)
 	ptr->cpu_freq_min = NO_VAL;
 	ptr->cpu_freq_max = NO_VAL;
 	ptr->cpu_freq_gov = NO_VAL;
+	ptr->node_offset  = NO_VAL;
+	ptr->pack_jobid   = NO_VAL;
+	ptr->pack_nnodes  = NO_VAL;
+	ptr->pack_ntasks  = NO_VAL;
 	ptr->pack_offset  = NO_VAL;
+	ptr->pack_task_offset = NO_VAL;
 }
 
 /*
  * Specify the plugin name to be used. This may be needed to specify the
- * non-default MPI plugin when using SLURM API to launch tasks.
+ * non-default MPI plugin when using Slurm API to launch tasks.
  * IN plugin name - "none", "pmi2", etc.
  * RET SLURM_SUCCESS or SLURM_ERROR (with errno set)
  */
@@ -174,20 +161,51 @@ extern int slurm_mpi_plugin_init(char *plugin_name)
 }
 
 /*
+ * For a pack job step, rebuild the MPI data structure to show what is running
+ * in a single MPI_COMM_WORLD
+ */
+static void _rebuild_mpi_layout(slurm_step_ctx_t *ctx,
+				const slurm_step_launch_params_t *params)
+{
+	slurm_step_layout_t *new_step_layout, *orig_step_layout;
+
+	ctx->launch_state->mpi_info->pack_jobid = params->pack_jobid;
+	new_step_layout = xmalloc(sizeof(slurm_step_layout_t));
+	orig_step_layout = ctx->launch_state->mpi_info->step_layout;
+	ctx->launch_state->mpi_info->step_layout = new_step_layout;
+	if (orig_step_layout->front_end) {
+		new_step_layout->front_end =
+			xstrdup(orig_step_layout->front_end);
+	}
+	new_step_layout->node_cnt = params->pack_nnodes;
+	new_step_layout->node_list = xstrdup(params->pack_node_list);
+	new_step_layout->plane_size = orig_step_layout->plane_size;
+	new_step_layout->start_protocol_ver =
+		orig_step_layout->start_protocol_ver;
+	new_step_layout->tasks = params->pack_task_cnts;
+	new_step_layout->task_cnt = params->pack_ntasks;
+	new_step_layout->task_dist = orig_step_layout->task_dist;
+	new_step_layout->tids = params->pack_tids;
+}
+
+/*
  * slurm_step_launch - launch a parallel job step
  * IN ctx - job step context generated by slurm_step_ctx_create
+ * IN params - job step parameters
  * IN callbacks - Identify functions to be called when various events occur
+ * IN pack_job_cnt - Total count of pack job steps to be launched, -1 otherwise
  * RET SLURM_SUCCESS or SLURM_ERROR (with errno set)
  */
-int slurm_step_launch (slurm_step_ctx_t *ctx,
-		       const slurm_step_launch_params_t *params,
-		       const slurm_step_launch_callbacks_t *callbacks)
+extern int slurm_step_launch(slurm_step_ctx_t *ctx,
+			     const slurm_step_launch_params_t *params,
+			     const slurm_step_launch_callbacks_t *callbacks,
+			     int pack_job_cnt)
 {
 	launch_tasks_request_msg_t launch;
-	int i;
 	char **env = NULL;
 	char **mpi_env = NULL;
 	int rc = SLURM_SUCCESS;
+	bool preserve_env = params->preserve_env;
 
 	debug("Entering %s", __func__);
 	memset(&launch, 0, sizeof(launch));
@@ -213,13 +231,11 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 		slurm_seterrno(SLURM_MPI_PLUGIN_NAME_INVALID);
 		return SLURM_ERROR;
 	}
-	/* Now, hack the step_layout struct if the following it true.
-	   This looks like an ugly hack to support LAM/MPI's lamboot.
-	   NOTE: This also gets ran for BGQ systems. */
-	if (mpi_hook_client_single_task_per_node()) {
-		for (i = 0; i < ctx->step_resp->step_layout->node_cnt; i++)
-			ctx->step_resp->step_layout->tasks[i] = 1;
-	}
+
+	if (params->pack_jobid && (params->pack_jobid != NO_VAL))
+		_rebuild_mpi_layout(ctx, params);
+
+	mpi_env = xmalloc(sizeof(char *));  /* Needed for setenvf used by MPI */
 	if ((ctx->launch_state->mpi_state =
 	     mpi_hook_client_prelaunch(ctx->launch_state->mpi_info, &mpi_env))
 	    == NULL) {
@@ -237,26 +253,33 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 	launch.job_id = ctx->step_req->job_id;
 	launch.uid = ctx->step_req->user_id;
 	launch.gid = params->gid;
-	if (!slurm_valid_uid_gid((uid_t)launch.uid, &launch.gid,
-				 &launch.user_name, 0, validate_gid))
-		return SLURM_ERROR;
 	launch.argc = params->argc;
 	launch.argv = params->argv;
 	launch.spank_job_env = params->spank_job_env;
 	launch.spank_job_env_size = params->spank_job_env_size;
 	launch.cred = ctx->step_resp->cred;
 	launch.job_step_id = ctx->step_resp->job_step_id;
+	launch.node_offset = params->node_offset;
+	launch.pack_jobid  = params->pack_jobid;
+	launch.pack_nnodes = params->pack_nnodes;
+	launch.pack_ntasks = params->pack_ntasks;
 	launch.pack_offset = params->pack_offset;
+	launch.pack_task_offset = params->pack_task_offset;
+	launch.pack_task_cnts = params->pack_task_cnts;
+	launch.pack_node_list = params->pack_node_list;
 	if (params->env == NULL) {
-		/* if the user didn't specify an environment, grab the
-		 * environment of the running process */
+		/*
+		 * If the user didn't specify an environment, then use the
+		 * environment of the running process
+		 */
 		env_array_merge(&env, (const char **)environ);
 	} else {
 		env_array_merge(&env, (const char **)params->env);
 	}
-	env_array_for_step(&env, ctx->step_resp,
-			   ctx->launch_state->resp_port[0],
-			   params->preserve_env);
+	if (params->pack_ntasks != NO_VAL)
+		preserve_env = true;
+	env_array_for_step(&env, ctx->step_resp, &launch,
+			   ctx->launch_state->resp_port[0], preserve_env);
 	env_array_merge(&env, (const char **)mpi_env);
 	env_array_free(mpi_env);
 
@@ -279,6 +302,8 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 	launch.cpu_freq_min	= params->cpu_freq_min;
 	launch.cpu_freq_max	= params->cpu_freq_max;
 	launch.cpu_freq_gov	= params->cpu_freq_gov;
+	launch.tres_bind	= params->tres_bind;
+	launch.tres_freq	= params->tres_freq;
 	launch.mem_bind_type	= params->mem_bind_type;
 	launch.mem_bind		= params->mem_bind;
 	launch.accel_bind_type	= params->accel_bind_type;
@@ -331,7 +356,8 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 						 launch.nnodes,
 						 ctx->step_resp->cred,
 						 params->labelio,
-						 params->pack_offset);
+						 params->pack_offset,
+						 params->pack_task_offset);
 		if (ctx->launch_state->io.normal == NULL) {
 			rc = SLURM_ERROR;
 			goto fail1;
@@ -404,11 +430,11 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 				 char *node_list, int start_nodeid)
 {
 	launch_tasks_request_msg_t launch;
-	int i;
 	char **env = NULL;
 	char **mpi_env = NULL;
 	int rc = SLURM_SUCCESS;
 	uint16_t resp_port = 0;
+	bool preserve_env = params->preserve_env;
 
 	debug("Entering %s", __func__);
 
@@ -420,41 +446,38 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 
 	memset(&launch, 0, sizeof(launch));
 
-	/*
-	 * Now, hack the step_layout struct if the following it true.
-	 * This looks like an ugly hack to support LAM/MPI's lamboot.
-	 * NOTE: This also gets ran for BGQ systems.
-	 */
-	if (mpi_hook_client_single_task_per_node()) {
-		for (i = 0; i < ctx->step_resp->step_layout->node_cnt; i++)
-			ctx->step_resp->step_layout->tasks[i] = 1;
-	}
-
 	/* Start tasks on compute nodes */
 	launch.job_id = ctx->step_req->job_id;
 	launch.uid = ctx->step_req->user_id;
 	launch.gid = params->gid;
-	if (!slurm_valid_uid_gid((uid_t)launch.uid, &launch.gid,
-				 &launch.user_name, 0, validate_gid))
-		return SLURM_ERROR;
 	launch.argc = params->argc;
 	launch.argv = params->argv;
 	launch.spank_job_env = params->spank_job_env;
 	launch.spank_job_env_size = params->spank_job_env_size;
 	launch.cred = ctx->step_resp->cred;
 	launch.job_step_id = ctx->step_resp->job_step_id;
+	launch.pack_jobid  = params->pack_jobid;
+	launch.pack_nnodes = params->pack_nnodes;
+	launch.pack_ntasks = params->pack_ntasks;
 	launch.pack_offset = params->pack_offset;
+	launch.pack_task_offset = params->pack_task_offset;
+	launch.pack_task_cnts = params->pack_task_cnts;
+	launch.pack_node_list = params->pack_node_list;
 	if (params->env == NULL) {
-		/* if the user didn't specify an environment, grab the
-		 * environment of the running process */
+		/*
+		 * if the user didn't specify an environment, grab the
+		 * environment of the running process
+		 */
 		env_array_merge(&env, (const char **)environ);
 	} else {
 		env_array_merge(&env, (const char **)params->env);
 	}
 	if (first_ctx->launch_state->resp_port)
 		resp_port = first_ctx->launch_state->resp_port[0];
-	env_array_for_step(&env, ctx->step_resp, resp_port,
-			   params->preserve_env);
+	if (params->pack_ntasks != NO_VAL)
+		preserve_env = true;
+	env_array_for_step(&env, ctx->step_resp, &launch, resp_port,
+			   preserve_env);
 	env_array_merge(&env, (const char **)mpi_env);
 	env_array_free(mpi_env);
 
@@ -477,6 +500,8 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 	launch.cpu_freq_min	= params->cpu_freq_min;
 	launch.cpu_freq_max	= params->cpu_freq_max;
 	launch.cpu_freq_gov	= params->cpu_freq_gov;
+	launch.tres_bind	= params->tres_bind;
+	launch.tres_freq	= params->tres_freq;
 	launch.mem_bind_type	= params->mem_bind_type;
 	launch.mem_bind		= params->mem_bind;
 	launch.accel_bind_type	= params->accel_bind_type;
@@ -523,7 +548,8 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 						 launch.nnodes,
 						 ctx->step_resp->cred,
 						 params->labelio,
-						 params->pack_offset);
+						 params->pack_offset,
+						 params->pack_task_offset);
 		if (ctx->launch_state->io.normal == NULL) {
 			rc = SLURM_ERROR;
 			goto fail1;
@@ -746,7 +772,8 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 	}
 
 	/* Then shutdown the message handler thread */
-	eio_signal_shutdown(sls->msg_handle);
+	if (sls->msg_handle)
+		eio_signal_shutdown(sls->msg_handle);
 
 	slurm_mutex_unlock(&sls->lock);
 	if (sls->msg_thread)
@@ -754,13 +781,12 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 	slurm_mutex_lock(&sls->lock);
 	pmi_kvs_free();
 
-//FIXME-PACK: Wait for all compnents to end before calling eio_handle_destroy()
 	if (sls->msg_handle) {
 		eio_handle_destroy(sls->msg_handle);
 		sls->msg_handle = NULL;
 	}
 
-	/* Shutdown the io timeout thread, if one exists */
+	/* Shutdown the IO timeout thread, if one exists */
 	if (sls->io_timeout_thread_created) {
 		sls->halt_io_test = true;
 		slurm_cond_broadcast(&sls->cond);
@@ -807,11 +833,11 @@ void slurm_step_launch_abort(slurm_step_ctx_t *ctx)
 /*
  * Forward a signal to all those nodes with running tasks
  */
-void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
+extern void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 {
 	int node_id, j, num_tasks;
 	slurm_msg_t req;
-	kill_tasks_msg_t msg;
+	signal_tasks_msg_t msg;
 	hostlist_t hl;
 	char *name = NULL;
 	List ret_list = NULL;
@@ -819,6 +845,8 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	ret_data_info_t *ret_data_info = NULL;
 	int rc = SLURM_SUCCESS;
 	struct step_launch_state *sls = ctx->launch_state;
+	bool retry = false;
+	int retry_cnt = 0;
 
 	/* common to all tasks */
 	msg.job_id      = ctx->job_id;
@@ -860,50 +888,59 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	slurm_mutex_unlock(&sls->lock);
 
 	if (!hostlist_count(hl)) {
-		verbose("no active tasks in job %u to send signal %d",
-		        ctx->job_id, signo);
+		verbose("no active tasks in step %u.%u to send signal %d",
+		        ctx->job_id, ctx->step_resp->job_step_id, signo);
 		hostlist_destroy(hl);
-		goto nothing_left;
+		return;
 	}
 	name = hostlist_ranged_string_xmalloc(hl);
 	hostlist_destroy(hl);
 
-	slurm_msg_t_init(&req);
+RESEND:	slurm_msg_t_init(&req);
 	req.msg_type = REQUEST_SIGNAL_TASKS;
 	req.data     = &msg;
 
 	if (ctx->step_resp->use_protocol_ver)
 		req.protocol_version = ctx->step_resp->use_protocol_ver;
 
-	debug2("sending signal %d to job %u on hosts %s",
-	       signo, ctx->job_id, name);
+	debug2("sending signal %d to step %u.%u on hosts %s",
+	       signo, ctx->job_id, ctx->step_resp->job_step_id, name);
 
 	if (!(ret_list = slurm_send_recv_msgs(name, &req, 0, false))) {
-		error("fwd_signal: slurm_send_recv_msgs really failed bad");
+		error("fwd_signal: slurm_send_recv_msgs really failed badly");
 		xfree(name);
 		return;
 	}
-	xfree(name);
+
 	itr = list_iterator_create(ret_list);
-	while((ret_data_info = list_next(itr))) {
+	while ((ret_data_info = list_next(itr))) {
 		rc = slurm_get_return_code(ret_data_info->type,
 					   ret_data_info->data);
 		/*
-		 *  Report error unless it is "Invalid job id" which
-		 *    probably just means the tasks exited in the meanwhile.
+		 * Report error unless it is "Invalid job id" which
+		 * probably just means the tasks exited in the meanwhile.
 		 */
-		if ((rc != 0) && (rc != ESLURM_INVALID_JOB_ID)
-		    &&  (rc != ESLURMD_JOB_NOTRUNNING) && (rc != ESRCH)) {
-			error("%s: signal: %s",
-			      ret_data_info->node_name,
-			      slurm_strerror(rc));
+		if ((rc != 0) && (rc != ESLURM_INVALID_JOB_ID) &&
+		    (rc != ESLURMD_JOB_NOTRUNNING) && (rc != ESRCH) &&
+		    (rc != EAGAIN) &&
+		    (rc != ESLURM_TRANSITION_STATE_NO_UPDATE)) {
+			error("Failure sending signal %d to step %u.%u on node %s: %s",
+			      signo, ctx->job_id, ctx->step_resp->job_step_id,
+			      ret_data_info->node_name, slurm_strerror(rc));
 		}
+		if ((rc == EAGAIN) || (rc == ESLURM_TRANSITION_STATE_NO_UPDATE))
+			retry = true;
 	}
 	list_iterator_destroy(itr);
 	FREE_NULL_LIST(ret_list);
-nothing_left:
-	debug2("All tasks have been signaled");
-
+	if (retry) {
+		retry = false;
+		if (retry_cnt++ < 4) {
+			sleep(retry_cnt);
+			goto RESEND;
+		}
+	}
+	xfree(name);
 }
 
 /**********************************************************************
@@ -920,17 +957,7 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 
 	sls = xmalloc(sizeof(struct step_launch_state));
 	sls->slurmctld_socket_fd = -1;
-#if defined HAVE_BGQ
-	/* This means we are on an emulated system, so only launch 1
-	   task to avoid overflows with large jobs. */
-	layout->node_cnt = layout->task_cnt = sls->tasks_requested = 1;
-#else
-	/* Hack for LAM-MPI's lamboot, launch one task per node */
-	if (mpi_hook_client_single_task_per_node())
-		sls->tasks_requested = layout->node_cnt;
-	else
-		sls->tasks_requested = layout->task_cnt;
-#endif
+	sls->tasks_requested = layout->task_cnt;
 	sls->tasks_started = bit_alloc(layout->task_cnt);
 	sls->tasks_exited = bit_alloc(layout->task_cnt);
 	sls->node_io_error = bit_alloc(layout->node_cnt);
@@ -942,7 +969,9 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 	sls->resp_port = NULL;
 	sls->abort = false;
 	sls->abort_action_taken = false;
+	/* NOTE: No malloc() of sls->mpi_info required */
 	sls->mpi_info->jobid = ctx->step_req->job_id;
+	sls->mpi_info->pack_jobid = NO_VAL;
 	sls->mpi_info->stepid = ctx->step_resp->job_step_id;
 	sls->mpi_info->step_layout = layout;
 	sls->mpi_state = NULL;
@@ -966,16 +995,7 @@ void step_launch_state_alter(slurm_step_ctx_t *ctx)
 	int ii;
 
 	xassert(sls);
-#if defined HAVE_BGQ
-//#if defined HAVE_BGQ && defined HAVE_BG_FILES
-	sls->tasks_requested = 1;
-#else
-	/* Hack for LAM-MPI's lamboot, launch one task per node */
-	if (mpi_hook_client_single_task_per_node())
-		sls->tasks_requested = layout->node_cnt;
-	else
-		sls->tasks_requested = layout->task_cnt;
-#endif
+	sls->tasks_requested = layout->task_cnt;
 	sls->tasks_started = bit_realloc(sls->tasks_started, layout->task_cnt);
 	sls->tasks_exited = bit_realloc(sls->tasks_exited, layout->task_cnt);
 	sls->node_io_error = bit_realloc(sls->node_io_error, layout->node_cnt);
@@ -1117,7 +1137,6 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 	uint16_t port;
 	eio_obj_t *obj;
 	int i, rc = SLURM_SUCCESS;
-	pthread_attr_t attr;
 	uint16_t *ports;
 	uint16_t eio_timeout;
 
@@ -1140,7 +1159,7 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 		int cc;
 
 		if (ports)
-			cc = net_stream_listen_ports(&sock, &port, ports);
+			cc = net_stream_listen_ports(&sock, &port, ports, false);
 		else
 			cc = net_stream_listen(&sock, &port);
 		if (cc < 0) {
@@ -1160,15 +1179,7 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 		eio_new_initial_obj(sls->msg_handle, obj);
 	}
 
-	slurm_attr_init(&attr);
-	if (pthread_create(&sls->msg_thread, &attr,
-			   _msg_thr_internal, (void *)sls) != 0) {
-		error("pthread_create of message thread: %m");
-		/* make sure msg_thread is 0 so we don't wait on it. */
-		sls->msg_thread = 0;
-		rc = SLURM_ERROR;
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create(&sls->msg_thread, _msg_thr_internal, sls);
 	return rc;
 }
 
@@ -1181,8 +1192,8 @@ _launch_handler(struct step_launch_state *sls, slurm_msg_t *resp)
 	slurm_mutex_lock(&sls->lock);
 	if ((msg->count_of_pids > 0) &&
 	    bit_test(sls->tasks_started, msg->task_ids[0])) {
-		error("duplicate launch response received from node %s. "
-		       "this is not an error", msg->node_name);
+		debug("%s: duplicate launch response received from node %s",
+		      __func__, msg->node_name);
 		slurm_mutex_unlock(&sls->lock);
 		return;
 	}
@@ -1390,19 +1401,9 @@ _step_missing_handler(struct step_launch_state *sls, slurm_msg_t *missing_msg)
 	slurm_mutex_lock(&sls->lock);
 
 	if (!sls->io_timeout_thread_created) {
-		if (_start_io_timeout_thread(sls)) {
-			/*
-			 * Should I abort here, because of the inability to
-			 * make a thread to verify the connection?
-			 */
-			error("Cannot create thread to verify I/O "
-			      "connections.");
-
-			sls->abort = true;
-			slurm_cond_broadcast(&sls->cond);
-			slurm_mutex_unlock(&sls->lock);
-			return;
-		}
+		sls->io_timeout_thread_created = true;
+		slurm_thread_create(&sls->io_timeout_thread,
+				    _check_io_timeout, sls);
 	}
 
 	fail_nodes = hostset_create(step_missing->nodelist);
@@ -1576,10 +1577,12 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	case RESPONSE_LAUNCH_TASKS:
 		debug2("received task launch");
 		_launch_handler(sls, msg);
+		slurm_send_rc_msg(msg, SLURM_SUCCESS);
 		break;
 	case MESSAGE_TASK_EXIT:
 		debug2("received task exit");
 		_exit_handler(sls, msg);
+		slurm_send_rc_msg(msg, SLURM_SUCCESS);
 		break;
 	case SRUN_PING:
 		debug3("slurmctld ping received");
@@ -1708,8 +1711,10 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 		hostlist_destroy(hl);
 	}
 
-	/* Extend timeout based upon BatchStartTime to permit for a long
-	 * running Prolog */
+	/*
+	 * Extend timeout based upon BatchStartTime to permit for a long
+	 * running Prolog
+	 */
 	if (timeout <= 0) {
 		timeout = (slurm_get_msg_timeout() +
 			   slurm_get_batch_start_timeout()) * 1000;
@@ -1788,12 +1793,13 @@ static void _print_launch_msg(launch_tasks_request_msg_t *msg,
 			      char *hostname, int nodeid)
 {
 	int i;
-	char tmp_str[10], *task_list = NULL;
+	char *tmp_str = NULL, *task_list = NULL;
 	hostlist_t hl = hostlist_create(NULL);
 
 	for (i=0; i<msg->tasks_to_launch[nodeid]; i++) {
-		sprintf(tmp_str, "%u", msg->global_task_ids[nodeid][i]);
+		xstrfmtcat(tmp_str, "%u", msg->global_task_ids[nodeid][i]);
 		hostlist_push_host(hl, tmp_str);
+		xfree(tmp_str);
 	}
 	task_list = hostlist_ranged_string_xmalloc(hl);
 	hostlist_destroy(hl);
@@ -1974,27 +1980,6 @@ step_launch_clear_questionable_state(step_launch_state_t *sls, int node_id)
 	slurm_mutex_unlock(&sls->lock);
 	return SLURM_SUCCESS;
 }
-
-
-static int
-_start_io_timeout_thread(step_launch_state_t *sls)
-{
-	int rc = SLURM_SUCCESS;
-	pthread_attr_t attr;
-	slurm_attr_init(&attr);
-
-	if (pthread_create(&sls->io_timeout_thread, &attr,
-			   _check_io_timeout, (void *)sls) != 0) {
-		error("pthread_create of io timeout thread: %m");
-		sls->io_timeout_thread = 0;
-		rc = SLURM_ERROR;
-	} else {
-		sls->io_timeout_thread_created = true;
-	}
-	slurm_attr_destroy(&attr);
-	return rc;
-}
-
 
 static void *
 _check_io_timeout(void *_sls)

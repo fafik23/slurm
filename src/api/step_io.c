@@ -6,22 +6,22 @@
  *  Written by Mark Grondona <grondona@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -58,7 +58,6 @@
 #include "src/api/step_io.h"
 #include "src/api/step_launch.h"
 
-#define MAX_RETRIES 3
 #define STDIO_MAX_FREE_BUF 1024
 
 struct io_buf {
@@ -184,7 +183,8 @@ _listening_socket_readable(eio_obj_t *obj)
 	debug3("Called _listening_socket_readable");
 	if (obj->shutdown == true) {
 		if (obj->fd != -1) {
-			close(obj->fd);
+			if (obj->fd > STDERR_FILENO)
+				close(obj->fd);
 			obj->fd = -1;
 		}
 		debug2("  false, shutdown");
@@ -267,7 +267,8 @@ _server_readable(eio_obj_t *obj)
 
 	if (obj->shutdown) {
 		if (obj->fd != -1) {
-			close(obj->fd);
+			if (obj->fd > STDERR_FILENO)
+				close(obj->fd);
 			obj->fd = -1;
 			s->in_eof = true;
 			s->out_eof = true;
@@ -314,7 +315,8 @@ _server_read(eio_obj_t *obj, List objs)
 					}
 				}
 			}
-			close(obj->fd);
+			if (obj->fd > STDERR_FILENO)
+				close(obj->fd);
 			obj->fd = -1;
 			s->in_eof = true;
 			s->out_eof = true;
@@ -389,7 +391,8 @@ _server_read(eio_obj_t *obj, List objs)
 			if (s->cio->sls)
 				step_launch_notify_io_failure(
 					s->cio->sls, s->node_id);
-			close(obj->fd);
+			if (obj->fd > STDERR_FILENO)
+				close(obj->fd);
 			obj->fd = -1;
 			s->in_eof = true;
 			s->out_eof = true;
@@ -598,6 +601,7 @@ static int _file_write(eio_obj_t *obj, List objs)
 					        info->out_remaining,
 					        info->out_msg->header.gtaskid,
 					        info->cio->pack_offset,
+					        info->cio->task_offset,
 					        info->cio->label,
 					        info->cio->taskid_width)) < 0) {
 			list_enqueue(info->cio->free_outgoing, info->out_msg);
@@ -654,32 +658,33 @@ create_file_read_eio_obj(int fd, uint32_t taskid, uint32_t nodeid,
 
 static bool _file_readable(eio_obj_t *obj)
 {
-	struct file_read_info *info = (struct file_read_info *) obj->arg;
+	struct file_read_info *read_info = (struct file_read_info *) obj->arg;
 
 	debug2("Called _file_readable");
 
-	if (info->cio->ioservers_ready < info->cio->num_nodes) {
+	if (read_info->cio->ioservers_ready < read_info->cio->num_nodes) {
 		debug3("  false, all ioservers not yet initialized");
 		return false;
 	}
 
-	if (info->eof) {
+	if (read_info->eof) {
 		debug3("  false, eof");
 		return false;
 	}
 	if (obj->shutdown == true) {
 		debug3("  false, shutdown");
-		close(obj->fd);
+		if (obj->fd > STDERR_FILENO)
+			close(obj->fd);
 		obj->fd = -1;
-		info->eof = true;
+		read_info->eof = true;
 		return false;
 	}
-	slurm_mutex_lock(&info->cio->ioservers_lock);
-	if (_incoming_buf_free(info->cio)) {
-		slurm_mutex_unlock(&info->cio->ioservers_lock);
+	slurm_mutex_lock(&read_info->cio->ioservers_lock);
+	if (_incoming_buf_free(read_info->cio)) {
+		slurm_mutex_unlock(&read_info->cio->ioservers_lock);
 		return true;
 	}
-	slurm_mutex_unlock(&info->cio->ioservers_lock);
+	slurm_mutex_unlock(&read_info->cio->ioservers_lock);
 
 	debug3("  false");
 	return false;
@@ -860,7 +865,8 @@ _read_io_init_msg(int fd, client_io_t *cio, char *host)
 	slurm_mutex_lock(&cio->ioservers_lock);
 	bit_set(cio->ioservers_ready_bits, msg.nodeid);
 	cio->ioservers_ready = bit_set_count(cio->ioservers_ready_bits);
-	/* Normally using eio_new_initial_obj while the eio mainloop
+	/*
+	 * Normally using eio_new_initial_obj while the eio mainloop
 	 * is running is not safe, but since this code is running
 	 * inside of the eio mainloop there should be no problem.
 	 */
@@ -873,7 +879,8 @@ _read_io_init_msg(int fd, client_io_t *cio, char *host)
 	return SLURM_SUCCESS;
 
     fail:
-	close(fd);
+	if (fd > STDERR_FILENO)
+		close(fd);
 	return SLURM_ERROR;
 }
 
@@ -1069,7 +1076,8 @@ _estimate_nports(int nclients, int cli_per_port)
 
 client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 				      int num_nodes, slurm_cred_t *cred,
-				      bool label, uint32_t pack_offset)
+				      bool label, uint32_t pack_offset,
+				      uint32_t task_offset)
 {
 	client_io_t *cio;
 	int i;
@@ -1085,6 +1093,7 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 	cio->num_tasks   = num_tasks;
 	cio->num_nodes   = num_nodes;
 	cio->pack_offset = pack_offset;
+	cio->task_offset = task_offset;
 
 	cio->label = label;
 	if (cio->label)
@@ -1126,7 +1135,7 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 		if (ports)
 			cc = net_stream_listen_ports(&cio->listensock[i],
 						     &cio->listenport[i],
-						     ports);
+						     ports, false);
 		else
 			cc = net_stream_listen(&cio->listensock[i],
 					       &cio->listenport[i]);
@@ -1158,23 +1167,10 @@ client_io_t *client_io_handler_create(slurm_step_io_fds_t fds, int num_tasks,
 int
 client_io_handler_start(client_io_t *cio)
 {
-	int retries = 0;
-	pthread_attr_t attr;
-
 	xsignal(SIGTTIN, SIG_IGN);
 
-	slurm_attr_init(&attr);
-	while ((errno = pthread_create(&cio->ioid, &attr,
-				      &_io_thr_internal, (void *) cio))) {
-		if (++retries > MAX_RETRIES) {
-			error ("pthread_create error %m");
-			cio->ioid = 0;
-			slurm_attr_destroy(&attr);
-			return SLURM_ERROR;
-		}
-		sleep(1);	/* sleep and try again */
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create(&cio->ioid, _io_thr_internal, cio);
+
 	debug("Started IO server thread (%lu)", (unsigned long) cio->ioid);
 
 	return SLURM_SUCCESS;
@@ -1194,24 +1190,11 @@ static void *_kill_thr(void *args)
 
 static void _delay_kill_thread(pthread_t thread_id, int secs)
 {
-	pthread_t kill_id;
-	pthread_attr_t attr;
 	kill_thread_t *kt = xmalloc(sizeof(kill_thread_t));
-	int retries = 0;
 
 	kt->thread_id = thread_id;
 	kt->secs = secs;
-	slurm_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	while (pthread_create(&kill_id, &attr, &_kill_thr, (void *) kt)) {
-		error("_delay_kill_thread: pthread_create: %m");
-		if (++retries > MAX_RETRIES) {
-			error("_delay_kill_thread: Can't create pthread");
-			break;
-		}
-		usleep(10);	/* sleep and again */
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create_detached(NULL, _kill_thr, kt);
 }
 
 int

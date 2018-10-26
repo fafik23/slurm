@@ -6,11 +6,11 @@
  *  Written by Danny Auble da@llnl.gov, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -65,27 +65,19 @@ extern int *slurmdb_setup_cluster_dim_size(void)
 	if (working_cluster_rec)
 		return working_cluster_rec->dim_size;
 
-	return select_g_ba_get_dims();
+	return NULL;
 }
 
 extern bool is_cray_system(void)
 {
 	if (working_cluster_rec)
 		return working_cluster_rec->flags & CLUSTER_FLAG_CRAY;
-#if defined HAVE_ALPS_CRAY || defined HAVE_NATIVE_CRAY
-	return true;
-#endif
-	return false;
-}
 
-extern bool is_alps_cray_system(void)
-{
-	if (working_cluster_rec)
-		return working_cluster_rec->flags & CLUSTER_FLAG_CRAY_A;
-#ifdef HAVE_ALPS_CRAY
+#ifdef HAVE_NATIVE_CRAY
 	return true;
-#endif
+#else
 	return false;
+#endif
 }
 
 extern uint16_t slurmdb_setup_cluster_name_dims(void)
@@ -106,17 +98,8 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 		return cluster_flags;
 
 	cluster_flags = 0;
-#ifdef HAVE_BG
-	cluster_flags |= CLUSTER_FLAG_BG;
-#endif
-#ifdef HAVE_BGQ
-	cluster_flags |= CLUSTER_FLAG_BGQ;
-#endif
 #ifdef MULTIPLE_SLURMD
 	cluster_flags |= CLUSTER_FLAG_MULTSD;
-#endif
-#ifdef HAVE_ALPS_CRAY
-	cluster_flags |= CLUSTER_FLAG_CRAY_A;
 #endif
 #ifdef HAVE_FRONT_END
 	cluster_flags |= CLUSTER_FLAG_FE;
@@ -129,12 +112,6 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 
 static uint32_t _str_2_cluster_flags(char *flags_in)
 {
-	if (xstrcasestr(flags_in, "BGQ"))
-		return CLUSTER_FLAG_BGQ;
-
-	if (xstrcasestr(flags_in, "Bluegene"))
-		return CLUSTER_FLAG_BG;
-
 	if (xstrcasestr(flags_in, "AlpsCray")
 	    || xstrcasestr(flags_in, "CrayXT"))
 		return CLUSTER_FLAG_CRAY_A;
@@ -173,18 +150,6 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 {
 	char *cluster_flags = NULL;
 
-	if (flags_in & CLUSTER_FLAG_BG) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "Bluegene");
-	}
-
-	if (flags_in & CLUSTER_FLAG_BGQ) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "BGQ");
-	}
-
 	if (flags_in & CLUSTER_FLAG_CRAY_A) {
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
@@ -217,8 +182,6 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 
 extern uint32_t slurmdb_setup_plugin_id_select(void)
 {
-	if (working_cluster_rec)
-		return working_cluster_rec->plugin_id_select;
 	return select_get_plugin_id();
 }
 

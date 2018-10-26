@@ -8,11 +8,11 @@
  *  Original switch/federation plugin written by Jason King <jking@llnl.gov>
  *  Largely re-written for NRT support by Morris Jette <jette@schedmd.com>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *****************************************************************************
  *  NOTE: The NRT API communicates with IBM's Protocol Network Services Deamon
@@ -47,7 +47,7 @@
  *
  *  NOTE: POE and PMD initiallly load /usr/lib64/libpermapi.so rather than the
  *  library specified by MP_PRE_RMLIB in /etc/poe.limits. For now we need to
- *  put SLURM's libpermapi.so in /usr/lib64. IBM to address later.
+ *  put Slurm's libpermapi.so in /usr/lib64. IBM to address later.
 \*****************************************************************************/
 
 #include "config.h"
@@ -247,6 +247,7 @@ static bool dynamic_window_err = false;	/* print error only once */
 /* Keep track of local ID so slurmd can determine which switch tables
  * are for that particular node */
 static uint64_t my_lpar_id = 0;
+static uint64_t my_lid = 0;
 static bool     my_lpar_id_set = false;
 static uint64_t my_network_id = 0;
 static bool     my_network_id_set = false;
@@ -2072,6 +2073,7 @@ static int _get_my_id(void)
 				if (adapter_info.port[k].status != 1)
 					continue;
 				my_lpar_id = adapter_info.port[k].special;
+				my_lid = adapter_info.port[k].lid;
 				my_lpar_id_set = true;
 				break;
 			}
@@ -2329,6 +2331,7 @@ _get_adapters(slurm_nrt_nodeinfo_t *n)
 						       special;
 				if (adapter_ptr->adapter_type == NRT_HFI) {
 					my_lpar_id = adapter_ptr->special;
+					my_lid = adapter_ptr->lid;
 					my_lpar_id_set = true;
 				}
 				break;
@@ -3118,7 +3121,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 	slurm_mutex_unlock(&global_lock);
 	if (jp->tables_per_task == 0) {
 		hostlist_iterator_destroy(hi);
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	hostlist_iterator_reset(hi);
 
@@ -3142,7 +3145,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		 * immed_slots are non-zero unless running on an HFI network
 		 * with User Space communications, so ignore user options.
 		 * Alternately we can check for non-zero user option and
-		 * return SLURM_FAILURE here. */
+		 * return SLURM_ERROR here. */
 		if ((cau != 0) || (immed != 0)) {
 			debug("switch/nrt: cau:%hu immed:%hu ignored for job",
 			      cau, immed);
@@ -3155,7 +3158,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		info("switch/nrt: invalid instances specification (%d)",
 		     instances);
 		hostlist_iterator_destroy(hi);
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	jp->tables_per_task *= instances;
 
@@ -3166,7 +3169,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		     protocol);
 		xfree(protocol_table);
 		hostlist_iterator_destroy(hi);
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	jp->tables_per_task *= protocol_table->protocol_table_cnt;
 
@@ -3237,7 +3240,7 @@ fail:
 	(void) nrt_job_step_complete(jp, hl);	/* Release resources already
 						 * allocated */
 	/* slurmctld will call nrt_free_jobinfo(jp) to free memory */
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 static void
@@ -3723,7 +3726,8 @@ _wait_for_all_windows(nrt_tableinfo_t *tableinfo)
 			nrt_hfi_task_info_t *hfi_tbl_ptr;
 			hfi_tbl_ptr = (nrt_hfi_task_info_t *) tableinfo->table;
 			hfi_tbl_ptr += i;
-			if (hfi_tbl_ptr->lpar_id != my_lpar_id)
+			if ((hfi_tbl_ptr->lpar_id != my_lpar_id) ||
+			    (hfi_tbl_ptr->lid != my_lid))
 				continue;
 			window_id = hfi_tbl_ptr->win_id;
 		}
@@ -3833,7 +3837,7 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 		if (adapter_name == NULL)
 			continue;
 
-		bzero(&table_info, sizeof(nrt_table_info_t));
+		memset(&table_info, 0, sizeof(nrt_table_info_t));
 		table_info.num_tasks = jp->tableinfo[i].table_length;
 		table_info.job_key = jp->job_key;
 		/* Enable job preeption and release of resources */
@@ -3848,7 +3852,7 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 			table_info.is_user_space = 1;
 		if (jp->ip_v4)
 			table_info.is_ipv4 = 1;
-		/* IP V6: table_info.is_ipv4 initialized above by bzero() */
+		/* IP V6: table_info.is_ipv4 initialized above by memset() */
 		table_info.context_id = jp->tableinfo[i].context_id;
 		table_info.table_id = jp->tableinfo[i].table_id;
 		if (job_name) {
@@ -3934,7 +3938,7 @@ _unload_window_all_jobs(char *adapter_name, nrt_adapter_t adapter_type,
 
 	if (job_keys)
 		free(job_keys);
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 static int _unload_job_table(slurm_nrt_jobinfo_t *jp)
@@ -4064,7 +4068,7 @@ _unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer)
 {
 	char *ver_str = NULL;
 	uint32_t ver_str_len;
-	uint16_t protocol_version = (uint16_t) NO_VAL;
+	uint16_t protocol_version = NO_VAL16;
 	uint32_t node_count;
 	int i;
 
@@ -4074,7 +4078,7 @@ _unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer)
 	if (ver_str && !xstrcmp(ver_str, NRT_STATE_VERSION))
 		safe_unpack16(&protocol_version, buffer);
 
-	if (protocol_version == (uint16_t) NO_VAL) {
+	if (protocol_version == NO_VAL16) {
 		error("******************************************************");
 		error("Can not recover switch/nrt state, incompatible version");
 		error("******************************************************");
@@ -4124,7 +4128,7 @@ nrt_libstate_restore(Buf buffer)
 	if (!nrt_state) {
 		error("nrt_libstate_restore nrt_state is NULL");
 		slurm_mutex_unlock(&global_lock);
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	rc = _unpack_libstate(nrt_state, buffer);
 	slurm_mutex_unlock(&global_lock);

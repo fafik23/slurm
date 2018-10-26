@@ -8,11 +8,11 @@
  *	Jim Garlick <garlick@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 #ifndef _SLURM_ERRNO_H
@@ -55,12 +55,6 @@ extern "C" {
 /* general return codes */
 #define SLURM_SUCCESS   0
 #define SLURM_ERROR    -1
-#define SLURM_FAILURE  -1
-
-/* general communication layer return codes */
-#define SLURM_SOCKET_ERROR     -1
-#define SLURM_PROTOCOL_SUCCESS  0
-#define SLURM_PROTOCOL_ERROR   -1
 
 enum {
 	/* General Message error codes */
@@ -196,6 +190,20 @@ enum {
 	ESLURM_SUBMISSIONS_DISABLED,
 	ESLURM_NOT_PACK_JOB,
 	ESLURM_NOT_PACK_JOB_LEADER,
+	ESLURM_NOT_PACK_WHOLE,
+	ESLURM_CORE_RESERVATION_UPDATE,
+	ESLURM_DUPLICATE_STEP_ID =			2110,
+	ESLURM_INVALID_CORE_CNT,
+	ESLURM_X11_NOT_AVAIL,
+	ESLURM_GROUP_ID_MISSING,
+	ESLURM_BATCH_CONSTRAINT,
+	ESLURM_INVALID_TRES,
+	ESLURM_INVALID_TRES_BILLING_WEIGHTS,
+	ESLURM_INVALID_JOB_DEFAULTS,
+	ESLURM_RESERVATION_MAINT,
+	ESLURM_INVALID_GRES_TYPE,
+	ESLURM_REBOOT_IN_PROGRESS =			2120,
+	ESLURM_UNSUPPORTED_GRES,
 
 	/* switch specific error codes, specific values defined in plugin module */
 	ESLURM_SWITCH_MIN = 3000,
@@ -243,7 +251,7 @@ enum {
 	ESCRIPT_OPEN_OUTPUT_FAILED,
 	ESCRIPT_NON_ZERO_RETURN,
 
-	/* socket specific SLURM communications error */
+	/* socket specific Slurm communications error */
 	SLURM_PROTOCOL_SOCKET_IMPL_ZERO_RECV_LENGTH =	5000,
 	SLURM_PROTOCOL_SOCKET_IMPL_NEGATIVE_RECV_LENGTH,
 	SLURM_PROTOCOL_SOCKET_IMPL_NOT_ALL_DATA_SENT,
@@ -265,6 +273,7 @@ enum {
 	ESLURM_BAD_NAME,
 	ESLURM_OVER_ALLOCATE,
 	ESLURM_RESULT_TOO_LARGE,
+	ESLURM_DB_QUERY_TOO_WIDE,
 
 	/* Federation Errors */
 	ESLURM_FED_CLUSTER_MAX_CNT              = 7100,

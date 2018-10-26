@@ -6,11 +6,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -57,7 +57,7 @@ extern pid_t getsid(pid_t pid);		/* missing from <unistd.h> */
  * NOTE: free the response using slurm_free_submit_response_response_msg
  * IN job_desc_msg - description of batch job request
  * OUT resp - response to request
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 extern int slurm_submit_batch_job(job_desc_msg_t *req,
 				  submit_response_msg_t **resp)
@@ -65,7 +65,6 @@ extern int slurm_submit_batch_job(job_desc_msg_t *req,
 	int rc;
 	slurm_msg_t req_msg;
 	slurm_msg_t resp_msg;
-	char *local_hostname = NULL;
 
 	slurm_msg_t_init(&req_msg);
 	slurm_msg_t_init(&resp_msg);
@@ -76,18 +75,12 @@ extern int slurm_submit_batch_job(job_desc_msg_t *req,
 	if (req->alloc_sid == NO_VAL)
 		req->alloc_sid = getsid(0);
 
-	if (req->alloc_node == NULL) {
-		local_hostname = xshort_hostname();
-		req->alloc_node = local_hostname;
-	}
-
 	req_msg.msg_type = REQUEST_SUBMIT_BATCH_JOB;
 	req_msg.data     = req;
 
 	rc = slurm_send_recv_controller_msg(&req_msg, &resp_msg,
 					    working_cluster_rec);
-	xfree(local_hostname);
-	if (rc == SLURM_SOCKET_ERROR)
+	if (rc == SLURM_ERROR)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -104,7 +97,7 @@ extern int slurm_submit_batch_job(job_desc_msg_t *req,
 		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
 	}
 
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }
 
 /*
@@ -113,7 +106,7 @@ extern int slurm_submit_batch_job(job_desc_msg_t *req,
  * NOTE: free the response using slurm_free_submit_response_response_msg
  * IN job_req_list - List of resource allocation requests, type job_desc_msg_t
  * OUT resp - response to request
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 extern int slurm_submit_batch_pack_job(List job_req_list,
 				       submit_response_msg_t **resp)
@@ -122,22 +115,18 @@ extern int slurm_submit_batch_pack_job(List job_req_list,
 	job_desc_msg_t *req;
 	slurm_msg_t req_msg;
 	slurm_msg_t resp_msg;
-	char *local_hostname = NULL;
 	ListIterator iter;
 
 	slurm_msg_t_init(&req_msg);
 	slurm_msg_t_init(&resp_msg);
 
 	/*
-	 * set Node and session id for this request
+	 * set session id for this request
 	 */
-	local_hostname = xshort_hostname();
 	iter = list_iterator_create(job_req_list);
 	while ((req = (job_desc_msg_t *) list_next(iter))) {
 		if (req->alloc_sid == NO_VAL)
 			req->alloc_sid = getsid(0);
-		if (!req->alloc_node)
-			req->alloc_node = local_hostname;
 	}
 	list_iterator_destroy(iter);
 
@@ -146,8 +135,7 @@ extern int slurm_submit_batch_pack_job(List job_req_list,
 
 	rc = slurm_send_recv_controller_msg(&req_msg, &resp_msg,
 					    working_cluster_rec);
-	xfree(local_hostname);
-	if (rc == SLURM_SOCKET_ERROR)
+	if (rc == SLURM_ERROR)
 		return SLURM_ERROR;
 	switch (resp_msg.msg_type) {
 	case RESPONSE_SLURM_RC:
@@ -163,5 +151,5 @@ extern int slurm_submit_batch_pack_job(List job_req_list,
 		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
 	}
 
-	return SLURM_PROTOCOL_SUCCESS;
+	return SLURM_SUCCESS;
 }

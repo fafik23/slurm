@@ -4,11 +4,11 @@
  *  Copyright (C) 2009 CEA/DAM/DIF
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -80,19 +80,23 @@ int _file_write_content(char* file_path, char* content, size_t csize);
  *  - XCGROUP_ERROR
  *  - XCGROUP_SUCCESS
  */
-int xcgroup_ns_create(slurm_cgroup_conf_t *conf,
-		      xcgroup_ns_t *cgns, char *mnt_args, char *subsys) {
+int xcgroup_ns_create(xcgroup_ns_t *cgns, char *mnt_args, char *subsys)
+{
+	slurm_cgroup_conf_t *cg_conf;
+
+	/* read cgroup configuration */
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
 
 	cgns->mnt_point = xstrdup_printf("%s/%s",
-					 conf->cgroup_mountpoint, subsys);
+					 cg_conf->cgroup_mountpoint,
+					 subsys);
 	cgns->mnt_args = xstrdup(mnt_args);
 	cgns->subsystems = xstrdup(subsys);
-	cgns->notify_prog = xstrdup_printf("%s/release_%s",
-					   conf->cgroup_release_agent, subsys);
 
 	/* check that freezer cgroup namespace is available */
 	if (!xcgroup_ns_is_available(cgns)) {
-		if (conf->cgroup_automount) {
+		if (cg_conf->cgroup_automount) {
 			if (xcgroup_ns_mount(cgns)) {
 				error("unable to mount %s cgroup "
 				      "namespace: %s",
@@ -107,8 +111,10 @@ int xcgroup_ns_create(slurm_cgroup_conf_t *conf,
 		}
 	}
 
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
 	return XCGROUP_SUCCESS;
 clean:
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
 	xcgroup_ns_destroy(cgns);
 	return XCGROUP_ERROR;
 }
@@ -121,7 +127,6 @@ void xcgroup_ns_destroy(xcgroup_ns_t* cgns)
 	xfree(cgns->mnt_point);
 	xfree(cgns->mnt_args);
 	xfree(cgns->subsystems);
-	xfree(cgns->notify_prog);
 }
 
 /*
@@ -141,8 +146,6 @@ int xcgroup_ns_mount(xcgroup_ns_t* cgns)
 
 	char* mnt_point;
 	char* p;
-
-	xcgroup_t cg;
 
 	mode_t cmask;
 	mode_t omask;
@@ -205,23 +208,8 @@ int xcgroup_ns_mount(xcgroup_ns_t* cgns)
 		  MS_NOSUID|MS_NOEXEC|MS_NODEV, options))
 #endif
 		return XCGROUP_ERROR;
-	else {
-		/* FIXME: this only gets set when we aren't mounted at
-		   all.  Since we never umount this may only be loaded
-		   at startup the first time.
-		*/
 
-		/* we then set the release_agent if necessary */
-		if (cgns->notify_prog) {
-			if (xcgroup_create(cgns, &cg, "/", 0, 0) ==
-			     XCGROUP_ERROR)
-				return XCGROUP_SUCCESS;
-			xcgroup_set_param(&cg, "release_agent",
-					  cgns->notify_prog);
-			xcgroup_destroy(&cg);
-		}
-		return XCGROUP_SUCCESS;
-	}
+	return XCGROUP_SUCCESS;
 }
 
 /*
@@ -335,14 +323,21 @@ int xcgroup_ns_find_by_pid(xcgroup_ns_t* cgns, xcgroup_t* cg, pid_t pid)
 	return fstatus;
 }
 
-int xcgroup_ns_load(slurm_cgroup_conf_t *conf, xcgroup_ns_t *cgns, char *subsys)
+int xcgroup_ns_load(xcgroup_ns_t *cgns, char *subsys)
 {
+	slurm_cgroup_conf_t *cg_conf;
+
+	/* read cgroup configuration */
+	slurm_mutex_lock(&xcgroup_config_read_mutex);
+	cg_conf = xcgroup_get_slurm_cgroup_conf();
+
 	cgns->mnt_point = xstrdup_printf("%s/%s",
-					 conf->cgroup_mountpoint, subsys);
+					 cg_conf->cgroup_mountpoint,
+					 subsys);
+	slurm_mutex_unlock(&xcgroup_config_read_mutex);
+
 	cgns->mnt_args = NULL;
 	cgns->subsystems = xstrdup(subsys);
-	cgns->notify_prog = xstrdup_printf("%s/release_%s",
-					   conf->cgroup_release_agent, subsys);
 	return XCGROUP_SUCCESS;
 }
 
@@ -374,7 +369,6 @@ int xcgroup_create(xcgroup_ns_t* cgns, xcgroup_t* cg,
 	cg->path = xstrdup(file_path);
 	cg->uid = uid;
 	cg->gid = gid;
-	cg->notify = 1;
 
 	return XCGROUP_SUCCESS;
 }
@@ -431,18 +425,14 @@ int xcgroup_instantiate(xcgroup_t* cg)
 	mode_t cmask;
 	mode_t omask;
 
-	xcgroup_ns_t* cgns;
 	char* file_path;
 	uid_t uid;
 	gid_t gid;
-	uint32_t notify;
 
 	/* init variables based on input cgroup */
-	cgns = cg->ns;
 	file_path = cg->path;
 	uid = cg->uid;
 	gid = cg->gid;
-	notify = cg->notify;
 
 	/* save current mask and apply working one */
 	cmask = S_IWGRP | S_IWOTH;
@@ -474,10 +464,8 @@ int xcgroup_instantiate(xcgroup_t* cg)
 	fstatus = XCGROUP_SUCCESS;
 
 	/* set notify on release flag */
-	if (notify == 1 && cgns->notify_prog)
-		xcgroup_set_params(cg, "notify_on_release=1");
-	else
-		xcgroup_set_params(cg, "notify_on_release=0");
+	xcgroup_set_param(cg, "notify_on_release", "0");
+
 	return fstatus;
 }
 
@@ -508,9 +496,6 @@ int xcgroup_load(xcgroup_ns_t* cgns, xcgroup_t* cg, char* uri)
 	cg->path = xstrdup(file_path);
 	cg->uid = buf.st_uid;
 	cg->gid = buf.st_gid;
-
-	/* read the content of the notify flag */
-	xcgroup_get_uint32_param(cg, "notify_on_release", &(cg->notify));
 
 	return XCGROUP_SUCCESS;
 }
@@ -586,62 +571,16 @@ int xcgroup_get_pids(xcgroup_t* cg, pid_t **pids, int *npids)
 	return fstatus;
 }
 
-int xcgroup_set_params(xcgroup_t* cg, char* parameters)
-{
-	int fstatus = XCGROUP_ERROR;
-	char file_path[PATH_MAX];
-	char* cpath = cg->path;
-	char* params;
-	char* value;
-	char* p;
-	char* next;
-
-	params = (char*) xstrdup(parameters);
-
-	p = params;
-	while (p != NULL && *p != '\0') {
-		next = xstrchr(p, ' ');
-		if (next) {
-			*next='\0';
-			next++;
-			while (*next == ' ')
-				next++;
-		}
-		value = xstrchr(p, '=');
-		if (value != NULL) {
-			*value='\0';
-			value++;
-			if (snprintf(file_path, PATH_MAX, "%s/%s", cpath, p)
-			     >= PATH_MAX) {
-				debug2("unable to build filepath for '%s' and"
-				       " parameter '%s' : %m", cpath, p);
-				goto next_loop;
-			}
-			fstatus = _file_write_content(file_path, value,
-						      strlen(value));
-			if (fstatus != XCGROUP_SUCCESS)
-				debug2("%s: unable to set parameter '%s' to "
-					"'%s' for '%s'", __func__, p, value,
-					cpath);
-			else
-				debug3("%s: parameter '%s' set to '%s' for '%s'",
-					__func__, p, value, cpath);
-		} else
-			debug2("%s: bad parameters format for entry '%s'",
-				__func__, p);
-	next_loop:
-		p = next;
-	}
-
-	xfree(params);
-	return fstatus;
-}
-
 int xcgroup_set_param(xcgroup_t* cg, char* param, char* content)
 {
 	int fstatus = XCGROUP_ERROR;
 	char file_path[PATH_MAX];
 	char* cpath = cg->path;
+
+	if (!content) {
+		debug2("%s: no content given, nothing to do.", __func__);
+		return fstatus;
+	}
 
 	if (snprintf(file_path, PATH_MAX, "%s/%s", cpath, param) >= PATH_MAX) {
 		debug2("unable to build filepath for '%s' and"
@@ -658,6 +597,41 @@ int xcgroup_set_param(xcgroup_t* cg, char* param, char* content)
 			__func__, param, content, cpath);
 
 	return fstatus;
+}
+
+int xcgroup_wait_pid_moved(xcgroup_t* cg, const char *cg_name)
+{
+	pid_t *pids = NULL;
+	int npids = 0;
+	int cnt = 0;
+	int i = 0;
+	pid_t pid = getpid();
+
+	/*
+	 * There is a delay in the cgroup system when moving the
+	 * pid from one cgroup to another.  This is usually
+	 * short, but we need to wait to make sure the pid is
+	 * out of the step cgroup or we will occur an error
+	 * leaving the cgroup unable to be removed.
+	 */
+	do {
+		xcgroup_get_pids(cg, &pids, &npids);
+		for (i = 0 ; i<npids ; i++)
+			if (pids[i] == pid) {
+				cnt++;
+				break;
+			}
+		xfree(pids);
+	} while ((i < npids) && (cnt < MAX_MOVE_WAIT));
+
+	if (cnt < MAX_MOVE_WAIT)
+		debug3("Took %d checks before stepd pid %d was removed from the %s cgroup.",
+		       cnt, pid, cg_name);
+	else
+		error("Pid %d is still in the %s cgroup.  It might be left uncleaned after the job.",
+		      pid, cg_name);
+
+	return XCGROUP_SUCCESS;
 }
 
 int xcgroup_get_param(xcgroup_t* cg, char* param, char **content, size_t *csize)
@@ -838,10 +812,11 @@ size_t _file_getsize(int fd)
 	offset = lseek(fd, 0, SEEK_CUR);
 	if (offset < 0)
 		return -1;
-	lseek(fd, 0, SEEK_SET);
+	if (lseek(fd, 0, SEEK_SET) < 0)
+		error("%s: lseek(0): %m", __func__);
 
 	/* get file size */
-	fsize=0;
+	fsize = 0;
 	do {
 		rc = read(fd, (void*)&c, 1);
 		if (rc > 0)
@@ -849,7 +824,8 @@ size_t _file_getsize(int fd)
 	} while ((rc < 0 && errno == EINTR) || rc > 0);
 
 	/* restore position */
-	lseek(fd, offset, SEEK_SET);
+	if (lseek(fd, offset, SEEK_SET) < 0)
+		error("%s: lseek(): %m", __func__);
 
 	if (rc < 0)
 		return -1;
@@ -876,7 +852,7 @@ int _file_write_uint64s(char* file_path, uint64_t* values, int nb)
 
 	/* add one value per line */
 	fstatus = XCGROUP_SUCCESS;
-	for (i=0 ; i < nb ; i++) {
+	for (i = 0; i < nb ; i++) {
 
 		value = values[i];
 
@@ -939,7 +915,7 @@ int _file_read_uint64s(char* file_path, uint64_t** pvalues, int* pnb)
 	}
 
 	/* read file contents */
-	buf = (char*) xmalloc((fsize+1)*sizeof(char));
+	buf = xmalloc(fsize + 1);
 	do {
 		rc = read(fd, buf, fsize);
 	} while (rc < 0 && errno == EINTR);
@@ -1061,7 +1037,7 @@ int _file_read_uint32s(char* file_path, uint32_t** pvalues, int* pnb)
 	}
 
 	/* read file contents */
-	buf = (char*) xmalloc((fsize+1)*sizeof(char));
+	buf = xmalloc(fsize + 1);
 	do {
 		rc = read(fd, buf, fsize);
 	} while (rc < 0 && errno == EINTR);
@@ -1163,7 +1139,7 @@ int _file_read_content(char* file_path, char** content, size_t *csize)
 	}
 
 	/* read file contents */
-	buf = xmalloc((fsize+1)*sizeof(char));
+	buf = xmalloc(fsize + 1);
 	buf[fsize]='\0';
 	do {
 		rc = read(fd, buf, fsize);

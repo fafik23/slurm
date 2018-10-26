@@ -6,11 +6,11 @@
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -64,14 +64,14 @@
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *	<application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "jobcomp" for SLURM job completion logging) and <method>
- * is a description of how this plugin satisfies that application.  SLURM will
+ * the plugin (e.g., "jobcomp" for Slurm job completion logging) and <method>
+ * is a description of how this plugin satisfies that application.  Slurm will
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
@@ -86,7 +86,7 @@ const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 		"TimeLimit=%s StartTime=%s EndTime=%s NodeList=%s NodeCnt=%u ProcCnt=%u "\
 		"WorkDir=%s ReservationName=%s Gres=%s Account=%s QOS=%s "\
 		"WcKey=%s Cluster=%s SubmitTime=%s EligibleTime=%s%s%s "\
-		"DerivedExitCode=%u ExitCode=%u %s\n"
+		"DerivedExitCode=%s ExitCode=%s %s\n"
 
 /* Type for error string table entries */
 typedef struct {
@@ -175,7 +175,7 @@ int fini ( void )
 }
 
 /*
- * The remainder of this file implements the standard SLURM job completion
+ * The remainder of this file implements the standard Slurm job completion
  * logging API.
  */
 
@@ -236,10 +236,11 @@ static void _make_time_str (time_t *time, char *string, int size)
 
 extern int slurm_jobcomp_log_record ( struct job_record *job_ptr )
 {
-	int rc = SLURM_SUCCESS;
+	int rc = SLURM_SUCCESS, tmp_int, tmp_int2;
 	char job_rec[1024];
 	char usr_str[32], grp_str[32], start_str[32], end_str[32], lim_str[32];
 	char *resv_name, *gres, *account, *qos, *wckey, *cluster;
+	char *exit_code_str = NULL, *derived_ec_str = NULL;
 	char submit_time[32], eligible_time[32], array_id[64], pack_id[64];
 	char select_buf[128], *state_string, *work_dir;
 	size_t offset = 0, tot_size, wrote;
@@ -362,6 +363,24 @@ extern int slurm_jobcomp_log_record ( struct job_record *job_ptr )
 		pack_id[0] = '\0';
 	}
 
+	tmp_int = tmp_int2 = 0;
+	if (job_ptr->derived_ec == NO_VAL)
+		;
+	else if (WIFSIGNALED(job_ptr->derived_ec))
+		tmp_int2 = WTERMSIG(job_ptr->derived_ec);
+	else if (WIFEXITED(job_ptr->derived_ec))
+		tmp_int = WEXITSTATUS(job_ptr->derived_ec);
+	xstrfmtcat(derived_ec_str, "%d:%d", tmp_int, tmp_int2);
+
+	tmp_int = tmp_int2 = 0;
+	if (job_ptr->exit_code == NO_VAL)
+		;
+	else if (WIFSIGNALED(job_ptr->exit_code))
+		tmp_int2 = WTERMSIG(job_ptr->exit_code);
+	else if (WIFEXITED(job_ptr->exit_code))
+		tmp_int = WEXITSTATUS(job_ptr->exit_code);
+	xstrfmtcat(exit_code_str, "%d:%d", tmp_int, tmp_int2);
+
 	select_g_select_jobinfo_sprint(job_ptr->select_jobinfo,
 		select_buf, sizeof(select_buf), SELECT_PRINT_MIXED);
 
@@ -373,7 +392,7 @@ extern int slurm_jobcomp_log_record ( struct job_record *job_ptr )
 		 end_str, job_ptr->nodes, job_ptr->node_cnt,
 		 job_ptr->total_cpus, work_dir, resv_name, gres, account, qos,
 		 wckey, cluster, submit_time, eligible_time, array_id, pack_id,
-		 job_ptr->derived_ec, job_ptr->exit_code, select_buf);
+		 derived_ec_str, exit_code_str, select_buf);
 	tot_size = strlen(job_rec);
 
 	while (offset < tot_size) {
@@ -390,6 +409,8 @@ extern int slurm_jobcomp_log_record ( struct job_record *job_ptr )
 		}
 		offset += wrote;
 	}
+	xfree(derived_ec_str);
+	xfree(exit_code_str);
 	slurm_mutex_unlock( &file_lock );
 	return rc;
 }

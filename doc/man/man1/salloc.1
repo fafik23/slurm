@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "June 2017" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "July 2018" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -10,7 +10,7 @@ and then release the allocation when the command is finished.
 Option(s) define multiple jobs in a co-scheduled heterogeneous job.
 For more details about heterogeneous jobs see the document
 .br
-http://slurm.schedmd.com/heterogeneous_jobs.html
+https://slurm.schedmd.com/heterogeneous_jobs.html
 
 .SH "DESCRIPTION"
 salloc is used to allocate a Slurm job allocation, which is a set of resources
@@ -123,8 +123,6 @@ if the \fB\-B\fR option specifies a thread count, otherwise an option of
 If SelectType is configured to select/cons_res, it must have a parameter of
 CR_Core, CR_Core_Memory, CR_Socket, or CR_Socket_Memory for this option
 to be honored.
-This option is not supported on BlueGene systems (select/bluegene plugin
-is configured).
 If not specified, the scontrol show job will display 'ReqS:C:T=*:*:*'. This
 option applies to job allocations.
 
@@ -256,6 +254,13 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+.TP
+\fBParenthesis\fR
+Parenthesis can be used to group like node features together. For example
+"\fB\-\-constraint=[(knl&snc4&flat)*4&haswell*1]"\fR might be used to specify
+that four nodes with the features "knl", "snc4" and "flat" plus one node with
+the feature "haswell" are required. All options within parenthesis should be
+grouped with AND (e.g. "&") operands.
 .RE
 
 .TP
@@ -371,10 +376,16 @@ accounting information will be present.
 .RE
 
 .TP
+\fB\-\-cpus\-per\-gpu\fR=<\fIncpus\fR>
+Advise Slurm that ensuing job steps will require \fIncpus\fR processors per
+allocated GPU.
+Requires the \fB\-\-gpus\fR option.
+Not compatible with the \fB\-\-cpus\-per\-task\fR option.
+
+.TP
 \fB\-c\fR, \fB\-\-cpus\-per\-task\fR=<\fIncpus\fR>
-Advise the Slurm controller that ensuing job steps will require \fIncpus\fR
-number of processors per task.  Without this option, the controller will
-just try to allocate one processor per task.
+Advise Slurm that ensuing job steps will require \fIncpus\fR processors per
+task. By default Slurm will allocate one processor per task.
 
 For instance,
 consider an application that has 4 tasks, each requiring 3 processors.  If our
@@ -433,6 +444,10 @@ execution.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
+.TP
+\fBafterburstbuffer:job_id[:jobid...]\fR
+This job can begin execution after the specified jobs have terminated and
+any associated burst buffer stage out operations have completed.
 .TP
 \fBaftercorr:job_id[:jobid...]\fR
 A task of this job array can begin execution after the corresponding task ID
@@ -508,6 +523,122 @@ In the default Slurm configuration, this option is only valid when used
 by the user root.
 
 .TP
+\fB\-G\fR, \fB\-\-gpus\fR=[<\fitype\fR>:]<\fInumber\fR>
+Specify the total number of GPUs required for the job.
+An optional GPU type specification can be supplied.
+For example "\-\-gpus=volta:3".
+Multiple options can be requested in a comma separated list, for example:
+"\-\-gpus=volta:3,kepler:1".
+See also the \fB\-\-gpus\-per\-node\fR, \fB\-\-gpus\-per\-socket\fR and
+\fB\-\-gpus\-per\-task\fR options.
+
+.TP
+\fB\-\-gpu\-bind\fR=<\fItype\fR>
+Bind tasks to specific GPUs.
+By default every spawned task can access every GPU allocated to the job.
+
+Supported \fItype\fR options:
+.RS
+.TP 10
+\fBclosest\fR
+Bind each task to the GPU(s) which are closest.
+In a NUMA environment, each task may be bound to more than one GPU (i.e.
+all GPUs in that NUMA environment).
+.TP
+\fBmap_gpu:<list>\fR
+Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
+<gpu_id_for_task_0>,<gpu_id_for_task_1>,... GPU IDs are interpreted as decimal
+values unless they are preceded with '0x' in which case they interpreted as
+hexadecimal values. If the number of tasks (or ranks) exceeds the number of
+elements in this list, elements in the list will be reused as needed starting
+from the beginning of the list. To simplify support for large task counts,
+the lists may follow a map with an asterisk and repetition count.
+For example "map_cpu:0*4,1*4".
+Not supported unless the entire node is allocated to the job.
+.TP
+\fBmask_gpu:<list>\fR
+Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
+<gpu_mask_for_task_0>,<gpu_mask_for_task_1>,... The mapping is specified for
+a node and identical mapping is applied to the tasks on every node (i.e. the
+lowest task ID on each node is mapped to the first mask specified in the list,
+etc.). GPU masks are always interpreted as hexadecimal values but can be
+preceded with an optional '0x'. Not supported unless the entire node is
+allocated to the job. To simplify support for large task counts, the lists
+may follow a map with an asterisk and repetition count.
+For example "mask_gpu:0x0f*4,0xf0*4".
+Not supported unless the entire node is allocated to the job.
+.RE
+
+.TP
+\fB\-\-gpu\-freq\fR=[<\fItype\fR]=\fIvalue\fR>[,<\fItype\fR=\fIvalue\fR>][,verbose]
+Request that GPUs allocated to the job are configured with specific voltage
+and/or frequency values.
+This option can be used to independently configure the GPU and its memory
+frequencies.
+In some cases, system power caps may override the requested values.
+The field \fItype\fR can be "memory" or "voltage".
+If \fItype\fR is not specified. the GPU frequency is implied.
+The \fIvalue\fR field can either be "low", "medium", "high", "highm1" or
+a numeric value (megahertz or volts).
+If the specified numeric value is not possible, a value as close as
+possible will be used. See below for definition of the values.
+The \fIverbose\fR option causes current GPU frequency information to be logged.
+Examples of use include "\-\-gpu\-freq\fR=medium,memory=high,voltage=high" and
+\-\-gpu\-freq\fR=450".
+
+Supported \fIvalue\fR definitions:
+.RS
+.TP 10
+\fBlow\fR
+the lowest available frequency or voltage
+.TP
+\fBmedium\fR
+attempts to set a frequency  or voltage in the middle of the available range
+.TP
+\fBhigh\fR
+the highest available frequency or voltage
+.TP
+\fBhighm1\fR
+(high minus one) will select the next highest available frequency or voltage
+.RE
+
+.TP
+\fB\-\-gpus\-per\-node\fR=[<\fitype\fR>:]<\fInumber\fR>
+Specify the number of GPUs required for the job on each node included in
+the job's resource allocation.
+An optional GPU type specification can be supplied.
+For example "\-\-gpus\-per\-node=volta:3".
+Multiple options can be requested in a comma separated list, for example:
+"\-\-gpus\-per\-node=volta:3,kepler:1".
+See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
+\fB\-\-gpus\-per\-task\fR options.
+
+.TP
+\fB\-\-gpus\-per\-socket\fR=[<\fitype\fR>:]<\fInumber\fR>
+Specify the number of GPUs required for the job on each socket included in
+the job's resource allocation.
+An optional GPU type specification can be supplied.
+For example "\-\-gpus\-per\-socket=volta:3".
+Multiple options can be requested in a comma separated list, for example:
+"\-\-gpus\-per\-socket=volta:3,kepler:1".
+Requires job to specify a sockets per node count ( \-\-sockets\-per\-node).
+See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-node\fR and
+\fB\-\-gpus\-per\-task\fR options.
+
+.TP
+\fB\-\-gpus\-per\-task\fR=[<\fitype\fR>:]<\fInumber\fR>
+Specify the number of GPUs required for the job on each task to be spawned
+in the job's resource allocation.
+An optional GPU type specification can be supplied.
+This option requires the specification of a task count.
+For example "\-\-gpus\-per\-task=volta:1".
+Multiple options can be requested in a comma separated list, for example:
+"\-\-gpus\-per\-task=volta:3,kepler:1".
+Requires job to specify a task count (\-\-nodes).
+See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
+\fB\-\-gpus\-per\-node\fR options.
+
+.TP
 \fB\-\-gres\fR=<\fIlist\fR>
 Specifies a comma delimited list of generic consumable resources.
 The format of each entry on the list is "name[[:type]:count]".
@@ -522,16 +653,29 @@ Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 
 .TP
-\fB\-\-gres\-flags\fR=enforce\-binding
-If set, the only CPUs available to the job will be those bound to the selected
-GRES (i.e. the CPUs identified in the gres.conf file will be strictly enforced
-rather than advisory). This option may result in delayed initiation of a job.
+\fB\-\-gres\-flags\fR=<\fItype\fR>
+Specify generic resource task binding options.
+.RS
+.TP
+.B disable\-binding
+Disable filtering of CPUs with respect to generic resource locality.
+This option is currently required to use more CPUs than are bound to a GRES
+(i.e. if a GPU is bound to the CPUs on one socket, but resources on more than
+one socket are required to run the job).
+This option may permit a job to be allocated resources sooner than otherwise
+possible, but may result in lower job performance.
+.TP
+.B enforce\-binding
+The only CPUs available to the job will be those bound to the selected
+GRES (i.e. the CPUs identified in the gres.conf file will be strictly
+enforced). This option may result in delayed initiation of a job.
 For example a job requiring two GPUs and one CPU will be delayed until both
 GPUs on a single socket are available rather than using GPUs bound to separate
 sockets, however the application performance may be improved due to improved
 communication speed.
 Requires the node to be configured with more than one socket and resource
 filtering will be performed on a per\-socket basis.
+.RE
 
 .TP
 \fB\-H, \-\-hold\fR
@@ -766,8 +910,9 @@ Default value is \fBDefMemPerNode\fR and the maximum value is
 seen using the \fBscontrol show config\fR command.
 This parameter would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR).
-Also see \fB\-\-mem\-per\-cpu\fR.
-\fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
+Also see fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR.
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
+options are mutually exclusive.
 
 NOTE: A memory size specification of zero is treated as a special case and
 grants the job access to all of the memory on each node.
@@ -802,11 +947,26 @@ are allocated to jobs (\fBSelectType=select/cons_res\fR).
 If resources are allocated by the core, socket or whole nodes; the number
 of CPUs allocated to a job may be higher than the task count and the value
 of \fB\-\-mem\-per\-cpu\fR should be adjusted accordingly.
-Also see \fB\-\-mem\fR.
-\fB\-\-mem\fR and \fB\-\-mem\-per\-cpu\fR are mutually exclusive.
+Also see \fB\-\-mem\fR and fB\-\-mem\-per\-gpu\fR.
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
+options are mutually exclusive.
 
 .TP
-\fB\-\-mem_bind\fR=[{\fIquiet,verbose\fR},]\fItype\fR
+\fB\-\-mem\-per\-gpu\fR=<\fIsize[units]\fR>
+Minimum memory required per allocated GPU.
+Default units are megabytes unless the SchedulerParameters configuration
+parameter includes the "default_gbytes" option for gigabytes.
+Different units can be specified using the suffix [K|M|G|T].
+Default value is \fBDefMemPerGPU\fR and is available on both a global and
+per partition basis.
+If configured, the parameters can be seen using the \fBscontrol show config\fR
+and \fBscontrol show partition\fR commands.
+Also see \fB\-\-mem\fR.
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
+options are mutually exclusive.
+
+.TP
+\fB\-\-mem\-bind\fR=[{\fIquiet,verbose\fR},]\fItype\fR
 Bind tasks to memory. Used only when the task/affinity plugin is enabled
 and the NUMA memory functions are available.
 \fBNote that the resolution of CPU and memory binding
@@ -815,11 +975,11 @@ at the level of the cores within a processor while memory binding will
 be performed at the level of nodes, where the definition of "nodes"
 may differ from system to system.
 By default no memory binding is performed; any task using any CPU can use
-any memory. This option is typically used to insure that each task is bound to
+any memory. This option is typically used to ensure that each task is bound to
 the memory closest to it's assigned CPU. \fBThe use of any type other than
 "none" or "local" is not recommended.\fR
 If you want greater control, try running a simple test code with the
-options "\-\-cpu_bind=verbose,none \-\-mem_bind=verbose,none" to determine
+options "\-\-cpu\-bind=verbose,none \-\-mem\-bind=verbose,none" to determine
 the specific configuration.
 
 NOTE: To have Slurm always report on the selected memory binding for
@@ -827,7 +987,7 @@ all commands executed in a shell, you can enable verbose mode by
 setting the SLURM_MEM_BIND environment variable value to "verbose".
 
 The following informational environment variables are set when
-\fB\-\-mem_bind\fR is in use:
+\fB\-\-mem\-bind\fR is in use:
 
 .nf
 	SLURM_MEM_BIND_LIST
@@ -920,7 +1080,7 @@ limit is changed.
 If a job node limit exceeds the number of nodes configured in the
 partition, the job will be rejected.
 Note that the environment
-variable \fBSLURM_NNODES\fR will be set to the count of nodes actually
+variable \fBSLURM_JOB_NODES\fR will be set to the count of nodes actually
 allocated to the job. See the \fBENVIRONMENT VARIABLES \fR section
 for more information.  If \fB\-N\fR is not specified, the default
 behavior is to allocate enough nodes to satisfy the requirements of
@@ -1191,7 +1351,7 @@ Only Slurm operators and administrators can set the priority of a job.
 \fB\-\-profile\fR=<all|none|[energy[,|task[,|lustre[,|network]]]]>
 enables detailed data collection by the acct_gather_profile plugin.
 Detailed data are typically time-series that are stored in an HDF5 file for
-the job.
+the job or an InfluxDB database depending on the configured plugin.
 
 .RS
 .TP 10
@@ -1307,6 +1467,9 @@ Acceptable time formats include "minutes", "minutes:seconds",
 The job's maximum time delay may be limited by the system administrator using
 the \fBSchedulerParameters\fR configuration parameter with the
 \fBmax_switch_wait\fR parameter option.
+On a dragonfly network the only switch count supported is 1 since communication
+performance will be highest when a job is allocate resources on one leaf switch
+or more than 2 leaf switches.
 The default max\-time is the max_switch_wait SchedulerParameters.
 
 .TP
@@ -1430,71 +1593,6 @@ slurm.conf this value is ignored.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fInode name list\fR>
 Explicitly exclude certain nodes from the resources granted to the job.
 
-.PP
-The following options support Blue Gene systems, but may be
-applicable to other systems as well.
-
-.TP
-\fB\-\-blrts\-image\fR=<\fIpath\fR>
-Path to blrts image for bluegene block.  BGL only.
-Default from \fIblugene.conf\fR if not set.
-
-.TP
-\fB\-\-cnload\-image\fR=<\fIpath\fR>
-Path to compute node image for bluegene block.  BGP only.
-Default from \fIblugene.conf\fR if not set.
-
-.TP
-\fB\-\-conn\-type\fR=<\fItype\fR>
-Require the block connection type to be of a certain type.
-On Blue Gene the acceptable of \fItype\fR are MESH, TORUS and NAV.
-If NAV, or if not set, then Slurm will try to fit a what the
-DefaultConnType is set to in the bluegene.conf if that isn't set the
-default is TORUS.
-You should not normally set this option.
-If running on a BGP system and wanting to run in HTC mode (only for 1
-midplane and below).  You can use HTC_S for SMP, HTC_D for Dual, HTC_V
-for virtual node mode, and HTC_L for Linux mode.
-For systems that allow a different connection type per dimension you
-can supply a comma separated list of connection types may be specified, one for
-each dimension (i.e. M,T,T,T will give you a torus connection is all
-dimensions expect the first).
-
-.TP
-\fB\-g\fR, \fB\-\-geometry\fR=<\fIXxYxZ\fR> | <\fIAxXxYxZ\fR>
-Specify the geometry requirements for the job. On BlueGene/L and BlueGene/P
-systems there are three numbers giving dimensions in the X, Y and Z directions,
-while on BlueGene/Q systems there are four numbers giving dimensions in the
-A, X, Y and Z directions and can not be used to allocate sub-blocks.
-For example "\-\-geometry=1x2x3x4", specifies a block of nodes having
-1 x 2 x 3 x 4 = 24 nodes (actually midplanes on BlueGene).
-
-.TP
-\fB\-\-ioload\-image\fR=<\fIpath\fR>
-Path to io image for bluegene block.  BGP only.
-Default from \fIblugene.conf\fR if not set.
-
-.TP
-\fB\-\-linux\-image\fR=<\fIpath\fR>
-Path to linux image for bluegene block.  BGL only.
-Default from \fIblugene.conf\fR if not set.
-
-.TP
-\fB\-\-mloader\-image\fR=<\fIpath\fR>
-Path to mloader image for bluegene block.
-Default from \fIblugene.conf\fR if not set.
-
-.TP
-\fB\-R\fR, \fB\-\-no\-rotate\fR
-Disables rotation of the job's requested geometry in order to fit an
-appropriate block.
-By default the specified geometry can rotate in three dimensions.
-
-.TP
-\fB\-\-ramdisk\-image\fR=<\fIpath\fR>
-Path to ramdisk image for bluegene block.  BGL only.
-Default from \fIblugene.conf\fR if not set.
-
 .SH "INPUT ENVIRONMENT VARIABLES"
 .PP
 Upon startup, salloc will read and handle the options set in the following
@@ -1517,14 +1615,14 @@ Same as \fB\-\-bb\fR
 \fBSALLOC_CLUSTERS\fR or \fBSLURM_CLUSTERS\fR
 Same as \fB\-\-clusters\fR
 .TP
-\fBSALLOC_CONN_TYPE\fR
-Same as \fB\-\-conn\-type\fR
-.TP
 \fBSALLOC_CONSTRAINT\fR
 Same as \fB\-C\fR, \fB\-\-constraint\fR
 .TP
 \fBSALLOC_CORE_SPEC\fR
 Same as \fB\-\-core\-spec\fR
+.TP
+\fBSALLOC_CPUS_PER_GPU\fR
+Same as \fB\-\-cpus\-per\-gpu\fR
 .TP
 \fBSALLOC_DEBUG\fR
 Same as \fB\-v, \-\-verbose\fR
@@ -1535,8 +1633,20 @@ Same as \fB\-\-delay\-boot\fR
 \fBSALLOC_EXCLUSIVE\fR
 Same as \fB\-\-exclusive\fR
 .TP
-\fBSALLOC_GEOMETRY\fR
-Same as \fB\-g, \-\-geometry\fR
+\fBSALLOC_GPUS\fR
+Same as \fB\-G, \-\-gpus\fR
+.TP
+\fBSALLOC_GPU_BIND\fR
+Same as \fB\-\-gpu\-bind\fR
+.TP
+\fBSALLOC_GPU_FREQ\fR
+Same as \fB\-\-gpu\-freq\fR
+.TP
+\fBSALLOC_GPUS_PER_NODE\fR
+Same as \fB\-\-gpus\-per\-node\fR
+.TP
+\fBSALLOC_GPUS_PER_TASK\fR
+Same as \fB\-\-gpus\-per\-task\fR
 .TP
 \fBSALLOC_GRES_FLAGS\fR
 Same as \-\-gres\-flags\fR
@@ -1554,16 +1664,16 @@ Same as \fB\-\-jobid\fR
 Same as \fB\-K\fR, \fB\-\-kill\-command\fR
 .TP
 \fBSALLOC_MEM_BIND\fR
-Same as \fB\-\-mem_bind\fR
+Same as \fB\-\-mem\-bind\fR
+.TP
+\fBSALLOC_MEM_PER_GPU\fR
+Same as \fB\-\-mem\-per\-gpu\fR
 .TP
 \fBSALLOC_NETWORK\fR
 Same as \fB\-\-network\fR
 .TP
 \fBSALLOC_NO_BELL\fR
 Same as \fB\-\-no\-bell\fR
-.TP
-\fBSALLOC_NO_ROTATE\fR
-Same as \fB\-R, \-\-no\-rotate\fR
 .TP
 \fBSALLOC_OVERCOMMIT\fR
 Same as \fB\-O, \-\-overcommit\fR
@@ -1634,18 +1744,6 @@ Also see \fBSLURM_EXIT_ERROR\fR.
 salloc will set the following environment variables in the environment of
 the executed program:
 .TP
-\fBBASIL_RESERVATION_ID\fR
-The reservation ID on Cray systems running ALPS/BASIL only.
-.TP
-\fBMPIRUN_NOALLOCATE\fR
-Do not allocate a block on Blue Gene L/P systems only.
-.TP
-\fBMPIRUN_NOFREE\fR
-Do not free a block on Blue Gene L/P systems only.
-.TP
-\fBMPIRUN_PARTITION\fR
-The block name on Blue Gene systems only.
-.TP
 \fBSLURM_*_PACK_GROUP_#\fR
 For a heterogenous job allocation, the environment variables are set separately
 for each component.
@@ -1653,12 +1751,40 @@ for each component.
 \fBSLURM_CLUSTER_NAME\fR
 Name of the cluster on which the job is executing.
 .TP
+\fBSLURM_CPUS_PER_GPU\fR
+Number of CPUs requested per allocated GPU.
+Only set if the \fB\-\-cpus\-per\-gpu\fR option is specified.
+.TP
 \fBSLURM_CPUS_PER_TASK\fR
-Number of cpus requested per task.
+Number of CPUs requested per task.
 Only set if the \fB\-\-cpus\-per\-task\fR option is specified.
 .TP
 \fBSLURM_DISTRIBUTION\fR
-Same as \fB\-m, \-\-distribution\fR
+Only set if the \fB\-m, \-\-distribution\fR option is specified.
+.TP
+\fBSLURM_GPUS\fR
+Number of GPUs requested.
+Only set if the \fB\-G, \-\-gpus\fR option is specified.
+.TP
+\fBSLURM_GPU_BIND\fR
+Requested binding of tasks to GPU.
+Only set if the \fB\-\-gpu\-bind\fR option is specified.
+.TP
+\fBSLURM_GPU_FREQ\fR
+Requested GPU frequency and voltage.
+Only set if the \fB\-\-gpu\-freq\fR option is specified.
+.TP
+\fBSLURM_GPUS_PER_NODE\fR
+Requested GPU count per allocated node.
+Only set if the \fB\-\-gpus\-per\-node\fR option is specified.
+.TP
+\fBSLURM_GPUS_PER_SOCKET\fR
+Requested GPU count per allocated socket.
+Only set if the \fB\-\-gpus\-per\-socket\fR option is specified.
+.TP
+\fBSLURM_GPUS_PER_TASK\fR
+Requested GPU count per allocated task.
+Only set if the \fB\-\-gpus\-per\-task\fR option is specified.
 .TP
 \fBSLURM_JOB_ACCOUNT\fR
 Account name associated of the job allocation.
@@ -1690,27 +1816,31 @@ Quality Of Service (QOS) of the job allocation.
 Advanced reservation containing the job allocation, if any.
 .TP
 \fBSLURM_MEM_BIND\fR
-Set to value of the \-\-mem_bind\fR option.
+Set to value of the \-\-mem\-bind\fR option.
 .TP
 \fBSLURM_MEM_BIND_LIST\fR
 Set to bit mask used for memory binding.
 .TP
 \fBSLURM_MEM_BIND_PREFER\fR
-Set to "prefer" if the \-\-mem_bind\fR option includes the prefer option.
+Set to "prefer" if the \-\-mem\-bind\fR option includes the prefer option.
 .TP
 \fBSLURM_MEM_BIND_SORT\fR
 Sort free cache pages (run zonesort on Intel KNL nodes)
 .TP
 \fBSLURM_MEM_BIND_TYPE\fR
-Set to the memory binding type specified with the \-\-mem_bind\fR option.
+Set to the memory binding type specified with the \-\-mem\-bind\fR option.
 Possible values are "none", "rank", "map_map", "mask_mem" and "local".
 .TP
 \fBSLURM_MEM_BIND_VERBOSE\fR
-Set to "verbose" if the \-\-mem_bind\fR option includes the verbose option.
+Set to "verbose" if the \-\-mem\-bind\fR option includes the verbose option.
 Set to "quiet" otherwise.
 .TP
 \fBSLURM_MEM_PER_CPU\fR
 Same as \fB\-\-mem\-per\-cpu\fR
+.TP
+\fBSLURM_MEM_PER_GPU\fR
+Requested memory per allocated GPU.
+Only set if the \fB\-\-mem\-per\-gpu\fR option is specified.
 .TP
 \fBSLURM_MEM_PER_NODE\fR
 Same as \fB\-\-mem\fR
@@ -1741,7 +1871,7 @@ Same as \fB\-\-profile\fR
 .TP
 \fBSLURM_TASKS_PER_NODE\fR
 Number of tasks to be initiated on each node. Values are
-comma separated and in the same order as SLURM_NODELIST.
+comma separated and in the same order as SLURM_JOB_NODELIST.
 If two or more consecutive nodes are to have the same task
 count, that count is followed by "(x#)" where "#" is the
 repetition count. For example, "SLURM_TASKS_PER_NODE=2(x3),1"
@@ -1794,7 +1924,7 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 .br
-Copyright (C) 2010\-2015 SchedMD LLC.
+Copyright (C) 2010\-2018 SchedMD LLC.
 .LP
 This file is part of Slurm, a resource management program.
 For details, see <https://slurm.schedmd.com/>.

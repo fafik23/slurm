@@ -6,11 +6,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -51,7 +51,7 @@
  * IN job_id     - the job's id
  * IN signal     - signal number
  * IN flags      - see KILL_JOB_* flags in slurm.h
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 extern int
 slurm_kill_job (uint32_t job_id, uint16_t signal, uint16_t flags)
@@ -73,7 +73,7 @@ slurm_kill_job (uint32_t job_id, uint16_t signal, uint16_t flags)
 	msg.msg_type    = REQUEST_CANCEL_JOB_STEP;
 	msg.data        = &req;
 	if (slurm_send_recv_controller_rc_msg(&msg, &rc, working_cluster_rec)<0)
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 
 	if (rc)
 		slurm_seterrno_ret(rc);
@@ -87,7 +87,7 @@ slurm_kill_job (uint32_t job_id, uint16_t signal, uint16_t flags)
  * IN job_id     - the job's id
  * IN step_id    - the job step's id
  * IN signal     - signal number
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 extern int
 slurm_kill_job_step (uint32_t job_id, uint32_t step_id, uint16_t signal)
@@ -110,7 +110,7 @@ slurm_kill_job_step (uint32_t job_id, uint32_t step_id, uint16_t signal)
 	msg.data        = &req;
 
 	if (slurm_send_recv_controller_rc_msg(&msg, &rc, working_cluster_rec)<0)
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 
 	if (rc)
 		slurm_seterrno_ret(rc);
@@ -129,7 +129,7 @@ slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
 
 	if (job_id == NULL) {
 		errno = EINVAL;
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	slurm_msg_t_init(&msg);
@@ -144,7 +144,7 @@ slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
         msg.data        = &req;
 
 	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)<0)
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 
 	if (cc)
 		slurm_seterrno_ret(cc);
@@ -157,7 +157,7 @@ slurm_kill_job2(const char *job_id, uint16_t signal, uint16_t flags)
  *
  * IN msg_type - msg_type to send
  * IN kill_msg - job_step_kill_msg_t parameters.
- * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
  */
 extern int slurm_kill_job_msg(uint16_t msg_type, job_step_kill_msg_t *kill_msg)
 {
@@ -169,7 +169,7 @@ extern int slurm_kill_job_msg(uint16_t msg_type, job_step_kill_msg_t *kill_msg)
         msg.data     = kill_msg;
 
 	if (slurm_send_recv_controller_rc_msg(&msg, &cc, working_cluster_rec)<0)
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 
 	if (cc)
 		slurm_seterrno_ret(cc);

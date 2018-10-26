@@ -106,15 +106,17 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * JOB_STATE_BASE   0x00ff
+=item * JOB_STATE_BASE   0x000000ff
 
-=item * JOB_STATE_FLAGS  0xff00
+=item * JOB_STATE_FLAGS  0xffffff00
 
-=item * JOB_COMPLETING   0x8000
+=item * JOB_COMPLETING   0x00008000
 
-=item * JOB_CONFIGURING  0x4000
+=item * JOB_CONFIGURING  0x00004000
 
-=item * JOB_RESIZING     0x2000
+=item * JOB_RESIZING     0x00002000
+
+=item * JOB_SIGNALING    0x00400000
 
 =item * READY_JOB_FATAL  -2
 
@@ -569,6 +571,24 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =back
 
+=head3 Job Condition Flags
+
+=over 2
+
+=item * JOBCOND_FLAG_DUP         0x00000001
+
+=item * JOBCOND_FLAG_NO_STEP     0x00000002
+
+=item * JOBCOND_FLAG_NO_TRUNC    0x00000004
+
+=item * JOBCOND_FLAG_RUNAWAY     0x00000008
+
+=item * JOBCOND_FLAG_WHOLE_HETJOB 0x00000010
+
+=item * JOBCOND_FLAG_NO_WHOLE_HETJOB 0x00000020
+
+=back
+
 =head3 Connection type
 
 =over 2
@@ -899,14 +919,6 @@ head2 SLURM ERRNO
 =item * SLURM_SUCCESS           0
 
 =item * SLURM_ERROR             -1
-
-=item * SLURM_FAILURE           -1
-
-=item * SLURM_SOCKET_ERROR      -1
-
-=item * SLURM_PROTOCOL_SUCCESS  0
-
-=item * SLURM_PROTOCOL_ERROR    -1
 
 =back
 

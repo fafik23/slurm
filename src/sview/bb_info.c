@@ -4,22 +4,22 @@
  *  Copyright (C) 2014-2015 SchedMD LLC.
  *  Written by Nathan Yee <nyee32@shedmd.com>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -501,7 +501,7 @@ static List _create_bb_info_list(burst_buffer_info_msg_t *bb_info_ptr)
 			}
 			sview_bb_info_ptr->bb_ptr = bb_resv_ptr;
 			sview_bb_info_ptr->bb_name = xstrdup(bb_name_id);
-			strcpy(bb_name_id, "");	/* Clear bb_name_id */
+			bb_name_id[0] = '\0';	/* Clear bb_name_id */
 			sview_bb_info_ptr->color_inx = pos % sview_colors_cnt;
 			sview_bb_info_ptr->plugin = xstrdup(bb_ptr->name);
 			sview_bb_info_ptr->pos = pos++;
@@ -545,7 +545,7 @@ static void _display_info_bb(List info_list, popup_info_t *popup_win)
 		bb_ptr = sview_bb_info->bb_ptr;
 
 		if (bb_ptr->name) {
-			strcpy(bb_name_id, bb_ptr->name);
+			strlcpy(bb_name_id, bb_ptr->name, sizeof(bb_name_id));
 		} else if (bb_ptr->array_task_id == NO_VAL) {
 			convert_num_unit(bb_ptr->job_id,
 					 bb_name_id,
@@ -790,7 +790,7 @@ extern void specific_info_bb(popup_info_t *popup_win)
 	List bb_list = NULL;
 	List send_bb_list = NULL;
 	sview_bb_info_t *sview_bb_info_ptr = NULL;
-	int i=-1;
+	int i = -1;
 	ListIterator itr = NULL;
 
 	if (!spec_info->display_widget) {
@@ -828,11 +828,10 @@ extern void specific_info_bb(popup_info_t *popup_win)
 display_it:
 
 	bb_list = _create_bb_info_list(bb_info_ptr);
-
 	if (!bb_list)
 		return;
 
-	if (spec_info->view == ERROR_VIEW && spec_info->display_widget) {
+	if ((spec_info->view == ERROR_VIEW) && spec_info->display_widget) {
 		gtk_widget_destroy(spec_info->display_widget);
 		spec_info->display_widget = NULL;
 	}
@@ -847,9 +846,11 @@ display_it:
 		gtk_table_attach_defaults(popup_win->table,
 					  GTK_WIDGET(tree_view),
 					  0, 1, 0, 1);
-		/* since this function sets the model of the tree_view
+		/*
+		 * since this function sets the model of the tree_view
 		 * to the treestore we don't really care about
-		 * the return value */
+		 * the return value
+		 */
 		create_treestore(tree_view, popup_win->display_data,
 				 SORTID_CNT, SORTID_NAME, SORTID_COLOR);
 	}
@@ -862,26 +863,33 @@ display_it:
 		goto end_it;
 	}
 
-	/* just linking to another list, don't free the inside, just the list */
+	/*
+	 * just linking to another list, don't free the inside, just the list
+	 */
 	send_bb_list = list_create(NULL);
 	itr = list_iterator_create(bb_list);
 	i = -1;
-	/* Set up additional menu options(ie the right click menu stuff) */
+	/*
+	 * Set up additional menu options(ie the right click menu stuff)
+	 */
 	while ((sview_bb_info_ptr = list_next(itr))) {
 		i++;
-		/* Since we will not use any of these pages we will */
-		/* leave them blank */
 		switch (spec_info->type) {
-		case PART_PAGE:
-		case BLOCK_PAGE:
-		case NODE_PAGE:
+		case BB_PAGE:
+			list_push(send_bb_list, sview_bb_info_ptr);
+			break;
 		case JOB_PAGE:
+		case NODE_PAGE:
+		case PART_PAGE:
 		case RESV_PAGE:
 		default:
+			/*
+			 * Since we will not use any of these pages we will
+			 * leave them blank
+			 */
 			g_print("Unknown type %d\n", spec_info->type);
-			continue;
+			break;
 		}
-		list_push(send_bb_list, sview_bb_info_ptr);
 	}
 	list_iterator_destroy(itr);
 	post_setup_popup_grid_list(popup_win);
@@ -990,7 +998,6 @@ extern void popup_all_bb(GtkTreeModel *model, GtkTreeIter *iter, int id)
 		popup_win->spec_info->search_info->gchar_data = name;
 		specific_info_bb(popup_win);
 		break;
-	case BLOCK_PAGE:
 	case NODE_PAGE:
 	case PART_PAGE:
 	case SUBMIT_PAGE:

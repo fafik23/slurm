@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  src/common/slurm_cred.h - SLURM job and sbcast credential functions
+ *  src/common/slurm_cred.h - Slurm job and sbcast credential functions
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -7,11 +7,11 @@
  *  Written by Mark Grondona <grondona1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -127,7 +127,7 @@ int  slurm_cred_ctx_unpack(slurm_cred_ctx_t ctx, Buf buffer);
 
 
 /*
- * Container for SLURM credential create and verify arguments
+ * Container for Slurm credential create and verify arguments
  *
  * The core_bitmap, cores_per_socket, sockets_per_node, and
  * sock_core_rep_count is based upon the nodes allocated to the
@@ -137,7 +137,11 @@ int  slurm_cred_ctx_unpack(slurm_cred_ctx_t ctx, Buf buffer);
 typedef struct {
 	uint32_t  jobid;
 	uint32_t  stepid;
-	uid_t     uid;
+	uid_t uid;
+	gid_t gid;
+	char *user_name;
+	int ngids;
+	gid_t *gids;
 
 	/* job_core_bitmap and step_core_bitmap cover the same set of nodes,
 	 * namely the set of nodes allocated to the job. The core and socket
@@ -156,6 +160,7 @@ typedef struct {
 					 * default=0 (no limit) */
 	uint32_t  job_nhosts;		/* count of nodes allocated to JOB */
 	List job_gres_list;		/* Generic resources allocated to JOB */
+	uint16_t  x11;			/* x11 flag set on job */
 
 	/* STEP specific info */
 	bitstr_t *step_core_bitmap;	/* cores allocated to STEP */
@@ -221,7 +226,7 @@ int slurm_cred_verify(slurm_cred_ctx_t ctx, slurm_cred_t *cred,
 
 /*
  * Rewind the last play of credential cred. This allows the credential
- *  be used again. Returns SLURM_FAILURE if no credential state is found
+ *  be used again. Returns SLURM_ERROR if no credential state is found
  *  to be rewound, SLURM_SUCCESS otherwise.
  */
 int slurm_cred_rewind(slurm_cred_ctx_t ctx, slurm_cred_t *cred);
@@ -333,15 +338,32 @@ void slurm_cred_print(slurm_cred_t *cred);
  * Functions to create, delete, pack, and unpack an sbcast credential
  * Caller of extract_sbcast_cred() must xfree returned node string
  */
+
+typedef struct {
+	uint32_t job_id;
+	uint32_t pack_jobid;
+	uid_t uid;
+	gid_t gid;
+	char *user_name;
+	int ngids;
+	gid_t *gids;
+
+	time_t expiration;
+	char *nodes;
+} sbcast_cred_arg_t;
+
 sbcast_cred_t *create_sbcast_cred(slurm_cred_ctx_t ctx,
-				  uint32_t job_id, char *nodes,
-				  time_t expiration);
-void          delete_sbcast_cred(sbcast_cred_t *sbcast_cred);
-int           extract_sbcast_cred(slurm_cred_ctx_t ctx,
-				  sbcast_cred_t *sbcast_cred, uint16_t block_no,
-				  uint32_t *job_id, char **nodes);
-void          pack_sbcast_cred(sbcast_cred_t *sbcast_cred, Buf buffer);
-sbcast_cred_t *unpack_sbcast_cred(Buf buffer);
-void          print_sbcast_cred(sbcast_cred_t *sbcast_cred);
+				  sbcast_cred_arg_t *arg,
+				  uint16_t protocol_version);
+void delete_sbcast_cred(sbcast_cred_t *sbcast_cred);
+sbcast_cred_arg_t *extract_sbcast_cred(slurm_cred_ctx_t ctx,
+				       sbcast_cred_t *sbcast_cred,
+				       uint16_t block_no,
+				       uint16_t protocol_version);
+void pack_sbcast_cred(sbcast_cred_t *sbcast_cred, Buf buffer,
+		      uint16_t protocol_Version);
+sbcast_cred_t *unpack_sbcast_cred(Buf buffer, uint16_t protocol_version);
+void print_sbcast_cred(sbcast_cred_t *sbcast_cred);
+void sbcast_cred_arg_free(sbcast_cred_arg_t *arg);
 
 #endif  /* _HAVE_SLURM_CREDS_H */

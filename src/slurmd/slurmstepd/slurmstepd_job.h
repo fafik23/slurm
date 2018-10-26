@@ -8,11 +8,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -126,15 +126,22 @@ typedef struct {
 	slurmstepd_state_t state;	/* Job state			*/
 	pthread_cond_t state_cond;	/* Job state conditional	*/
 	pthread_mutex_t state_mutex;	/* Job state mutex		*/
-	uint32_t       jobid;  /* Current SLURM job id                      */
+	uint32_t       jobid;  /* Current Slurm job id                      */
 	uint32_t       stepid; /* Current step id (or NO_VAL)               */
 	uint32_t       array_job_id;  /* job array master job ID            */
 	uint32_t       array_task_id; /* job array ID                       */
 	uint32_t       nnodes; /* number of nodes in current job            */
 	uint32_t       ntasks; /* total number of tasks in current job      */
 	uint32_t       nodeid; /* relative position of this node in job     */
-	uint32_t       node_tasks; /* number of tasks on *this* node        */
+	uint32_t       node_offset;	/* pack job node offset or NO_VAL   */
+	uint32_t       node_tasks;	/* number of tasks on *this* node   */
+	uint32_t       pack_jobid;	/* pack job ID or NO_VAL */
+	uint32_t       pack_nnodes;	/* total node count for entire pack job */
+	char          *pack_node_list;	/* pack step node list */
+	uint32_t       pack_ntasks;	/* total task count for entire pack job */
 	uint32_t       pack_offset; 	/* pack job offset or NO_VAL        */
+	uint32_t       pack_task_offset;/* pack job task offset or NO_VAL   */
+	uint16_t      *pack_task_cnts;	/* Number of tasks on each node in pack job */
 	uint16_t      *task_cnts;  /* Number of tasks on each node in job   */
 	uint32_t       cpus_per_task;	/* number of cpus desired per task  */
 	uint32_t       debug;  /* debug level for job slurmd                */
@@ -148,9 +155,9 @@ typedef struct {
 	task_dist_states_t task_dist;/* -m distribution                     */
 	char          *node_name; /* node name of node running job
 				   * needed for front-end systems           */
-	cpu_bind_type_t cpu_bind_type; /* --cpu_bind=                       */
+	cpu_bind_type_t cpu_bind_type; /* --cpu-bind=                       */
 	char          *cpu_bind;       /* binding map for map/mask_cpu      */
-	mem_bind_type_t mem_bind_type; /* --mem_bind=                       */
+	mem_bind_type_t mem_bind_type; /* --mem-bind=                       */
 	char          *mem_bind;       /* binding map for tasks to memory   */
 	uint16_t accel_bind_type;  /* --accel_bind= */
 	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
@@ -220,6 +227,8 @@ typedef struct {
 	char	      *step_alloc_cores;/* needed by the SPANK cpuset plugin */
 	List           job_gres_list;	/* Needed by GRES plugin */
 	List           step_gres_list;	/* Needed by GRES plugin */
+	char          *tres_bind;	/* TRES binding */
+	char          *tres_freq;	/* TRES frequency */
 	launch_tasks_request_msg_t *msg; /* When a non-batch step this
 					  * is the message sent.  DO
 					  * NOT FREE, IT IS JUST A
@@ -230,6 +239,13 @@ typedef struct {
 					 * increasing across all nodes, set only
 					 * native Cray systems */
 	bool		oom_error;	/* step out of memory error */
+
+	uint16_t x11;			/* only set for extern step */
+	int x11_display;		/* display number if x11 forwarding setup */
+	char *x11_magic_cookie;		/* xauth magic cookie value */
+	char *x11_target_host;		/* remote machine to connect back to */
+	uint16_t x11_target_port;	/* remote x11 port to connect back to */
+	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
 } stepd_step_rec_t;
 
 

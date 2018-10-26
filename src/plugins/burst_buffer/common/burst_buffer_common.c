@@ -10,11 +10,11 @@
  *  Copyright (C) 2014-2015 SchedMD LLC.
  *  Written by Morris Jette <jette@schedmd.com>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -30,13 +30,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -63,6 +63,7 @@
 #include "src/common/macros.h"
 #include "src/common/pack.h"
 #include "src/common/parse_config.h"
+#include "src/common/run_command.h"
 #include "src/common/slurm_accounting_storage.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/timers.h"
@@ -79,10 +80,6 @@
 
 /* Maximum poll wait time for child processes, in milliseconds */
 #define MAX_POLL_WAIT 500
-
-static int bb_plugin_shutdown = 0;
-static int child_proc_count = 0;
-static pthread_mutex_t proc_count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void	_bb_job_del2(bb_job_t *bb_job);
 static uid_t *	_parse_users(char *buf);
@@ -217,6 +214,7 @@ extern void bb_clear_config(bb_config_t *config_ptr, bool fini)
 	xfree(config_ptr->deny_users_str);
 	xfree(config_ptr->destroy_buffer);
 	xfree(config_ptr->get_sys_state);
+	xfree(config_ptr->get_sys_status);
 	config_ptr->granularity = 1;
 	if (fini) {
 		for (i = 0; i < config_ptr->pool_cnt; i++)
@@ -243,7 +241,6 @@ extern bb_alloc_t *bb_find_alloc_rec(bb_state_t *state_ptr,
 				     struct job_record *job_ptr)
 {
 	bb_alloc_t *bb_alloc = NULL;
-	char jobid_buf[32];
 
 	xassert(job_ptr);
 	xassert(state_ptr);
@@ -254,10 +251,8 @@ extern bb_alloc_t *bb_find_alloc_rec(bb_state_t *state_ptr,
 				xassert(bb_alloc->magic == BB_ALLOC_MAGIC);
 				return bb_alloc;
 			}
-			error("%s: Slurm state inconsistent with burst "
-			      "buffer. %s has UserID mismatch (%u != %u)",
-			      __func__,
-			      jobid2fmt(job_ptr, jobid_buf, sizeof(jobid_buf)),
+			error("%s: Slurm state inconsistent with burst buffer. %pJ has UserID mismatch (%u != %u)",
+			      __func__, job_ptr,
 			      bb_alloc->user_id, job_ptr->user_id);
 			/* This has been observed when slurmctld crashed and
 			 * the job state recovered was missing some jobs
@@ -366,7 +361,7 @@ extern void bb_set_tres_pos(bb_state_t *state_ptr)
 	inx = assoc_mgr_find_tres_pos(&tres_rec, false);
 	state_ptr->tres_pos = inx;
 	if (inx == -1) {
-		debug("%s: Tres %s not found by assoc_mgr",
+		debug3("%s: Tres %s not found by assoc_mgr",
 		       __func__, state_ptr->name);
 	} else {
 		state_ptr->tres_id  = assoc_mgr_tres_array[inx]->id;
@@ -394,6 +389,7 @@ extern void bb_load_config(bb_state_t *state_ptr, char *plugin_type)
 		{"DestroyBuffer", S_P_STRING},
 		{"Flags", S_P_STRING},
 		{"GetSysState", S_P_STRING},
+		{"GetSysStatus", S_P_STRING},
 		{"Granularity", S_P_STRING},
 		{"OtherTimeout", S_P_UINT32},
 		{"StageInTimeout", S_P_UINT32},
@@ -481,6 +477,8 @@ extern void bb_load_config(bb_state_t *state_ptr, char *plugin_type)
 
 	s_p_get_string(&state_ptr->bb_config.get_sys_state, "GetSysState",
 		       bb_hashtbl);
+	s_p_get_string(&state_ptr->bb_config.get_sys_status, "GetSysStatus",
+		       bb_hashtbl);
 	if (s_p_get_string(&tmp, "Granularity", bb_hashtbl)) {
 		state_ptr->bb_config.granularity = bb_get_size_num(tmp, 1);
 		xfree(tmp);
@@ -551,6 +549,8 @@ extern void bb_load_config(bb_state_t *state_ptr, char *plugin_type)
 		     state_ptr->bb_config.destroy_buffer);
 		info("%s: GetSysState:%s",  __func__,
 		     state_ptr->bb_config.get_sys_state);
+		info("%s: GetSysStatus:%s",  __func__,
+		     state_ptr->bb_config.get_sys_status);
 		info("%s: Granularity:%"PRIu64"",  __func__,
 		     state_ptr->bb_config.granularity);
 		for (i = 0; i < state_ptr->bb_config.pool_cnt; i++) {
@@ -637,7 +637,8 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 	bb_config_t *config_ptr = &state_ptr->bb_config;
 	int i;
 
-	if (protocol_version >= SLURM_17_02_PROTOCOL_VERSION) {
+
+	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		packstr(config_ptr->allow_users_str, buffer);
 		packstr(config_ptr->create_buffer,   buffer);
 		packstr(config_ptr->default_pool,    buffer);
@@ -645,6 +646,7 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 		packstr(config_ptr->destroy_buffer,  buffer);
 		pack32(config_ptr->flags,            buffer);
 		packstr(config_ptr->get_sys_state,   buffer);
+		packstr(config_ptr->get_sys_status,   buffer);
 		pack64(config_ptr->granularity,      buffer);
 		pack32(config_ptr->pool_cnt,         buffer);
 		for (i = 0; i < config_ptr->pool_cnt; i++) {
@@ -679,6 +681,7 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 			packstr(config_ptr->pool_ptr[i].name, buffer);
 			pack64(config_ptr->pool_ptr[i].total_space, buffer);
 			pack64(config_ptr->pool_ptr[i].granularity, buffer);
+			pack64(config_ptr->pool_ptr[i].unfree_space, buffer);
 			pack64(config_ptr->pool_ptr[i].used_space, buffer);
 		}
 		pack32(config_ptr->other_timeout,    buffer);
@@ -689,6 +692,7 @@ extern void bb_pack_state(bb_state_t *state_ptr, Buf buffer,
 		pack32(config_ptr->stage_in_timeout, buffer);
 		pack32(config_ptr->stage_out_timeout,buffer);
 		pack64(state_ptr->total_space,       buffer);
+		pack64(state_ptr->unfree_space,      buffer);
 		pack64(state_ptr->used_space,        buffer);
 		pack32(config_ptr->validate_timeout, buffer);
 	}
@@ -738,13 +742,14 @@ extern int bb_pack_usage(uid_t uid, bb_state_t *state_ptr, Buf buffer,
  * Default units are bytes. */
 extern uint64_t bb_get_size_num(char *tok, uint64_t granularity)
 {
-	char *unit = NULL;
+	char *tmp = NULL, *unit;
 	uint64_t bb_size_i;
 	uint64_t bb_size_u = 0;
 
-	bb_size_i = (uint64_t) strtoull(tok, &unit, 10);
-	if (bb_size_i > 0) {
+	bb_size_i = (uint64_t) strtoull(tok, &tmp, 10);
+	if ((bb_size_i > 0) && tmp) {
 		bb_size_u = bb_size_i;
+		unit = xstrdup(tmp);
 		strtok(unit, " ");
 		if (!xstrcasecmp(unit, "k") || !xstrcasecmp(unit, "kib")) {
 			bb_size_u *= 1024;
@@ -783,6 +788,7 @@ extern uint64_t bb_get_size_num(char *tok, uint64_t granularity)
 			bb_size_u |= BB_SIZE_IN_NODES;
 			granularity = 1;
 		}
+		xfree(unit);
 	}
 
 	if (granularity > 1) {
@@ -911,8 +917,7 @@ extern void bb_set_use_time(bb_state_t *state_ptr)
 				job_ptr = find_job_record(bb_alloc->job_id);
 				if (!job_ptr && !bb_alloc->orphaned) {
 					bb_alloc->orphaned = true;
-					error("%s: Job %u not found for "
-					      "allocated burst buffer",
+					error("%s: JobId=%u not found for allocated burst buffer",
 					      __func__, bb_alloc->job_id);
 					bb_alloc->use_time = now + 24 * 60 * 60;
 				} else if (!job_ptr) {
@@ -1089,186 +1094,6 @@ extern bool bb_free_alloc_rec(bb_state_t *state_ptr, bb_alloc_t *bb_alloc)
 	return false;
 }
 
-/*
- * Return time in msec since "start time"
- */
-static int _tot_wait (struct timeval *start_time)
-{
-	struct timeval end_time;
-	int msec_delay;
-
-	gettimeofday(&end_time, NULL);
-	msec_delay =   (end_time.tv_sec  - start_time->tv_sec ) * 1000;
-	msec_delay += ((end_time.tv_usec - start_time->tv_usec + 500) / 1000);
-	return msec_delay;
-}
-
-/* Terminate any child processes */
-extern void bb_shutdown(void)
-{
-	bb_plugin_shutdown = 1;
-}
-
-/* Return count of child processes */
-extern int bb_proc_count(void)
-{
-	int cnt;
-
-	slurm_mutex_lock(&proc_count_mutex);
-	cnt = child_proc_count;
-	slurm_mutex_unlock(&proc_count_mutex);
-
-	return cnt;
-}
-
-/* Execute a script, wait for termination and return its stdout.
- * script_type IN - Type of program being run (e.g. "StartStageIn")
- * script_path IN - Fully qualified pathname of the program to execute
- * script_args IN - Arguments to the script
- * max_wait IN - Maximum time to wait in milliseconds,
- *		 -1 for no limit (asynchronous)
- * status OUT - Job exit code
- * Return stdout+stderr of spawned program, value must be xfreed. */
-extern char *bb_run_script(char *script_type, char *script_path,
-			   char **script_argv, int max_wait, int *status)
-{
-	int i, new_wait, resp_size = 0, resp_offset = 0;
-	pid_t cpid;
-	char *resp = NULL;
-	int pfd[2] = { -1, -1 };
-
-	if ((script_path == NULL) || (script_path[0] == '\0')) {
-		error("%s: no script specified", __func__);
-		*status = 127;
-		resp = xstrdup("Slurm burst buffer configuration error");
-		return resp;
-	}
-	if (script_path[0] != '/') {
-		error("%s: %s is not fully qualified pathname (%s)",
-		      __func__, script_type, script_path);
-		*status = 127;
-		resp = xstrdup("Slurm burst buffer configuration error");
-		return resp;
-	}
-	if (access(script_path, R_OK | X_OK) < 0) {
-		error("%s: %s can not be executed (%s) %m",
-		      __func__, script_type, script_path);
-		*status = 127;
-		resp = xstrdup("Slurm burst buffer configuration error");
-		return resp;
-	}
-	if (max_wait != -1) {
-		if (pipe(pfd) != 0) {
-			error("%s: pipe(): %m", __func__);
-			*status = 127;
-			resp = xstrdup("System error");
-			return resp;
-		}
-	}
-	slurm_mutex_lock(&proc_count_mutex);
-	child_proc_count++;
-	slurm_mutex_unlock(&proc_count_mutex);
-	if ((cpid = fork()) == 0) {
-		int cc;
-
-		cc = sysconf(_SC_OPEN_MAX);
-		if (max_wait != -1) {
-			dup2(pfd[1], STDERR_FILENO);
-			dup2(pfd[1], STDOUT_FILENO);
-			for (i = 0; i < cc; i++) {
-				if ((i != STDERR_FILENO) &&
-				    (i != STDOUT_FILENO))
-					close(i);
-			}
-		} else {
-			for (i = 0; i < cc; i++)
-				close(i);
-			if ((cpid = fork()) < 0)
-				exit(127);
-			else if (cpid > 0)
-				exit(0);
-		}
-		setpgid(0, 0);
-		execv(script_path, script_argv);
-		error("%s: execv(%s): %m", __func__, script_path);
-		exit(127);
-	} else if (cpid < 0) {
-		if (max_wait != -1) {
-			close(pfd[0]);
-			close(pfd[1]);
-		}
-		error("%s: fork(): %m", __func__);
-		slurm_mutex_lock(&proc_count_mutex);
-		child_proc_count--;
-		slurm_mutex_unlock(&proc_count_mutex);
-	} else if (max_wait != -1) {
-		struct pollfd fds;
-		struct timeval tstart;
-		resp_size = 1024;
-		resp = xmalloc(resp_size);
-		close(pfd[1]);
-		gettimeofday(&tstart, NULL);
-		while (1) {
-			if (bb_plugin_shutdown) {
-				error("%s: killing %s operation on shutdown",
-				      __func__, script_type);
-				break;
-			}
-			fds.fd = pfd[0];
-			fds.events = POLLIN | POLLHUP | POLLRDHUP;
-			fds.revents = 0;
-			if (max_wait <= 0) {
-				new_wait = MAX_POLL_WAIT;
-			} else {
-				new_wait = max_wait - _tot_wait(&tstart);
-				if (new_wait <= 0) {
-					error("%s: %s poll timeout @ %d msec",
-					      __func__, script_type, max_wait);
-					break;
-				}
-				new_wait = MIN(new_wait, MAX_POLL_WAIT);
-			}
-			i = poll(&fds, 1, new_wait);
-			if (i == 0) {
-				continue;
-			} else if (i < 0) {
-				error("%s: %s poll:%m", __func__, script_type);
-				break;
-			}
-			if ((fds.revents & POLLIN) == 0)
-				break;
-			i = read(pfd[0], resp + resp_offset,
-				 resp_size - resp_offset);
-			if (i == 0) {
-				break;
-			} else if (i < 0) {
-				if (errno == EAGAIN)
-					continue;
-				error("%s: read(%s): %m", __func__,
-				      script_path);
-				break;
-			} else {
-				resp_offset += i;
-				if (resp_offset + 1024 >= resp_size) {
-					resp_size *= 2;
-					resp = xrealloc(resp, resp_size);
-				}
-			}
-		}
-		killpg(cpid, SIGTERM);
-		usleep(10000);
-		killpg(cpid, SIGKILL);
-		waitpid(cpid, status, 0);
-		close(pfd[0]);
-		slurm_mutex_lock(&proc_count_mutex);
-		child_proc_count--;
-		slurm_mutex_unlock(&proc_count_mutex);
-	} else {
-		waitpid(cpid, status, 0);
-	}
-	return resp;
-}
-
 /* Allocate a bb_job_t record, hashed by job_id, delete with bb_job_del() */
 extern bb_job_t *bb_job_alloc(bb_state_t *state_ptr, uint32_t job_id)
 {
@@ -1358,7 +1183,7 @@ extern void bb_job_log(bb_state_t *state_ptr, bb_job_t *bb_job)
 	int i;
 
 	if (bb_job) {
-		xstrfmtcat(out_buf, "%s: Job:%u UserID:%u ",
+		xstrfmtcat(out_buf, "%s: JobId=%u UserID:%u ",
 			   state_ptr->name, bb_job->job_id, bb_job->user_id);
 		xstrfmtcat(out_buf, "Swap:%ux%u ", bb_job->swap_size,
 			   bb_job->swap_nodes);

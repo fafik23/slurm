@@ -5,11 +5,11 @@
  *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  \*****************************************************************************/
 
@@ -39,17 +39,21 @@
 #include "pmixp_common.h"
 #include "pmixp_debug.h"
 #include "pmixp_info.h"
+#include "pmixp_coll.h"
 
 /* Server communication */
 static char *_srv_usock_path = NULL;
 static int _srv_usock_fd = -1;
 static bool _srv_use_direct_conn = true;
+static bool _srv_use_direct_conn_early = false;
 static bool _srv_same_arch = true;
 #ifdef HAVE_UCX
 static bool _srv_use_direct_conn_ucx = true;
 #else
 static bool _srv_use_direct_conn_ucx = false;
 #endif
+static int _srv_fence_coll_type = PMIXP_COLL_CPERF_RING;
+static bool _srv_fence_coll_barrier = false;
 
 pmix_jobinfo_t _pmixp_job_info;
 
@@ -86,8 +90,32 @@ bool pmixp_info_srv_direct_conn(void){
 	return _srv_use_direct_conn;
 }
 
+bool pmixp_info_srv_direct_conn_early(void){
+	return _srv_use_direct_conn_early && _srv_use_direct_conn;
+}
+
 bool pmixp_info_srv_direct_conn_ucx(void){
 	return _srv_use_direct_conn_ucx && _srv_use_direct_conn;
+}
+
+int pmixp_info_srv_fence_coll_type(void)
+{
+	if (!_srv_use_direct_conn) {
+		static bool printed = false;
+		if (!printed && PMIXP_COLL_CPERF_RING == _srv_fence_coll_type) {
+			PMIXP_ERROR("Ring collective algorithm cannot be used "
+				    "with Slurm RPC's communication subsystem. "
+				    "Tree-based collective will be used instead.");
+			printed = true;
+		}
+		return PMIXP_COLL_CPERF_TREE;
+	}
+	return _srv_fence_coll_type;
+}
+
+bool pmixp_info_srv_fence_coll_barrier(void)
+{
+	return _srv_fence_coll_barrier;
 }
 
 /* Job information */
@@ -103,26 +131,56 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 	_pmixp_job_info.uid = job->uid;
 	_pmixp_job_info.gid = job->gid;
 
-	/* This node info */
-	_pmixp_job_info.jobid = job->jobid;
-	_pmixp_job_info.stepid = job->stepid;
-	_pmixp_job_info.node_id = job->nodeid;
-	_pmixp_job_info.node_tasks = job->node_tasks;
+	if ((job->pack_jobid != 0) && (job->pack_jobid != NO_VAL)) {
+		_pmixp_job_info.jobid = job->pack_jobid;
+		_pmixp_job_info.stepid = job->stepid;
+		_pmixp_job_info.node_id = job->nodeid  + job->node_offset;
+		_pmixp_job_info.node_tasks = job->node_tasks;
+		_pmixp_job_info.ntasks = job->pack_ntasks;
+		_pmixp_job_info.nnodes = job->pack_nnodes;
+		msize = _pmixp_job_info.nnodes * sizeof(uint32_t);
+		_pmixp_job_info.task_cnts = xmalloc(msize);
+		for (i = 0; i < _pmixp_job_info.nnodes; i++)
+			_pmixp_job_info.task_cnts[i] = job->pack_task_cnts[i];
 
-	/* Global info */
-	_pmixp_job_info.ntasks = job->ntasks;
-	_pmixp_job_info.nnodes = job->nnodes;
-	msize = sizeof(*_pmixp_job_info.task_cnts) * job->nnodes;
-	_pmixp_job_info.task_cnts = xmalloc(msize);
-	for (i = 0; i < job->nnodes; i++) {
-		_pmixp_job_info.task_cnts[i] = job->task_cnts[i];
-	}
+		msize = _pmixp_job_info.node_tasks * sizeof(uint32_t);
+		_pmixp_job_info.gtids = xmalloc(msize);
+		for (i = 0; i < job->node_tasks; i++) {
+			_pmixp_job_info.gtids[i] = job->task[i]->gtid +
+						   job->pack_task_offset;
+		}
+	} else {
+		_pmixp_job_info.jobid = job->jobid;
+		_pmixp_job_info.stepid = job->stepid;
+		_pmixp_job_info.node_id = job->nodeid;
+		_pmixp_job_info.node_tasks = job->node_tasks;
+		_pmixp_job_info.ntasks = job->ntasks;
+		_pmixp_job_info.nnodes = job->nnodes;
+		msize = _pmixp_job_info.nnodes * sizeof(uint32_t);
+		_pmixp_job_info.task_cnts = xmalloc(msize);
+		for (i = 0; i < _pmixp_job_info.nnodes; i++)
+			_pmixp_job_info.task_cnts[i] = job->task_cnts[i];
 
-	msize = _pmixp_job_info.node_tasks * sizeof(uint32_t);
-	_pmixp_job_info.gtids = xmalloc(msize);
-	for (i = 0; i < job->node_tasks; i++) {
-		_pmixp_job_info.gtids[i] = job->task[i]->gtid;
+		msize = _pmixp_job_info.node_tasks * sizeof(uint32_t);
+		_pmixp_job_info.gtids = xmalloc(msize);
+		for (i = 0; i < job->node_tasks; i++)
+			_pmixp_job_info.gtids[i] = job->task[i]->gtid;
 	}
+#if 0
+	if ((job->pack_jobid != 0) && (job->pack_jobid != NO_VAL))
+		info("PACK JOBID:%u", _pmixp_job_info.jobid);
+	else
+		info("JOBID:%u", _pmixp_job_info.jobid);
+	info("STEPID:%u", _pmixp_job_info.stepid);
+	info("NODEID:%u", _pmixp_job_info.node_id);
+	info("NODE_TASKS:%u", _pmixp_job_info.node_tasks);
+	info("NTASKS:%u", _pmixp_job_info.ntasks);
+	info("NNODES:%u", _pmixp_job_info.nnodes);
+	for (i = 0; i < _pmixp_job_info.nnodes; i++)
+		info("TASK_CNT[%d]:%u", i,_pmixp_job_info.task_cnts[i]);
+	for (i = 0; i < job->node_tasks; i++)
+		info("GTIDS[%d]:%u", i, _pmixp_job_info.gtids[i]);
+#endif
 
 	/* Setup hostnames and job-wide info */
 	if ((rc = _resources_set(env))) {
@@ -133,7 +191,7 @@ int pmixp_info_set(const stepd_step_rec_t *job, char ***env)
 		return rc;
 	}
 
-	snprintf(_pmixp_job_info.nspace, PMIX_MAX_NSLEN, "slurm.pmix.%d.%d",
+	snprintf(_pmixp_job_info.nspace, PMIXP_MAX_NSLEN, "slurm.pmix.%d.%d",
 		 pmixp_info_jobid(), pmixp_info_stepid());
 
 	return SLURM_SUCCESS;
@@ -332,7 +390,7 @@ static int _env_set(char ***env)
 
 	/* save client temp directory if requested
 	 * TODO: We want to get TmpFS value as well if exists.
-	 * Need to sync with SLURM developers.
+	 * Need to sync with Slurm developers.
 	 */
 	p = getenvp(*env, PMIXP_TMPDIR_CLI);
 
@@ -351,7 +409,7 @@ static int _env_set(char ***env)
 
 
 	/* ----------- Timeout setting ------------- */
-	/* TODO: also would be nice to have a cluster-wide setting in SLURM */
+	/* TODO: also would be nice to have a cluster-wide setting in Slurm */
 	_pmixp_job_info.timeout = PMIXP_TIMEOUT_DEFAULT;
 	p = getenvp(*env, PMIXP_TIMEOUT);
 	if (p) {
@@ -397,6 +455,38 @@ static int _env_set(char ***env)
 		} else if (!xstrcmp("0",p) || !xstrcasecmp("false", p) ||
 			   !xstrcasecmp("no", p)) {
 			_srv_use_direct_conn = false;
+		}
+	}
+	p = getenvp(*env, PMIXP_DIRECT_CONN_EARLY);
+	if (p) {
+		if (!xstrcmp("1", p) || !xstrcasecmp("true", p) ||
+		    !xstrcasecmp("yes", p)) {
+			_srv_use_direct_conn_early = true;
+		} else if (!xstrcmp("0", p) || !xstrcasecmp("false", p) ||
+			   !xstrcasecmp("no", p)) {
+			_srv_use_direct_conn_early = false;
+		}
+	}
+
+	/*------------- Fence coll type setting ----------*/
+	p = getenvp(*env, PMIXP_COLL_FENCE);
+	if (p) {
+		if (!xstrcmp("mixed", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_MIXED;
+		} else if (!xstrcmp("tree", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_TREE;
+		} else if (!xstrcmp("ring", p)) {
+			_srv_fence_coll_type = PMIXP_COLL_CPERF_RING;
+		}
+	}
+	p = getenvp(*env, SLURM_PMIXP_FENCE_BARRIER);
+	if (p) {
+		if (!xstrcmp("1",p) || !xstrcasecmp("true", p) ||
+		    !xstrcasecmp("yes", p)) {
+			_srv_fence_coll_barrier = true;
+		} else if (!xstrcmp("0",p) || !xstrcasecmp("false", p) ||
+			   !xstrcasecmp("no", p)) {
+			_srv_fence_coll_barrier = false;
 		}
 	}
 

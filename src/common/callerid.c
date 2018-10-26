@@ -4,11 +4,11 @@
  *  Copyright (C) 2015, Brigham Young University
  *  Author:  Ryan Cox <ryan_cox@byu.edu>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,21 +24,19 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #include "config.h"
 
-#ifndef _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
+#define _GNU_SOURCE
 
 #ifdef __FreeBSD__
 #include <sys/socket.h>
@@ -97,7 +95,7 @@ static int _match_inode(callerid_conn_t *conn_result, ino_t *inode_search,
 		debug3("_match_inode matched");
 		return SLURM_SUCCESS;
 	}
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 static int _match_conn(callerid_conn_t *conn_search, ino_t *inode_result,
@@ -112,7 +110,7 @@ static int _match_conn(callerid_conn_t *conn_search, ino_t *inode_result,
 	    memcmp((void*)&conn_search->ip_src, (void*)&conn_row->ip_src,
 		   addrbytes) !=0
 	   )
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 
 	debug3("_match_conn matched inode %lu", (long unsigned int)inode_row);
 	*inode_result = inode_row;
@@ -133,7 +131,7 @@ static int _find_match_in_tcp_file(
 		int (*match_func)(callerid_conn_t *,
 				   ino_t *, callerid_conn_t *, ino_t, int))
 {
-	int rc = SLURM_FAILURE;
+	int rc = SLURM_ERROR;
 	FILE *fp;
 	char ip_dst_str[INET6_ADDRSTRLEN+1]; /* +1 for scanf to add \0 */
 	char ip_src_str[INET6_ADDRSTRLEN+1];
@@ -146,8 +144,8 @@ static int _find_match_in_tcp_file(
 
 	/* Zero out the IPs. Not strictly necessary but it will look much better
 	 * in a debugger since IPv4 only uses 4 out of 16 bytes. */
-	bzero(&conn_row.ip_dst, 16);
-	bzero(&conn_row.ip_src, 16);
+	memset(&conn_row.ip_dst, 0, 16);
+	memset(&conn_row.ip_src, 0, 16);
 
 	fp = fopen(path, "r");
 	if (!fp)
@@ -215,13 +213,13 @@ static int _find_inode_in_fddir(pid_t pid, ino_t inode)
 	DIR *dirp;
 	struct dirent *entryp;
 	char dirpath[1024];
-	char fdpath[1024];
-	int rc = SLURM_FAILURE;
+	char fdpath[2048];
+	int rc = SLURM_ERROR;
 	struct stat statbuf;
 
 	snprintf(dirpath, 1024, "/proc/%d/fd", (pid_t)pid);
 	if ((dirp = opendir(dirpath)) == NULL) {
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	while (1) {
@@ -232,7 +230,7 @@ static int _find_inode_in_fddir(pid_t pid, ino_t inode)
 			continue;
 
 		/* This is a symlink. Follow it to get destination's inode. */
-		snprintf(fdpath, 1024, "%s/%s", dirpath, entryp->d_name);
+		snprintf(fdpath, sizeof(fdpath), "%s/%s", dirpath, entryp->d_name);
 		if (stat(fdpath, &statbuf) != 0)
 			continue;
 		if (statbuf.st_ino == inode) {
@@ -264,7 +262,7 @@ extern int callerid_find_inode_by_conn(callerid_conn_t conn, ino_t *inode)
 
 	/* Add new protocols here if needed, such as UDP */
 
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 
@@ -284,7 +282,7 @@ extern int callerid_find_conn_by_inode(callerid_conn_t *conn, ino_t inode)
 
 	/* Add new protocols here if needed, such as UDP */
 
-	return SLURM_FAILURE;
+	return SLURM_ERROR;
 }
 
 
@@ -300,14 +298,14 @@ extern int find_pid_by_inode (pid_t *pid_result, ino_t inode)
 	DIR *dirp;
 	struct dirent *entryp;
 	char *dirpath = "/proc";
-	int rc = SLURM_FAILURE;
+	int rc = SLURM_ERROR;
 	pid_t pid;
 
 	if ((dirp = opendir(dirpath)) == NULL) {
 		/* Houston, we have a problem: /proc is inaccessible */
 		error("find_pid_by_inode: unable to open %s: %m",
 				dirpath);
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	while (1) {
@@ -342,7 +340,7 @@ extern int callerid_get_own_netinfo (callerid_conn_t *conn)
 	struct dirent *entryp;
 	char *dirpath = "/proc/self/fd";
 	char fdpath[1024];
-	int rc = SLURM_FAILURE;
+	int rc = SLURM_ERROR;
 	struct stat statbuf;
 
 	if ((dirp = opendir(dirpath)) == NULL) {

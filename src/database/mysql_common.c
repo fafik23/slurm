@@ -5,11 +5,11 @@
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
  *  This file is patterned after jobcomp_linux.c, written by Morris Jette and
@@ -66,7 +66,7 @@ static void _destroy_db_key(void *arg)
 	}
 }
 
-/* NOTE: Insure that mysql_conn->lock is set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static int _clear_results(MYSQL *db_conn)
 {
 	MYSQL_RES *result = NULL;
@@ -91,7 +91,7 @@ static int _clear_results(MYSQL *db_conn)
 	return SLURM_SUCCESS;
 }
 
-/* NOTE: Insure that mysql_conn->lock is set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static MYSQL_RES *_get_first_result(MYSQL *db_conn)
 {
 	MYSQL_RES *result = NULL;
@@ -110,7 +110,7 @@ static MYSQL_RES *_get_first_result(MYSQL *db_conn)
 	return NULL;
 }
 
-/* NOTE: Insure that mysql_conn->lock is set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static MYSQL_RES *_get_last_result(MYSQL *db_conn)
 {
 	MYSQL_RES *result = NULL;
@@ -131,7 +131,7 @@ static MYSQL_RES *_get_last_result(MYSQL *db_conn)
 	return last_result;
 }
 
-/* NOTE: Insure that mysql_conn->lock is set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static int _mysql_query_internal(MYSQL *db_conn, char *query)
 {
 	int rc = SLURM_SUCCESS;
@@ -171,10 +171,17 @@ static int _mysql_query_internal(MYSQL *db_conn, char *query)
 		rc = SLURM_ERROR;
 	}
 end_it:
+	/*
+	 * Starting in MariaDB 10.2 many of the api commands started
+	 * setting errno erroneously.
+	 */
+	if (!rc)
+		errno = 0;
+
 	return rc;
 }
 
-/* NOTE: Insure that mysql_conn->lock is NOT set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is NOT set on function entry */
 static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 				     storage_field_t *fields, char *ending)
 {
@@ -532,10 +539,9 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 	return SLURM_SUCCESS;
 }
 
-/* NOTE: Insure that mysql_conn->lock is set on function entry */
+/* NOTE: Ensure that mysql_conn->lock is set on function entry */
 static int _create_db(char *db_name, mysql_db_info_t *db_info)
 {
-	char create_line[50];
 	MYSQL *mysql_db = NULL;
 	int rc = SLURM_ERROR;
 
@@ -566,13 +572,14 @@ static int _create_db(char *db_name, mysql_db_info_t *db_info)
 		}
 
 		if (db_ptr) {
-			snprintf(create_line, sizeof(create_line),
-				 "create database %s", db_name);
+			char *create_line = NULL;
+			xstrfmtcat(create_line, "create database %s", db_name);
 			if (mysql_query(mysql_db, create_line)) {
-				fatal("mysql_real_query failed: %d %s\n%s",
+				fatal("mysql_query failed: %d %s\n%s",
 				      mysql_errno(mysql_db),
 				      mysql_error(mysql_db), create_line);
 			}
+			xfree(create_line);
 			if (mysql_thread_safe())
 				mysql_thread_end();
 			mysql_close(mysql_db);
@@ -809,6 +816,12 @@ extern int mysql_db_ping(mysql_conn_t *mysql_conn)
 	slurm_mutex_lock(&mysql_conn->lock);
 	_clear_results(mysql_conn->db_conn);
 	rc = mysql_ping(mysql_conn->db_conn);
+	/*
+	 * Starting in MariaDB 10.2 many of the api commands started
+	 * setting errno erroneously.
+	 */
+	if (!rc)
+		errno = 0;
 	slurm_mutex_unlock(&mysql_conn->lock);
 	return rc;
 }
@@ -850,6 +863,12 @@ extern int mysql_db_rollback(mysql_conn_t *mysql_conn)
 		      mysql_error(mysql_conn->db_conn));
 		errno = mysql_errno(mysql_conn->db_conn);
 		rc = SLURM_ERROR;
+	} else {
+		/*
+		 * Starting in MariaDB 10.2 many of the api commands started
+		 * setting errno erroneously.
+		 */
+		errno = 0;
 	}
 	slurm_mutex_unlock(&mysql_conn->lock);
 	return rc;
@@ -869,6 +888,11 @@ extern MYSQL_RES *mysql_db_query_ret(mysql_conn_t *mysql_conn,
 			result = _get_last_result(mysql_conn->db_conn);
 		else
 			result = _get_first_result(mysql_conn->db_conn);
+		/*
+		 * Starting in MariaDB 10.2 many of the api commands started
+		 * setting errno erroneously.
+		 */
+		errno = 0;
 		if (!result && mysql_field_count(mysql_conn->db_conn)) {
 			/* should have returned data */
 			error("We should have gotten a result: '%m' '%s'",

@@ -7,11 +7,11 @@
  *  David Bremer <dbremer@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -48,18 +48,20 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-static char *_build_label(int taskid, int taskid_width, uint32_t pack_offset);
+static char *_build_label(int task_id, int task_id_width, uint32_t pack_offset,
+			  uint32_t task_offset);
 static int _write_line(int fd, char *prefix, char *suffix, void *buf, int len);
 
 /*
- * fd           is the file descriptor to write to
- * buf          is the char buffer to write
- * len          is the buffer length in bytes
- * taskid       is will be used in the label
- * pack_offset  is the offset within a pack-job or NO_VAL
- * label        if true, prepend each line of the buffer with a
+ * fd             is the file descriptor to write to
+ * buf            is the char buffer to write
+ * len            is the buffer length in bytes
+ * task_id        is will be used in the label
+ * pack_offset    is the offset within a pack-job or NO_VAL
+ * task_offset    is the task offset within a pack-job or NO_VAL
+ * label          if true, prepend each line of the buffer with a
  *                label for the task id
- * taskid_width is the number of digits to use for the task id
+ * task_id_width  is the number of digits to use for the task id
  *
  * Write as many lines from the message as possible.  Return
  * the number of bytes from the message that have been written,
@@ -69,9 +71,9 @@ static int _write_line(int fd, char *prefix, char *suffix, void *buf, int len);
  * in a '\n'), then add a newline to the output file, but only
  * in label mode.
  */
-extern int write_labelled_message(int fd, void *buf, int len, int taskid,
-				  uint32_t pack_offset, bool label,
-				  int taskid_width)
+extern int write_labelled_message(int fd, void *buf, int len, int task_id,
+				  uint32_t pack_offset, uint32_t task_offset,
+				  bool label, int task_id_width)
 {
 	void *start, *end;
 	char *prefix = NULL, *suffix = NULL;
@@ -80,8 +82,11 @@ extern int write_labelled_message(int fd, void *buf, int len, int taskid,
 	int line_len;
 	int rc = -1;
 
-	if (label)
-		prefix = _build_label(taskid, taskid_width, pack_offset);
+	if (label) {
+		prefix = _build_label(task_id, task_id_width, pack_offset,
+				      task_offset);
+	}
+
 	while (remaining > 0) {
 		start = buf + written;
 		end = memchr(start, '\n', remaining);
@@ -118,14 +123,22 @@ done:
 /*
  * Build line label. Call xfree() to release returned memory
  */
-static char *_build_label(int taskid, int taskid_width, uint32_t pack_offset)
+static char *_build_label(int task_id, int task_id_width,
+			  uint32_t pack_offset, uint32_t task_offset)
 {
 	char *buf = NULL;
 
-	if (pack_offset == NO_VAL)
-		xstrfmtcat(buf, "%*d: ", taskid_width, taskid);
-	else
-		xstrfmtcat(buf, "P%u %*d: ", pack_offset, taskid_width, taskid);
+	if (pack_offset != NO_VAL) {
+		if (task_offset != NO_VAL) {
+			xstrfmtcat(buf, "%*d: ", task_id_width,
+				   (task_id + task_offset));
+		} else {
+			xstrfmtcat(buf, "P%u %*d: ", pack_offset, task_id_width,
+				   task_id);
+		}
+	} else {
+		xstrfmtcat(buf, "%*d: ", task_id_width, task_id);
+	}
 
 	return buf;
 }

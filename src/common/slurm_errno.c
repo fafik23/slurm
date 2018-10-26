@@ -7,11 +7,11 @@
  *  Written by Jim Garlick <garlick@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,19 +27,19 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 /*  This implementation relies on "overloading" the libc errno by
- *  partitioning its domain into system (<1000) and SLURM (>=1000) values.
- *  SLURM API functions should call slurm_seterrno() to set errno to a value.
+ *  partitioning its domain into system (<1000) and Slurm (>=1000) values.
+ *  Slurm API functions should call slurm_seterrno() to set errno to a value.
  *  API users should call slurm_strerror() to convert all errno values to
  *  their description strings.
  */
@@ -151,6 +151,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Invalid job id specified"				},
 	{ ESLURM_INVALID_NODE_NAME,
 	  "Invalid node name specified"				},
+	{ ESLURM_INVALID_CORE_CNT,
+	  "Core count for reservation node list is not consistent!" },
 	{ ESLURM_WRITING_TO_FILE,
 	  "I/O error writing script/environment to file"	},
 	{ ESLURM_TRANSITION_STATE_NO_UPDATE,
@@ -174,13 +176,13 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_INVALID_FEATURE,
 	  "Invalid feature specification"			},
 	{ ESLURM_INVALID_AUTHTYPE_CHANGE,
-	  "AuthType change requires restart of all SLURM daemons and "
+	  "AuthType change requires restart of all Slurm daemons and "
 	  "commands to take effect"},
 	{ ESLURM_INVALID_CHECKPOINT_TYPE_CHANGE,
-	  "CheckpointType change requires restart of all SLURM daemons "
+	  "CheckpointType change requires restart of all Slurm daemons "
 	  "to take effect"					},
 	{ ESLURM_INVALID_CRYPTO_TYPE_CHANGE,
-	  "CryptoType change requires restart of all SLURM daemons "
+	  "CryptoType change requires restart of all Slurm daemons "
 	  "to take effect"					},
 	{ ESLURM_INVALID_SCHEDTYPE_CHANGE,
 	  "SchedulerType change requires restart of the slurmctld daemon "
@@ -189,7 +191,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "SelectType change requires restart of the slurmctld daemon "
 	  "to take effect"					},
 	{ ESLURM_INVALID_SWITCHTYPE_CHANGE,
-	  "SwitchType change requires restart of all SLURM daemons and "
+	  "SwitchType change requires restart of all Slurm daemons and "
 	  "jobs to take effect"					},
 	{ ESLURM_FRAGMENTATION,
 	  "Immediate execution impossible, "
@@ -339,6 +341,32 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Job not heterogeneous job"				},
 	{ ESLURM_NOT_PACK_JOB_LEADER,
 	  "Job not heterogeneous job leader"			},
+	{ ESLURM_NOT_PACK_WHOLE,
+	  "Operation not permitted on individual component of heterogeneous job" },
+	{ ESLURM_CORE_RESERVATION_UPDATE,
+	  "Core-based reservation can not be updated"		},
+	{ ESLURM_DUPLICATE_STEP_ID,
+	  "Duplicate job step id"				},
+	{ ESLURM_X11_NOT_AVAIL,
+	  "X11 forwarding not available"			},
+	{ ESLURM_GROUP_ID_MISSING,
+	  "Invalid group id"					},
+	{ ESLURM_BATCH_CONSTRAINT,
+	  "Job --batch option is invalid or not a subset of --constraints" },
+	{ ESLURM_INVALID_TRES,
+	  "Invalid Trackable RESource (TRES) specification"	},
+	{ ESLURM_INVALID_TRES_BILLING_WEIGHTS,
+	  "Invalid TRESBillingWeights specification"            },
+	{ ESLURM_INVALID_JOB_DEFAULTS,
+	  "Invalid JobDefaults specification"			},
+	{ ESLURM_RESERVATION_MAINT,
+	  "Job can not start due to maintenance reservation."	},
+	{ ESLURM_INVALID_GRES_TYPE,
+	  "Invalid GRES specification (with and without type identification)" },
+	{ ESLURM_REBOOT_IN_PROGRESS,
+	  "Reboot already in progress" },
+	{ ESLURM_UNSUPPORTED_GRES,
+	  "Requested GRES option unsupported by configured SelectType plugin" },
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -409,7 +437,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Script terminated with non-zero exit code"		},
 
 
-	/* socket specific SLURM communications error */
+	/* socket specific Slurm communications error */
 
 	{ SLURM_PROTOCOL_SOCKET_IMPL_ZERO_RECV_LENGTH,
 	  "Received zero length message"			},
@@ -448,6 +476,8 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "You can not allocate more than 100% of a resource"	},
 	{ ESLURM_RESULT_TOO_LARGE,
 	  "Query result exceeds size limit"			},
+	{ ESLURM_DB_QUERY_TOO_WIDE,
+	  "Too wide of a date range in query"			},
 
 	/* Federation Errors */
 	{ ESLURM_FED_CLUSTER_MAX_CNT,
@@ -510,7 +540,7 @@ static char *_lookup_slurm_api_errtab(int errnum)
 }
 
 /*
- * Return string associated with error (SLURM or system).
+ * Return string associated with error (Slurm or system).
  * Always returns a valid string (because strerror always does).
  */
 char *slurm_strerror(int errnum)

@@ -6,11 +6,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -215,6 +215,54 @@
 		}							\
 	} while (0)
 
+#define slurm_rwlock_init(rwlock)					\
+	do {								\
+		int err = pthread_rwlock_init(rwlock, NULL);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_rwlock_init(): %m",	\
+			      __FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_rwlock_destroy(rwlock)					\
+	do {								\
+		int err = pthread_rwlock_destroy(rwlock);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_rwlock_destroy(): %m",	\
+			      __FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_rwlock_rdlock(rwlock)					\
+	do {								\
+		int err = pthread_rwlock_rdlock(rwlock);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_rwlock_rdlock(): %m",	\
+			      __FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_rwlock_wrlock(rwlock)					\
+	do {								\
+		int err = pthread_rwlock_wrlock(rwlock);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_rwlock_wrlock(): %m",	\
+			      __FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_rwlock_unlock(rwlock)					\
+	do {								\
+		int err = pthread_rwlock_unlock(rwlock);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_rwlock_unlock(): %m",	\
+			      __FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_rwlock_trywrlock(rwlock) pthread_rwlock_trywrlock(rwlock)
+#define slurm_rwlock_tryrdlock(rwlock) pthread_rwlock_tryrdlock(rwlock)
+
 #ifdef PTHREAD_SCOPE_SYSTEM
 #  define slurm_attr_init(attr)						\
 	do {								\
@@ -242,6 +290,48 @@
 			error("pthread_attr_destroy failed, "		\
 				"possible memory leak!: %m");		\
 	} while (0)
+
+/*
+ * Note that the attr argument is intentionally omitted, as it will
+ * be setup within the macro to Slurm's default options.
+ */
+#define slurm_thread_create(id, func, arg)				\
+	do {								\
+		pthread_attr_t attr;					\
+		slurm_attr_init(&attr);					\
+		if (pthread_create(id, &attr, func, arg))		\
+			fatal("%s: pthread_create error %m", __func__);	\
+		slurm_attr_destroy(&attr);				\
+	} while (0)
+
+/*
+ * If the id is NULL then the thread_id will be discarded without needing
+ * to create a local pthread_t object first.
+ *
+ * This is only made available for detached threads - if you're creating
+ * an attached thread that you don't need to keep the id of, then you
+ * should really be making it detached.
+ *
+ * The ternary operator that makes that work is intentionally overwrought
+ * to avoid compiler warnings about it always resolving to true, since
+ * this is a macro and the optimization pass will realize that a variable
+ * in the local scope will always have a non-zero memory address.
+ */
+#define slurm_thread_create_detached(id, func, arg)			\
+	do {								\
+		pthread_t *id_ptr, id_local;				\
+		pthread_attr_t attr;					\
+		id_ptr = (id != (pthread_t *) NULL) ? id : &id_local;	\
+		slurm_attr_init(&attr);					\
+		if (pthread_attr_setdetachstate(&attr,			\
+						PTHREAD_CREATE_DETACHED)) \
+			fatal("%s: pthread_attr_setdetachstate %m",	\
+			      __func__);				\
+		if (pthread_create(id_ptr, &attr, func, arg))		\
+			fatal("%s: pthread_create error %m", __func__);	\
+		slurm_attr_destroy(&attr);				\
+	} while (0)
+
 
 #define slurm_atoul(str) strtoul(str, NULL, 10)
 #define slurm_atoull(str) strtoull(str, NULL, 10)

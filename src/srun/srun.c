@@ -8,11 +8,11 @@
  *  Written by Mark Grondona <grondona@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -67,6 +67,7 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_jobacct_gather.h"
+#include "src/common/slurm_opt.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/switch.h"
@@ -99,6 +100,7 @@ static struct termios termdefaults;
 static uint32_t global_rc = 0;
 static srun_job_t *job = NULL;
 
+extern char **environ;	/* job environment */
 bool srun_max_timer = false;
 bool srun_shutdown  = false;
 int sig_array[] = {
@@ -109,7 +111,7 @@ typedef struct _launch_app_data
 {
 	bool		got_alloc;
 	srun_job_t *	job;
-	opt_t *		opt_local;
+	slurm_opt_t	*opt_local;
 	int *		step_cnt;
 	pthread_cond_t *step_cond;
 	pthread_mutex_t *step_mutex;
@@ -118,7 +120,7 @@ typedef struct _launch_app_data
 /*
  * forward declaration of static funcs
  */
-static int   _file_bcast(opt_t *opt_local, srun_job_t *job);
+static int   _file_bcast(slurm_opt_t *opt_local, srun_job_t *job);
 static void  _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc);
 static void *_launch_one_app(void *data);
 static void  _pty_restore(void);
@@ -127,7 +129,7 @@ static void  _set_node_alias(void);
 static void  _setup_env_working_cluster(void);
 static void  _setup_job_env(srun_job_t *job, List srun_job_list,
 			    bool got_alloc);
-static void  _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
+static void  _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 				bool got_alloc);
 static int   _slurm_debug_env_val (void);
 static char *_uint16_array_to_str(int count, const uint16_t *array);
@@ -152,6 +154,26 @@ void cfmakeraw(struct termios *attr)
 }
 #endif
 
+static bool _enable_pack_steps(void)
+{
+	bool enabled = true;
+	char *sched_params = slurm_get_sched_params();
+
+	if (sched_params && strstr(sched_params, "disable_hetero_steps"))
+		enabled = false;
+	else if (sched_params && strstr(sched_params, "enable_hetero_steps"))
+		enabled = true;
+	else {
+		char *select_type = slurm_get_select_type();
+		if (select_type && strstr(select_type, "cray"))
+			enabled = false;
+		xfree(select_type);
+	}
+
+	xfree(sched_params);
+	return enabled;
+}
+
 int srun(int ac, char **av)
 {
 	int debug_level;
@@ -165,7 +187,7 @@ int srun(int ac, char **av)
 	log_init(xbasename(av[0]), logopt, 0, NULL);
 	_set_exit_code();
 
-	if (slurm_select_init(1) != SLURM_SUCCESS )
+	if (slurm_select_init(0) != SLURM_SUCCESS)
 		fatal( "failed to initialize node selection plugin" );
 
 	if (switch_init(0) != SLURM_SUCCESS )
@@ -174,9 +196,11 @@ int srun(int ac, char **av)
 	_setup_env_working_cluster();
 
 	init_srun(ac, av, &logopt, debug_level, 1);
-	if (opt_list)
+	if (opt_list) {
+		if (!_enable_pack_steps())
+			fatal("Job steps that span multiple components of a heterogeneous job are not currently supported");
 		create_srun_job((void **) &srun_job_list, &got_alloc, 0, 1);
-	else
+	} else
 		create_srun_job((void **) &job, &got_alloc, 0, 1);
 
 	_setup_job_env(job, srun_job_list, got_alloc);
@@ -196,16 +220,11 @@ static void *_launch_one_app(void *data)
 	static bool            launch_begin = false;
 	static bool            launch_fini  = false;
 	_launch_app_data_t *opts = (_launch_app_data_t *) data;
-	opt_t *opt_local = opts->opt_local;
+	slurm_opt_t *opt_local = opts->opt_local;
 	srun_job_t *job  = opts->job;
 	bool got_alloc   = opts->got_alloc;
 	slurm_step_io_fds_t cio_fds = SLURM_STEP_IO_FDS_INITIALIZER;
 	slurm_step_launch_callbacks_t step_callbacks;
-
-	if (opt_local->pack_grp_bits)
-		job->pack_offset  = bit_ffs(opt_local->pack_grp_bits);
-	else
-		job->pack_offset  = NO_VAL;
 
 	memset(&step_callbacks, 0, sizeof(step_callbacks));
 	step_callbacks.step_signal = launch_g_fwd_signal;
@@ -234,7 +253,7 @@ relaunch:
 
 	if (!launch_g_step_launch(job, &cio_fds, &global_rc, &step_callbacks,
 				  opt_local)) {
-		if (launch_g_step_wait(job, got_alloc, opt_local, -1) == -1)
+		if (launch_g_step_wait(job, got_alloc, opt_local) == -1)
 			goto relaunch;
 	}
 
@@ -248,19 +267,96 @@ relaunch:
 	return NULL;
 }
 
+/*
+ * The pack_node_list may not be ordered across multiple components, which can
+ * cause problems for some MPI implementations. Put the pack_node_list records
+ * in alphabetic order and reorder pack_task_cnts pack_tids to match
+ */
+static void _reorder_pack_recs(char **in_node_list, uint16_t **in_task_cnts,
+			       uint32_t ***in_tids, int total_nnodes)
+{
+	hostlist_t in_hl, out_hl;
+	uint16_t *out_task_cnts = NULL;
+	uint32_t **out_tids = NULL;
+	char *hostname;
+	int i, j;
+
+	in_hl = hostlist_create(*in_node_list);
+	if (!in_hl) {
+		error("%s: Invalid hostlist(%s)", __func__, *in_node_list);
+		return;
+	}
+	out_hl = hostlist_copy(in_hl);
+	hostlist_sort(out_hl);
+	hostlist_uniq(out_hl);
+	i = hostlist_count(out_hl);
+	if (i != total_nnodes) {
+		error("%s: Invalid hostlist(%s) count(%d)", __func__,
+		      *in_node_list, total_nnodes);
+		goto fini;
+	}
+
+	out_task_cnts = xmalloc(sizeof(uint16_t) * total_nnodes);
+	out_tids = xmalloc(sizeof(uint32_t *) * total_nnodes);
+	for (i = 0; i < total_nnodes; i++) {
+		hostname = hostlist_nth(out_hl, i);
+		if (!hostname) {
+			error("%s: Invalid hostlist(%s) count(%d)", __func__,
+			      *in_node_list, total_nnodes);
+			break;
+		}
+		j = hostlist_find(in_hl, hostname);
+		if (j == -1) {
+			error("%s: Invalid hostlist(%s) parsing", __func__,
+			      *in_node_list);
+			free(hostname);
+			break;
+		}
+		out_task_cnts[i] = in_task_cnts[0][j];
+		out_tids[i] = in_tids[0][j];
+		free(hostname);
+	}
+
+	if (i >= total_nnodes) {	/* Success */
+		xfree(*in_node_list);
+		*in_node_list = hostlist_ranged_string_xmalloc(out_hl);
+		xfree(*in_task_cnts);
+		*in_task_cnts = out_task_cnts;
+		out_task_cnts = NULL;
+		xfree(*in_tids);
+		*in_tids = out_tids;
+		out_tids = NULL;
+	}
+
+#if 0
+	info("NODE_LIST[%d]:%s", total_nnodes, *in_node_list);
+	for (i = 0; i < total_nnodes; i++) {
+		info("TASK_CNT[%d]:%u", i, in_task_cnts[0][i]);
+		for (j = 0; j < in_task_cnts[0][i]; j++) {
+			info("TIDS[%d][%d]: %u", i, j, in_tids[0][i][j]);
+		}
+	}
+#endif
+
+fini:	hostlist_destroy(in_hl);
+	hostlist_destroy(out_hl);
+	xfree(out_task_cnts);
+	xfree(out_tids);
+}
+
 static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 {
 	ListIterator opt_iter, job_iter;
-	opt_t *opt_local = NULL;
+	slurm_opt_t *opt_local = NULL;
 	_launch_app_data_t *opts;
-	pthread_attr_t attr_steps;
-	pthread_t thread_steps = (pthread_t) 0;
-	int total_ntasks = 0, step_cnt = 0;
+	int total_ntasks = 0, total_nnodes = 0, step_cnt = 0, node_offset = 0;
 	pthread_mutex_t step_mutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_cond_t step_cond   = PTHREAD_COND_INITIALIZER;
 	srun_job_t *first_job = NULL;
-	char *launch_type;
+	char *launch_type, *pack_node_list = NULL;
 	bool need_mpir = false;
+	uint16_t *tmp_task_cnt = NULL, *pack_task_cnts = NULL;
+	uint32_t **tmp_tids = NULL, **pack_tids = NULL;
 
 	launch_type = slurm_get_launch_type();
 	if (launch_type && strstr(launch_type, "slurm"))
@@ -268,34 +364,111 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 	xfree(launch_type);
 
 	if (srun_job_list) {
+		int pack_step_cnt = list_count(srun_job_list);
+		first_job = (srun_job_t *) list_peek(srun_job_list);
 		if (!opt_list) {
+			if (first_job)
+				fini_srun(first_job, got_alloc, &global_rc, 0);
 			fatal("%s: have srun_job_list, but no opt_list",
 			      __func__);
 		}
 
 		job_iter = list_iterator_create(srun_job_list);
-		if (need_mpir) {
-			while ((job = (srun_job_t *) list_next(job_iter))) {
-				total_ntasks += job->ntasks;
-			}
-			list_iterator_reset(job_iter);
-			mpir_init(total_ntasks);
-		}
+		while ((job = (srun_job_t *) list_next(job_iter))) {
+			char *node_list = NULL;
+			int i, node_inx;
+			total_ntasks += job->ntasks;
+			total_nnodes += job->nhosts;
 
-		slurm_attr_init(&attr_steps);
+			xrealloc(pack_task_cnts, sizeof(uint16_t)*total_nnodes);
+			(void) slurm_step_ctx_get(job->step_ctx,
+						  SLURM_STEP_CTX_TASKS,
+						  &tmp_task_cnt);
+			if (!tmp_task_cnt) {
+				fatal("%s: job %u has NULL task array",
+				      __func__, job->jobid);
+				break;	/* To eliminate CLANG error */
+			}
+			memcpy(pack_task_cnts + node_offset, tmp_task_cnt,
+			       sizeof(uint16_t) * job->nhosts);
+
+			xrealloc(pack_tids, sizeof(uint32_t *) * total_nnodes);
+			(void) slurm_step_ctx_get(job->step_ctx,
+						  SLURM_STEP_CTX_TIDS,
+						  &tmp_tids);
+			if (!tmp_tids) {
+				fatal("%s: job %u has NULL task ID array",
+				      __func__, job->jobid);
+				break;	/* To eliminate CLANG error */
+			}
+			for (node_inx = 0; node_inx < job->nhosts; node_inx++) {
+				uint32_t *node_tids;
+				node_tids = xmalloc(sizeof(uint32_t) *
+						    tmp_task_cnt[node_inx]);
+				for (i = 0; i < tmp_task_cnt[node_inx]; i++) {
+					node_tids[i] = tmp_tids[node_inx][i] +
+						       job->pack_task_offset;
+				}
+				pack_tids[node_offset + node_inx] =
+					node_tids;
+			}
+
+			(void) slurm_step_ctx_get(job->step_ctx,
+						  SLURM_STEP_CTX_NODE_LIST,
+						  &node_list);
+			if (!node_list) {
+				fatal("%s: job %u has NULL hostname",
+				      __func__, job->jobid);
+			}
+			if (pack_node_list)
+				xstrfmtcat(pack_node_list, ",%s", node_list);
+			else
+				pack_node_list = xstrdup(node_list);
+			xfree(node_list);
+			node_offset += job->nhosts;
+		}
+		list_iterator_reset(job_iter);
+		_reorder_pack_recs(&pack_node_list, &pack_task_cnts,
+				   &pack_tids, total_nnodes);
+
+		if (need_mpir)
+			mpir_init(total_ntasks);
+
 		opt_iter = list_iterator_create(opt_list);
-		step_cnt = list_count(opt_list);
-		while ((opt_local = (opt_t *) list_next(opt_iter))) {
-			int retries = 0;
+		while ((opt_local = list_next(opt_iter))) {
+			srun_opt_t *srun_opt = opt_local->srun_opt;
+			xassert(srun_opt);
 			job = (srun_job_t *) list_next(job_iter);
 			if (!job) {
+				slurm_mutex_lock(&step_mutex);
+				while (step_cnt > 0)
+					slurm_cond_wait(&step_cond,&step_mutex);
+				slurm_mutex_unlock(&step_mutex);
+				if (first_job) {
+					fini_srun(first_job, got_alloc,
+						  &global_rc, 0);
+				}
 				fatal("%s: job allocation count does not match request count (%d != %d)",
 				      __func__, list_count(srun_job_list),
 				      list_count(opt_list));
+				break;	/* To eliminate CLANG error */
 			}
 
-			if (!first_job)
-				first_job = job;
+			slurm_mutex_lock(&step_mutex);
+			step_cnt++;
+			slurm_mutex_unlock(&step_mutex);
+			job->pack_node_list = xstrdup(pack_node_list);
+			if ((pack_step_cnt > 1) && pack_task_cnts) {
+				xassert(node_offset == job->pack_nnodes);
+				job->pack_task_cnts = xmalloc(sizeof(uint16_t) *
+							      job->pack_nnodes);
+				memcpy(job->pack_task_cnts, pack_task_cnts,
+				       sizeof(uint16_t) * job->pack_nnodes);
+				job->pack_tids = xmalloc(sizeof(uint32_t *) *
+							 job->pack_nnodes);
+				memcpy(job->pack_tids, pack_tids,
+				       sizeof(uint32_t *) * job->pack_nnodes);
+			}
 			opts = xmalloc(sizeof(_launch_app_data_t));
 			opts->got_alloc   = got_alloc;
 			opts->job         = job;
@@ -303,18 +476,13 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 			opts->step_cond   = &step_cond;
 			opts->step_cnt    = &step_cnt;
 			opts->step_mutex  = &step_mutex;
-			while (pthread_create(&thread_steps,
-					      &attr_steps, _launch_one_app,
-					      (void *) opts)) {
-				error("%s: pthread_create error %m", __func__);
-				if (++retries > 4) {
-					fatal("%s: Can't create pthread",
-					      __func__);
-				}
-				usleep(10000);  /* sleep and retry */
-			}
+			srun_opt->pack_step_cnt = pack_step_cnt;
+
+			slurm_thread_create_detached(NULL, _launch_one_app,
+						     opts);
 		}
-		slurm_attr_destroy(&attr_steps);
+		xfree(pack_node_list);
+		xfree(pack_task_cnts);
 		list_iterator_destroy(job_iter);
 		list_iterator_destroy(opt_iter);
 		slurm_mutex_lock(&step_mutex);
@@ -331,22 +499,28 @@ static void _launch_app(srun_job_t *job, List srun_job_list, bool got_alloc)
 		opts->got_alloc   = got_alloc;
 		opts->job         = job;
 		opts->opt_local   = &opt;
+		sropt.pack_step_cnt = 1;
 		_launch_one_app(opts);
 		fini_srun(job, got_alloc, &global_rc, 0);
 	}
 }
 
-static void _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
+static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 			       bool got_alloc)
 {
 	env_t *env = xmalloc(sizeof(env_t));
+	uint16_t *tasks = NULL;
+	srun_opt_t *srun_opt = opt_local->srun_opt;
+	xassert(srun_opt);
+
+	xassert(job);
 
 	env->localid = -1;
 	env->nodeid  = -1;
 	env->procid  = -1;
 	env->stepid  = -1;
 
-	if (opt_local->bcast_flag)
+	if (srun_opt->bcast_flag)
 		_file_bcast(opt_local, job);
 	if (opt_local->cpus_set)
 		env->cpus_per_task = opt_local->cpus_per_task;
@@ -359,8 +533,8 @@ static void _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
 	env->distribution = opt_local->distribution;
 	if (opt_local->plane_size != NO_VAL)
 		env->plane_size = opt_local->plane_size;
-	env->cpu_bind_type = opt_local->cpu_bind_type;
-	env->cpu_bind = opt_local->cpu_bind;
+	env->cpu_bind_type = srun_opt->cpu_bind_type;
+	env->cpu_bind = srun_opt->cpu_bind;
 
 	env->cpu_freq_min = opt_local->cpu_freq_min;
 	env->cpu_freq_max = opt_local->cpu_freq_max;
@@ -368,38 +542,43 @@ static void _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
 	env->mem_bind_type = opt_local->mem_bind_type;
 	env->mem_bind = opt_local->mem_bind;
 	env->overcommit = opt_local->overcommit;
-	env->slurmd_debug = opt_local->slurmd_debug;
-	env->labelio = opt_local->labelio;
+	env->slurmd_debug = srun_opt->slurmd_debug;
+	env->labelio = srun_opt->labelio;
 	env->comm_port = slurmctld_comm_addr.port;
 	if (opt_local->job_name)
 		env->job_name = opt_local->job_name;
-	if (job) {
-		uint16_t *tasks = NULL;
-		slurm_step_ctx_get(job->step_ctx, SLURM_STEP_CTX_TASKS,
-				   &tasks);
 
-		env->select_jobinfo = job->select_jobinfo;
+	slurm_step_ctx_get(job->step_ctx, SLURM_STEP_CTX_TASKS, &tasks);
+
+	env->select_jobinfo = job->select_jobinfo;
+	if (job->pack_node_list)
+		env->nodelist = job->pack_node_list;
+	else
 		env->nodelist = job->nodelist;
-		env->partition = job->partition;
-		/*
-		 * If we didn't get the allocation don't overwrite the
-		 * previous info.
-		 */
-		if (got_alloc)
-			env->nhosts = job->nhosts;
+	env->partition = job->partition;
+	if (job->pack_nnodes != NO_VAL)
+		env->nhosts = job->pack_nnodes;
+	else if (got_alloc)	/* Don't overwrite unless we got allocation */
+		env->nhosts = job->nhosts;
+	if (job->pack_ntasks != NO_VAL)
+		env->ntasks = job->pack_ntasks;
+	else
 		env->ntasks = job->ntasks;
-		env->task_count = _uint16_array_to_str(job->nhosts, tasks);
+	env->task_count = _uint16_array_to_str(job->nhosts, tasks);
+	if (job->pack_jobid != NO_VAL)
+		env->jobid = job->pack_jobid;
+	else
 		env->jobid = job->jobid;
-		env->stepid = job->stepid;
-		env->account = job->account;
-		env->qos = job->qos;
-		env->resv_name = job->resv_name;
-	}
-	if (opt_local->pty && (set_winsize(job) < 0)) {
+	env->stepid = job->stepid;
+	env->account = job->account;
+	env->qos = job->qos;
+	env->resv_name = job->resv_name;
+
+	if (srun_opt->pty && (set_winsize(job) < 0)) {
 		error("Not using a pseudo-terminal, disregarding --pty option");
-		opt_local->pty = false;
+		srun_opt->pty = false;
 	}
-	if (opt_local->pty) {
+	if (srun_opt->pty) {
 		struct termios term;
 		int fd = STDIN_FILENO;
 
@@ -420,7 +599,9 @@ static void _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
 		env->ws_col   = job->ws_col;
 		env->ws_row   = job->ws_row;
 	}
-	setup_env(env, opt_local->preserve_env);
+
+	setup_env(env, srun_opt->preserve_env);
+	env_array_merge(&job->env, (const char **)environ);
 	xfree(env->task_count);
 	xfree(env);
 }
@@ -428,18 +609,25 @@ static void _setup_one_job_env(opt_t *opt_local, srun_job_t *job,
 static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 {
 	ListIterator opt_iter, job_iter;
-	opt_t *opt_local;
+	slurm_opt_t *opt_local;
 
 	if (srun_job_list) {
+		srun_job_t *first_job = list_peek(srun_job_list);
 		if (!opt_list) {
+			if (first_job)
+				fini_srun(first_job, got_alloc, &global_rc, 0);
 			fatal("%s: have srun_job_list, but no opt_list",
 			      __func__);
 		}
 		job_iter  = list_iterator_create(srun_job_list);
 		opt_iter  = list_iterator_create(opt_list);
-		while ((opt_local = (opt_t *) list_next(opt_iter))) {
+		while ((opt_local = list_next(opt_iter))) {
 			job = (srun_job_t *) list_next(job_iter);
 			if (!job) {
+				if (first_job) {
+					fini_srun(first_job, got_alloc,
+						  &global_rc, 0);
+				}
 				fatal("%s: job allocation count does not match request count (%d != %d)",
 				      __func__, list_count(srun_job_list),
 				      list_count(opt_list));
@@ -455,20 +643,22 @@ static void _setup_job_env(srun_job_t *job, List srun_job_list, bool got_alloc)
 	}
 }
 
-static int _file_bcast(opt_t *opt_local, srun_job_t *job)
+static int _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 {
+	srun_opt_t *srun_opt = opt_local->srun_opt;
 	struct bcast_parameters *params;
 	int rc;
+	xassert(srun_opt);
 
-	if ((opt_local->argc == 0) || (opt_local->argv[0] == NULL)) {
+	if ((srun_opt->argc == 0) || (srun_opt->argv[0] == NULL)) {
 		error("No command name to broadcast");
 		return SLURM_ERROR;
 	}
 	params = xmalloc(sizeof(struct bcast_parameters));
 	params->block_size = 8 * 1024 * 1024;
-	params->compress = opt_local->compress;
-	if (opt_local->bcast_file) {
-		params->dst_fname = xstrdup(opt_local->bcast_file);
+	params->compress = srun_opt->compress;
+	if (srun_opt->bcast_file) {
+		params->dst_fname = xstrdup(srun_opt->bcast_file);
 	} else {
 		xstrfmtcat(params->dst_fname, "%s/slurm_bcast_%u.%u",
 			   opt_local->cwd, job->jobid, job->stepid);
@@ -476,16 +666,20 @@ static int _file_bcast(opt_t *opt_local, srun_job_t *job)
 	params->fanout = 0;
 	params->job_id = job->jobid;
 	params->force = true;
+	if (srun_opt->pack_grp_bits)
+		params->pack_job_offset = bit_ffs(srun_opt->pack_grp_bits);
+	else
+		params->pack_job_offset = NO_VAL;
 	params->preserve = true;
-	params->src_fname = opt_local->argv[0];
+	params->src_fname = srun_opt->argv[0];
 	params->step_id = job->stepid;
 	params->timeout = 0;
 	params->verbose = 0;
 
 	rc = bcast_file(params);
 	if (rc == SLURM_SUCCESS) {
-		xfree(opt_local->argv[0]);
-		opt_local->argv[0] = params->dst_fname;
+		xfree(srun_opt->argv[0]);
+		srun_opt->argv[0] = params->dst_fname;
 	} else {
 		xfree(params->dst_fname);
 	}
@@ -623,7 +817,7 @@ static void _setup_env_working_cluster(void)
 		*port_ptr++ = '\0';
 		*rpc_ptr++  = '\0';
 
-		if (strcmp(slurmctld_conf.cluster_name, working_env)) {
+		if (xstrcmp(slurmctld_conf.cluster_name, working_env)) {
 			working_cluster_rec =
 				xmalloc(sizeof(slurmdb_cluster_rec_t));
 			slurmdb_init_cluster_rec(working_cluster_rec, false);

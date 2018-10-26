@@ -8,12 +8,14 @@ Lead Slurm developers are:
 <ul>
 <li>Danny Auble (SchedMD)</li>
 <li>Dominik Bartkiewicz (SchedMD)</li>
+<li>Jason Booth (SchedMD)</li>
 <li>Brian Christiansen (SchedMD)</li>
+<li>Broderick Gardner (SchedMD)</li>
 <li>Marshall Garey (SchedMD)</li>
-<li>Isaac Hartung (SchedMD)</li>
+<li>Michael Hinton (SchedMD)</li>
 <li>Morris Jette (SchedMD)</li>
+<li>Felip Moll (SchedMD)</li>
 <li>Alejandro (Alex) Sanchez (SchedMD)</li>
-<li>Tim Shaw (SchedMD)</li>
 <li>Tim Wickberg (SchedMD)</li>
 </ul>
 
@@ -27,6 +29,7 @@ Lead Slurm developers are:
 <li><a href="http://www.fhcrc.org">Fred Hutchinson Cancer Research Center</a></li>
 <li><a href="http://www.hp.com">HP</a></li>
 <li><a href="http://www.intel.com">Intel</a></li>
+<li><a href="http://www.fz-juelich.de/ias/jsc">J&uuml;lich Supercomputing Center</a></li>
 <li><a href="http://www.mellanox.com">Mellanox</a></li>
 <li><a href="http://www.llnl.gov">Lawrence Livermore National Laboratory</a></li>
 <li><a href="http://www.lanl.gov">Los Alamos National Laboratory</a></li>
@@ -96,7 +99,7 @@ Lead Slurm developers are:
 <br>
 <li>Phil Eckert (Lawrence Livermore National Laboratory)</li>
 <li>Robbert Eggermont (Delft University of Technology, Netherlands)</li>
-<li>Joey Ekstrom (Lawrence Livermore National Laboratory/Brigham Young University)</li>
+<li>Joey Ekstrom (Lawrence Livermore National Laboratory)</li>
 <li>Andrew Elwell</li>
 <li>Josh England (TGS Management Corporation)</li>
 <li>Kent Engstr&ouml;m  (National Supercomputer Centre, Sweden)</li>
@@ -106,6 +109,7 @@ Lead Slurm developers are:
 <li>Carles Fenoy (Barcelona Supercomputing Center, Spain)</li>
 <li>Broi Franco (ION)</li>
 <li>Damien Fran&ccedil;ois (Universit&eacute; catholique de Louvain, Belgium)</li>
+<li>Jeff Frey (University of Delaware)</li>
 <br>
 <li>Jim Garlick (Lawrence Livermore National Laboratory)</li>
 <li>Didier Gazen (Laboratoire d'Aerologie, France)</li>
@@ -120,6 +124,7 @@ Lead Slurm developers are:
 <br>
 <li>Anders Halager (Aarhus University, Denmark)</li>
 <li>Thomas Hamel (EDF, France)</li>
+<li>Isaac Hartung (SchedMD)</li>
 <li>Chris Harwell (D. E. Shaw Research)</li>
 <li>Takao Hatazaki (HP)</li>
 <li>Matthieu Hautreux (CEA, France)</li>
@@ -147,12 +152,14 @@ Lead Slurm developers are:
 <li>Yury Kiryanov (Intel)</li>
 <li>Aaron Knister (Environmental Protection Agency, UMBC)</li>
 <li>Marlys Kohnke (Cray)</li>
+<li>Philip Kovacs</li>
 <li>Jens Svalgaard Kohrt (University of Southern Denmark)</li>
 <li>Dorian Krause (Forschungszentrum Juelich GmbH, Germany)</li>
 <li>Nancy Kritkausky (Bull)</li>
 <li>Roman Kurakin (Institute of Natural Science and Ecology, Russia)</li>
 <br>
 <li>Sam Lang</li>
+<li>Justin Lecher (Gentoo)</li>
 <li>Puenlap Lee (Bull)</li>
 <li>Dennis Leepow</li>
 <li>Veronique Legrand (Institut Pasteur, France)</li>
@@ -180,6 +187,7 @@ Lead Slurm developers are:
 <li>Denis Nadeau</li>
 <li>Jon Nelson (Dyn)</li>
 <li>Mark Nelson (IBM)</li>
+<li>Jessica Nettelblad (UPPMAX)</li>
 <li>Ole H. Nielsen (Technical University of Denmark)</li>
 <li>Jim Nordby (Cray)</li>
 <li>Michal Novotny (Masaryk University, Czech Republic)</li>
@@ -229,6 +237,7 @@ Lead Slurm developers are:
 <li>Chris Scheller (University of Michigan)</li>
 <li>Rod Schultz (Bull)</li>
 <li>Samuel Senoner (Vienna University of Technology, Austria)</li>
+<li>Tim Shaw (SchedMD)</li>
 <li>David Singleton</li>
 <li>Filip Skalski (University of Warsaw, Poland)</li>
 <li>Jason Sollom (Cray)</li>
@@ -242,7 +251,7 @@ Lead Slurm developers are:
 <li>Prashanth Tamraparni (HP, India)</li>
 <li>Koji Tanaka (Indiana University)</li>
 <li>Jimmy Tang (Trinity College, Ireland)</li>
-<li>Kevin Tew (Lawrence Livermore National Laboratory/Brigham Young University)</li>
+<li>Kevin Tew (Lawrence Livermore National Laboratory)</li>
 <li>John Thiltges (University of Nebraska-Lincoln)</li>
 <li>Adam Todorski (Rensselaer Polytechnic Institute)</li>
 <li>Giovanni Torres (National Institutes of Health)</li>
@@ -267,6 +276,6 @@ Lead Slurm developers are:
 <!-- INDIVIDUALS, PLEASE KEEP IN ALPHABETICAL ORDER -->
 </ul>
 
-<p style="text-align:center;">Last modified 1 June 2017</p>
+<p style="text-align:center;">Last modified 22 September 2017</p>
 
 <!--#include virtual="footer.txt"-->

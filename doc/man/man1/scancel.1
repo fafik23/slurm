@@ -1,4 +1,4 @@
-.TH scancel "1" "Slurm Commands" "February 2017" "Slurm Commands"
+.TH scancel "1" "Slurm Commands" "June 2018" "Slurm Commands"
 
 .SH "NAME"
 scancel \- Used to signal jobs or job steps that are under the control of Slurm.
@@ -15,6 +15,11 @@ If the job ID of a job array is specified with an array ID value then only that
 job array element will be cancelled.
 If the job ID of a job array is specified without an array ID value then all
 job array elements will be cancelled.
+While a heterogeneous job is in pending state, only the entire job can be
+cancelled rather than it's individual components.
+A request to cancel an individual component of a heterogeneous job not in
+pending state will return an error.
+After the job has begun execution, the individual component can be cancelled.
 A job or job step can only be signaled by the owner of that job or user root.
 If an attempt is made by an unauthorized user to signal a job or job step, an
 error message will be printed and the job will not be signaled.
@@ -42,7 +47,7 @@ Also see the \fB\-f\fR, \fB\-\-full\fR option.
 Send the job signal request to the slurmctld daemon rather than directly to the
 slurmd daemons. This increases overhead, but offers better fault tolerance.
 This is the default behavior on architectures using front end nodes (e.g.
-BlueGene and Cray computers) or when the \fB\-\-clusters\fR option is used.
+Cray ALPS computers) or when the \fB\-\-clusters\fR option is used.
 
 .TP
 \fB\-f\fR, \fB\-\-full\fR

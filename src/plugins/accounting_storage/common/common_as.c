@@ -6,11 +6,11 @@
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -61,6 +61,10 @@ extern char *cluster_month_table;
 extern char *wckey_day_table;
 extern char *wckey_hour_table;
 extern char *wckey_month_table;
+
+#ifndef NDEBUG
+extern __thread bool drop_priv;
+#endif
 
 /*
  * We want SLURMDB_MODIFY_ASSOC always to be the last
@@ -208,6 +212,10 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 
 		if (assoc->max_jobs == NO_VAL)
 			assoc->max_jobs = INFINITE;
+		if (assoc->max_jobs_accrue == NO_VAL)
+			assoc->max_jobs_accrue = INFINITE;
+		if (assoc->min_prio_thresh == NO_VAL)
+			assoc->min_prio_thresh = INFINITE;
 		if (assoc->max_submit_jobs == NO_VAL)
 			assoc->max_submit_jobs = INFINITE;
 		if (assoc->max_wall_pj == NO_VAL)
@@ -427,7 +435,6 @@ extern int set_usage_information(char **usage_table,
 	}
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
-	end_tm.tm_isdst = -1;
 	end = slurm_mktime(&end_tm);
 
 	if (!start) {
@@ -447,7 +454,6 @@ extern int set_usage_information(char **usage_table,
 	}
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
-	start_tm.tm_isdst = -1;
 	start = slurm_mktime(&start_tm);
 
 	if (end-start < 3600) {
@@ -551,6 +557,10 @@ extern bool is_user_min_admin_level(void *db_conn, uid_t uid,
 	 * THERE IS NO AUTHENTICATION WHEN RUNNNING OUT OF THE
 	 * SLURMDBD!
 	 */
+#ifndef NDEBUG
+	if (drop_priv)
+		return false;
+#endif
 	if (slurmdbd_conf) {
 		/* We have to check the authentication here in the
 		 * plugin since we don't know what accounts are being
@@ -588,7 +598,8 @@ extern bool is_user_coord(slurmdb_user_rec_t *user, char *account)
 extern bool is_user_any_coord(void *db_conn, slurmdb_user_rec_t *user)
 {
 	xassert(user);
-	if (assoc_mgr_fill_in_user(db_conn, user, 1, NULL) != SLURM_SUCCESS) {
+	if (assoc_mgr_fill_in_user(db_conn, user, 1, NULL, false)
+	    != SLURM_SUCCESS) {
 		error("couldn't get information for this user %s(%d)",
 		      user->name, user->uid);
 		return 0;
@@ -669,7 +680,6 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 		return 0;
 	}
 
-	time_tm.tm_isdst = -1;
 	return (slurm_mktime(&time_tm) - 1);
 }
 
@@ -684,7 +694,6 @@ extern int archive_run_script(slurmdb_archive_cond_t *arch_cond,
 	time_t curr_end;
 
 	if (stat(arch_cond->archive_script, &st) < 0) {
-		errno = errno;
 		error("archive_run_script: failed to stat %s: %m",
 		      arch_cond->archive_script);
 		return SLURM_ERROR;

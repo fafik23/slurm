@@ -8,11 +8,11 @@
  *  Written by Danny Auble da@llnl.gov, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -71,17 +71,10 @@ extern List slurmdb_config_get(void *db_conn)
 extern List slurmdb_events_get(void *db_conn,
 			       slurmdb_event_cond_t *event_cond)
 {
-	return acct_storage_g_get_events(db_conn, getuid(), event_cond);
-}
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
 
-/*
- * get info from the storage
- * returns List of slurmdb_job_rec_t *
- * note List needs to be freed when called
- */
-extern List slurmdb_jobs_get(void *db_conn, slurmdb_job_cond_t *job_cond)
-{
-	return jobacct_storage_g_get_jobs_cond(db_conn, getuid(), job_cond);
+	return acct_storage_g_get_events(db_conn, db_api_uid, event_cond);
 }
 
 /*
@@ -93,7 +86,10 @@ extern List slurmdb_jobs_get(void *db_conn, slurmdb_job_cond_t *job_cond)
 extern List slurmdb_problems_get(void *db_conn,
 				 slurmdb_assoc_cond_t *assoc_cond)
 {
-	return acct_storage_g_get_problems(db_conn, getuid(), assoc_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_problems(db_conn, db_api_uid, assoc_cond);
 }
 
 /*
@@ -105,7 +101,10 @@ extern List slurmdb_problems_get(void *db_conn,
 extern List slurmdb_reservations_get(void *db_conn,
 				     slurmdb_reservation_cond_t *resv_cond)
 {
-	return acct_storage_g_get_reservations(db_conn, getuid(), resv_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_reservations(db_conn, db_api_uid, resv_cond);
 }
 
 /*
@@ -116,7 +115,10 @@ extern List slurmdb_reservations_get(void *db_conn,
  */
 extern List slurmdb_txn_get(void *db_conn, slurmdb_txn_cond_t *txn_cond)
 {
-	return acct_storage_g_get_txn(db_conn, getuid(), txn_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_txn(db_conn, db_api_uid, txn_cond);
 }
 
 /*

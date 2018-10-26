@@ -15,9 +15,6 @@
 /* Define to 1 if using glib-2.32.0 or higher */
 #undef GLIB_NEW_THREADS
 
-/* Define to 1 if licensed under terms of the GNU General Public License. */
-#undef GPL_LICENSED
-
 /* Define to 1 if using gtk+-2.14.0 or higher */
 #undef GTK2_USE_GET_FOCUS
 
@@ -33,9 +30,6 @@
 /* Define to 1 if 3-dimensional architecture */
 #undef HAVE_3D
 
-/* Define to 1 if 4-dimensional architecture */
-#undef HAVE_4D
-
 /* Define to 1 for Cray XT/XE systems using ALPS */
 #undef HAVE_ALPS_CRAY
 
@@ -44,21 +38,6 @@
 
 /* Define to 1 if running against an ALPS emulation */
 #undef HAVE_ALPS_EMULATION
-
-/* Define to 1 if emulating or running on Blue Gene system */
-#undef HAVE_BG
-
-/* Define to 1 if emulating or running on Blue Gene/Q system */
-#undef HAVE_BGQ
-
-/* Define to 1 if have Blue Gene files */
-#undef HAVE_BG_FILES
-
-/* Define to 1 if using code where blocks have actions */
-#undef HAVE_BG_GET_ACTION
-
-/* Define to 1 if using code with new iocheck */
-#undef HAVE_BG_NEW_IO_CHECK
 
 /* Define to 1 if you have the `cfmakeraw' function. */
 #undef HAVE_CFMAKERAW
@@ -100,9 +79,6 @@
 /* Define to 1 if you have the <errno.h> header file. */
 #undef HAVE_ERRNO_H
 
-/* Define to 1 if function EVP_MD_CTX_cleanup exists. */
-#undef HAVE_EVP_MD_CTX_CLEANUP
-
 /* Define to 1 if you have the `faccessat' function. */
 #undef HAVE_FACCESSAT
 
@@ -130,9 +106,6 @@
 /* Define to 1 if hwloc library found */
 #undef HAVE_HWLOC
 
-/* Define to 1 if hwloc library supports PCI devices */
-#undef HAVE_HWLOC_PCI
-
 /* Define to 1 if you have the `inet_aton' function. */
 #undef HAVE_INET_ATON
 
@@ -159,6 +132,9 @@
 
 /* Define to 1 if you have a functional curl library. */
 #undef HAVE_LIBCURL
+
+/* Define to 1 if you have the `ucp' library (-lucp). */
+#undef HAVE_LIBUCP
 
 /* Define to 1 if you have `z' library (-lz) */
 #undef HAVE_LIBZ
@@ -233,14 +209,8 @@
 /* Define to 1 if you have the <paths.h> header file. */
 #undef HAVE_PATHS_H
 
-/* define if you have permapi_h */
-#undef HAVE_PERMAPI_H
-
 /* Define to 1 if pmix library found */
 #undef HAVE_PMIX
-
-/* Define if you have Posix semaphores. */
-#undef HAVE_POSIX_SEMS
 
 /* Define if libc sets program_invocation_name */
 #undef HAVE_PROGRAM_INVOCATION_NAME
@@ -280,6 +250,9 @@
 
 /* Define to 1 if you have the <socket.h> header file. */
 #undef HAVE_SOCKET_H
+
+/* Define to 1 if libssh2 found */
+#undef HAVE_SSH2
 
 /* Define to 1 if you have the `statfs' function. */
 #undef HAVE_STATFS
@@ -492,9 +465,6 @@
 /* Enable multiple slurmd on one node */
 #undef MULTIPLE_SLURMD
 
-/* Define to 1 if with non thread-safe code */
-#undef MYSQL_NOT_THREAD_SAFE
-
 /* Define to 1 if you are building a production release. */
 #undef NDEBUG
 
@@ -595,7 +565,7 @@
 /* Define Slurm installation prefix */
 #undef SLURM_PREFIX
 
-/* SLURM Version Number */
+/* Slurm Version Number */
 #undef SLURM_VERSION_NUMBER
 
 /* Define the project's version string. */
@@ -624,6 +594,9 @@
 
 /* Define the project's version. */
 #undef VERSION
+
+/* Using internal Slurm X11 support */
+#undef WITH_SLURM_X11
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */

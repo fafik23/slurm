@@ -8,11 +8,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -119,7 +119,7 @@ static int _file_state(struct bcast_parameters *params)
 		return SLURM_SUCCESS;
 	}
 	src = mmap(NULL, f_stat.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	if (src == (void *) -1) {
+	if (src == MAP_FAILED) {
 		error("Can't mmap file `%s`, %m.", params->src_fname);
 		return SLURM_ERROR;
 	}
@@ -134,16 +134,30 @@ static int _get_job_info(struct bcast_parameters *params)
 
 	xassert(params->job_id != NO_VAL);
 
-	rc = slurm_sbcast_lookup(params->job_id, params->step_id, &sbcast_cred);
+	rc = slurm_sbcast_lookup(params->job_id, params->pack_job_offset,
+				 params->step_id, &sbcast_cred);
 	if (rc != SLURM_SUCCESS) {
 		if (params->step_id == NO_VAL) {
-			error("Slurm job ID %u lookup error: %s",
-			      params->job_id,
-			      slurm_strerror(slurm_get_errno()));
+			if (params->pack_job_offset == NO_VAL) {
+				error("Slurm job ID %u lookup error: %s",
+				      params->job_id,
+				      slurm_strerror(slurm_get_errno()));
+			} else {
+				error("Slurm job ID %u+%u lookup error: %s",
+				      params->job_id, params->pack_job_offset,
+				      slurm_strerror(slurm_get_errno()));
+			}
 		} else {
-			error("Slurm step ID %u.%u lookup error: %s",
-			      params->job_id, params->step_id,
-			      slurm_strerror(slurm_get_errno()));
+			if (params->pack_job_offset == NO_VAL) {
+				error("Slurm step ID %u.%u lookup error: %s",
+				      params->job_id, params->step_id,
+				      slurm_strerror(slurm_get_errno()));
+			} else {
+				error("Slurm step ID %u+%u.%u lookup error: %s",
+				      params->job_id, params->pack_job_offset,
+				      params->step_id,
+				      slurm_strerror(slurm_get_errno()));
+			}
 		}
 		return rc;
 	}
@@ -380,7 +394,7 @@ static int _bcast_file(struct bcast_parameters *params)
 	else
 		block_len = MIN((512 * 1024), f_stat.st_size);
 
-	bzero(&bcast_msg, sizeof(file_bcast_msg_t));
+	memset(&bcast_msg, 0, sizeof(file_bcast_msg_t));
 	bcast_msg.fname		= params->dst_fname;
 	bcast_msg.block_no	= 1;
 	bcast_msg.force		= params->force;

@@ -4,11 +4,11 @@
  *  Copyright (C) 2017      Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  \*****************************************************************************/
 
@@ -228,9 +228,9 @@ static inline int pmixp_dconn_connect(
 	if (SLURM_SUCCESS == rc){
 		dconn->state = PMIXP_DIRECT_CONNECTED;
 	} else {
-		/* drop the state to INIT so we will try again later
-		 * if it will always be failing - we will always use
-		 * SLURM's protocol
+		/*
+		 * Abort the application - we can't do what user requested.
+		 * Make sure to provide enough info
 		 */
 		char *nodename = pmixp_info_job_host(dconn->nodeid);
 		xassert(nodename);
@@ -239,10 +239,12 @@ static inline int pmixp_dconn_connect(
 				    dconn->nodeid);
 			abort();
 		}
-		dconn->state = PMIXP_DIRECT_INIT;
 		PMIXP_ERROR("Cannot establish direct connection to %s (%d)",
 			    nodename, dconn->nodeid);
 		xfree(nodename);
+		pmixp_debug_hang(0); /* enable hang to debug this! */
+		slurm_kill_job_step(pmixp_info_jobid(),
+				    pmixp_info_stepid(), SIGKILL);
 	}
 	return rc;
 }

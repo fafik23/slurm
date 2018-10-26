@@ -16,6 +16,9 @@
 int
 slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 {
+	AV *av;
+	int i;
+
 	STORE_FIELD(hv, conf, last_update, time_t);
 
 	if (conf->acct_gather_conf)
@@ -51,11 +54,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	if (conf->authtype)
 		STORE_FIELD(hv, conf, authtype, charp);
 
-	if (conf->backup_addr)
-		STORE_FIELD(hv, conf, backup_addr, charp);
-	if (conf->backup_controller)
-		STORE_FIELD(hv, conf, backup_controller, charp);
-
 	STORE_FIELD(hv, conf, batch_start_timeout, uint16_t);
 
 	if (conf->bb_type)
@@ -66,9 +64,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	if (conf->checkpoint_type)
 		STORE_FIELD(hv, conf, checkpoint_type, charp);
 
-	if (conf->chos_loc)
-		STORE_FIELD(hv, conf, chos_loc, charp);
-
 	if (conf->core_spec_plugin)
 		STORE_FIELD(hv, conf, core_spec_plugin, charp);
 
@@ -77,11 +72,15 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 
 	STORE_FIELD(hv, conf, complete_wait, uint16_t);
 
-	if (conf->control_addr)
-		STORE_FIELD(hv, conf, control_addr, charp);
-
-	if (conf->control_machine)
-		STORE_FIELD(hv, conf, control_machine, charp);
+	STORE_FIELD(hv, conf, control_cnt, uint32_t);
+	av = newAV();
+	for (i = 0; i < conf->control_cnt; i++)
+		av_store(av, i, newSVpv(conf->control_addr[i], 0));
+	hv_store_sv(hv, "control_addr", newRV_noinc((SV*)av));
+	av = newAV();
+	for (i = 0; i < conf->control_cnt; i++)
+		av_store(av, i, newSVpv(conf->control_machine[i], 0));
+	hv_store_sv(hv, "control_machine", newRV_noinc((SV*)av));
 
 	STORE_FIELD(hv, conf, cpu_freq_def, uint32_t);
 
@@ -281,6 +280,8 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	if (conf->requeue_exit_hold)
 		STORE_FIELD(hv, conf, requeue_exit_hold, charp);
 
+	if (conf->resume_fail_program)
+		STORE_FIELD(hv, conf, resume_fail_program, charp);
 	if (conf->resume_program)
 		STORE_FIELD(hv, conf, resume_program, charp);
 	STORE_FIELD(hv, conf, resume_rate, uint16_t);
@@ -340,8 +341,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 		STORE_FIELD(hv, conf, slurmd_logfile, charp);
 	if (conf->slurmd_pidfile)
 		STORE_FIELD(hv, conf, slurmd_pidfile, charp);
-	if (conf->slurmd_plugstack)
-		STORE_FIELD(hv, conf, slurmd_plugstack, charp);
 	STORE_FIELD(hv, conf, slurmd_port, uint32_t);
 	if (conf->slurmd_spooldir)
 		STORE_FIELD(hv, conf, slurmd_spooldir, charp);
@@ -395,10 +394,6 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 	STORE_FIELD(hv, conf, vsize_factor, uint16_t);
 	STORE_FIELD(hv, conf, wait_time, uint16_t);
 
-	STORE_FIELD(hv, conf, z_16, uint16_t);
-	STORE_FIELD(hv, conf, z_32, uint32_t);
-	if (conf->z_char)
-		STORE_FIELD(hv, conf, z_char, charp);
 	return 0;
 }
 
@@ -408,6 +403,11 @@ slurm_ctl_conf_to_hv(slurm_ctl_conf_t *conf, HV *hv)
 int
 hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 {
+	SV **svp;
+	AV *av;
+	STRLEN len;
+	int i, n;
+
 	memset(conf, 0, sizeof(slurm_ctl_conf_t));
 
 	FETCH_FIELD(hv, conf, last_update, time_t, FALSE);
@@ -429,19 +429,45 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 
 	FETCH_FIELD(hv, conf, authinfo, charp, FALSE);
 	FETCH_FIELD(hv, conf, authtype, charp, FALSE);
-	FETCH_FIELD(hv, conf, backup_addr, charp, FALSE);
-	FETCH_FIELD(hv, conf, backup_controller, charp, FALSE);
 	FETCH_FIELD(hv, conf, batch_start_timeout, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, bb_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, boot_time, time_t, TRUE);
 	FETCH_FIELD(hv, conf, checkpoint_type, charp, FALSE);
-	FETCH_FIELD(hv, conf, chos_loc, charp, FALSE);
 	FETCH_FIELD(hv, conf, core_spec_plugin, charp, FALSE);
 	FETCH_FIELD(hv, conf, cluster_name, charp, FALSE);
 	FETCH_FIELD(hv, conf, complete_wait, uint16_t, TRUE);
 
-	FETCH_FIELD(hv, conf, control_addr, charp, FALSE);
-	FETCH_FIELD(hv, conf, control_machine, charp, FALSE);
+	FETCH_FIELD(hv, conf, control_cnt, uint32_t, TRUE);
+	svp = hv_fetch(hv, "control_addr", 12, FALSE);
+	if (svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVAV) {
+		av = (AV*)SvRV(*svp);
+		n = av_len(av);
+		conf->control_addr = xmalloc(n * sizeof(char *));
+		for (i = 0; i < n; i++) {
+			conf->control_addr[i] =
+				(char *)SvPV(*(av_fetch(av, i, FALSE)), len);
+		}
+	} else {
+		/* nothing to do */
+	}
+	svp = hv_fetch(hv, "control_machine", 12, FALSE);
+	if (svp && SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVAV) {
+		av = (AV*)SvRV(*svp);
+		n = av_len(av);
+		conf->control_addr = xmalloc(n * sizeof(char *));
+		for (i = 0; i < n; i++) {
+			conf->control_machine[i] =
+				(char *)SvPV(*(av_fetch(av, i, FALSE)), len);
+		}
+	} else {
+		/* nothing to do */
+	}
+
+	FETCH_FIELD(hv, conf, control_addr[0], charp, FALSE);
+	FETCH_FIELD(hv, conf, control_machine[0], charp, FALSE);
+	FETCH_FIELD(hv, conf, control_addr[1], charp, FALSE);
+	FETCH_FIELD(hv, conf, control_machine[1], charp, FALSE);
+
 	FETCH_FIELD(hv, conf, cpu_freq_def, uint32_t, FALSE);
 	FETCH_FIELD(hv, conf, crypto_type, charp, FALSE);
 	FETCH_FIELD(hv, conf, debug_flags, uint64_t, TRUE);
@@ -543,6 +569,7 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, reconfig_flags, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, requeue_exit, charp, FALSE);
 	FETCH_FIELD(hv, conf, requeue_exit_hold, charp, FALSE);
+	FETCH_FIELD(hv, conf, resume_fail_program, charp, FALSE);
 	FETCH_FIELD(hv, conf, resume_program, charp, FALSE);
 	FETCH_FIELD(hv, conf, resume_rate, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, resume_timeout, uint16_t, TRUE);
@@ -578,7 +605,6 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, slurmd_debug, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, slurmd_logfile, charp, FALSE);
 	FETCH_FIELD(hv, conf, slurmd_pidfile, charp, FALSE);
-	FETCH_FIELD(hv, conf, slurmd_plugstack, charp, FALSE);
 	FETCH_FIELD(hv, conf, slurmd_port, uint32_t, TRUE);
 	FETCH_FIELD(hv, conf, slurmd_spooldir, charp, FALSE);
 	FETCH_FIELD(hv, conf, slurmd_timeout, uint16_t, TRUE);
@@ -609,9 +635,7 @@ hv_to_slurm_ctl_conf(HV *hv, slurm_ctl_conf_t *conf)
 	FETCH_FIELD(hv, conf, version, charp, FALSE);
 	FETCH_FIELD(hv, conf, vsize_factor, uint16_t, TRUE);
 	FETCH_FIELD(hv, conf, wait_time, uint16_t, TRUE);
-	FETCH_FIELD(hv, conf, z_16, uint16_t, FALSE);
-	FETCH_FIELD(hv, conf, z_32, uint32_t, FALSE);
-	FETCH_FIELD(hv, conf, z_char, charp, FALSE);
+
 	return 0;
 }
 

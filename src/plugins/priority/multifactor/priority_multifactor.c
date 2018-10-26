@@ -13,11 +13,11 @@
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -33,13 +33,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -60,6 +60,7 @@
 
 #include "src/common/parse_time.h"
 #include "src/common/slurm_mcs.h"
+#include "src/common/slurm_priority.h"
 #include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 #include "src/common/gres.h"
@@ -107,14 +108,14 @@ int accounting_enforce = 0;
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *	<application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "jobcomp" for SLURM job completion logging) and <method>
- * is a description of how this plugin satisfies that application.  SLURM will
+ * the plugin (e.g., "jobcomp" for Slurm job completion logging) and <method>
+ * is a description of how this plugin satisfies that application.  Slurm will
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
@@ -126,11 +127,12 @@ const char plugin_type[]	= "priority/multifactor";
 const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static pthread_t decay_handler_thread;
-static pthread_t cleanup_handler_thread;
 static pthread_mutex_t decay_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t decay_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t decay_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t decay_init_cond = PTHREAD_COND_INITIALIZER;
 static bool running_decay = 0, reconfig = 0, calc_fairshare = 1;
+static time_t plugin_shutdown = 0;
 static bool favor_small; /* favor small jobs over large */
 static uint16_t damp_factor = 1;  /* weight for age factor */
 static uint32_t max_age; /* time when not to add any more
@@ -489,7 +491,6 @@ static double _get_fairshare_priority(struct job_record *job_ptr)
 	return priority_fs;
 }
 
-
 /* Returns the priority after applying the weight factors */
 static uint32_t _get_priority_internal(time_t start_time,
 				       struct job_record *job_ptr)
@@ -586,6 +587,7 @@ static uint32_t _get_priority_internal(time_t start_time,
 		}
 
 		i = 0;
+		list_sort(job_ptr->part_ptr_list, priority_sort_part_tier);
 		part_iterator = list_iterator_create(job_ptr->part_ptr_list);
 		while ((part_ptr = (struct part_record *)
 			list_next(part_iterator))) {
@@ -651,7 +653,7 @@ static uint32_t _get_priority_internal(time_t start_time,
 		     pre_factors.priority_qos, weight_qos,
 		     job_ptr->prio_factors->priority_qos);
 
-		if (pre_tres_factors && post_tres_factors) {
+		if (weight_tres && pre_tres_factors && post_tres_factors) {
 			assoc_mgr_lock(&locks);
 			for(i = 0; i < slurmctld_tres_cnt; i++) {
 				if (!post_tres_factors[i])
@@ -695,7 +697,6 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 	last_tm.tm_hour  = 0;
 /*	last_tm.tm_wday = 0	ignored */
 /*	last_tm.tm_yday = 0;	ignored */
-	last_tm.tm_isdst = -1;
 	switch (reset_period) {
 	case PRIORITY_RESET_DAILY:
 		tmp_time = slurm_mktime(&last_tm);
@@ -741,57 +742,6 @@ static time_t _next_reset(uint16_t reset_period, time_t last_reset)
 	}
 	return slurm_mktime(&last_tm);
 }
-
-
-/*
- * Calculate billable TRES based on partition's defined BillingWeights. If none
- * is defined, return total_cpus.  This is cached on job_ptr->billable_tres and
- * is updated if the job was resized since the last iteration.
- */
-static double _calc_billable_tres(struct job_record *job_ptr, time_t start_time)
-{
-	xassert(job_ptr);
-
-	struct part_record *part_ptr = job_ptr->part_ptr;
-
-	/* We don't have any resources allocated, just return 0. */
-	if (!job_ptr->tres_alloc_cnt)
-		return 0;
-
-	/* Don't recalculate unless the job is new or resized */
-	if ((!fuzzy_equal(job_ptr->billable_tres, NO_VAL)) &&
-	    difftime(job_ptr->resize_time, start_time) < 0.0)
-		return job_ptr->billable_tres;
-
-	if (priority_debug)
-		info("BillingWeight: job %d is either new or it was resized",
-		     job_ptr->job_id);
-
-	/* No billing weights defined. Return CPU count */
-	if (!part_ptr || !part_ptr->billing_weights) {
-		job_ptr->billable_tres = job_ptr->total_cpus;
-		return job_ptr->billable_tres;
-	}
-
-	if (priority_debug)
-		info("BillingWeight: job %d using \"%s\" from partition %s",
-		     job_ptr->job_id, part_ptr->billing_weights_str,
-		     job_ptr->part_ptr->name);
-
-	job_ptr->billable_tres =
-		assoc_mgr_tres_weighted(job_ptr->tres_alloc_cnt,
-					part_ptr->billing_weights, flags,
-					false);
-
-	if (priority_debug)
-		info("BillingWeight: Job %d %s = %f", job_ptr->job_id,
-		     (flags & PRIORITY_FLAGS_MAX_TRES) ?
-		     "MAX(node TRES) + SUM(Global TRES)" : "SUM(TRES)",
-		     job_ptr->billable_tres);
-
-	return job_ptr->billable_tres;
-}
-
 
 static void _handle_qos_tres_run_secs(long double *tres_run_decay,
 				      uint64_t *tres_run_delta,
@@ -974,7 +924,7 @@ static int _apply_new_usage(struct job_record *job_ptr,
 {
 	slurmdb_qos_rec_t *qos;
 	slurmdb_assoc_rec_t *assoc;
-	double run_delta = 0.0, run_decay = 0.0;
+	double run_delta = 0.0, run_decay = 0.0, run_nodecay = 0.0;
 	double billable_tres = 0.0;
 	double real_decay = 0.0, real_nodecay = 0.0;
 	uint64_t tres_run_delta[slurmctld_tres_cnt];
@@ -1072,6 +1022,20 @@ static int _apply_new_usage(struct job_record *job_ptr,
 	memset(tres_run_decay, 0, sizeof(tres_run_decay));
 	memset(tres_run_nodecay, 0, sizeof(tres_run_nodecay));
 	memset(tres_run_delta, 0, sizeof(tres_run_delta));
+	assoc_mgr_lock(&locks);
+
+	billable_tres = calc_job_billable_tres(job_ptr, start_period, true);
+	real_decay    = run_decay * billable_tres;
+	real_nodecay  = run_delta * billable_tres;
+	run_nodecay   = run_delta;
+
+	qos = job_ptr->qos_ptr;
+	if (qos && (qos->usage_factor >= 0)) {
+		real_decay *= qos->usage_factor;
+		run_decay  *= qos->usage_factor;
+		real_nodecay *= qos->usage_factor;
+		run_nodecay  *= qos->usage_factor;
+	}
 	if (job_ptr->tres_alloc_cnt) {
 		for (i=0; i<slurmctld_tres_cnt; i++) {
 			if (!job_ptr->tres_alloc_cnt[i])
@@ -1080,33 +1044,17 @@ static int _apply_new_usage(struct job_record *job_ptr,
 				job_ptr->tres_alloc_cnt[i];
 			tres_run_decay[i] = (long double)run_decay *
 				(long double)job_ptr->tres_alloc_cnt[i];
-			tres_run_nodecay[i] = (long double)run_delta *
+			tres_run_nodecay[i] = (long double)run_nodecay *
 				(long double)job_ptr->tres_alloc_cnt[i];
 		}
 	}
 
-	assoc_mgr_lock(&locks);
-
-	billable_tres = _calc_billable_tres(job_ptr, start_period);
-	real_decay = run_decay * billable_tres;
-	real_nodecay = run_delta * billable_tres;
-
-	/* Just to make sure we don't make a
-	   window where the qos_ptr could of
-	   changed make sure we get it again
-	   here.
-	*/
-	qos = job_ptr->qos_ptr;
 	assoc = job_ptr->assoc_ptr;
 
 	/* now apply the usage factor for this qos */
 	if (qos) {
-		if (qos->usage_factor >= 0) {
-			real_decay *= qos->usage_factor;
-			run_decay *= qos->usage_factor;
-		}
 		if (qos->flags & QOS_FLAG_NO_DECAY) {
-			qos->usage->grp_used_wall += run_delta;
+			qos->usage->grp_used_wall += run_nodecay;
 			qos->usage->usage_raw += (long double)real_nodecay;
 
 			_handle_qos_tres_run_secs(tres_run_nodecay,
@@ -1137,7 +1085,7 @@ static int _apply_new_usage(struct job_record *job_ptr,
 		/* 	run_decay *= qos->usage_factor; */
 		/* } */
 		if (qos->flags & QOS_FLAG_NO_DECAY) {
-			qos->usage->grp_used_wall += run_delta;
+			qos->usage->grp_used_wall += run_nodecay;
 			qos->usage->usage_raw += (long double)real_nodecay;
 
 			_handle_qos_tres_run_secs(tres_run_nodecay,
@@ -1206,7 +1154,8 @@ static void *_decay_thread(void *no_data)
 
 	time_t now;
 	double run_delta = 0.0, real_decay = 0.0;
-	double elapsed;
+	struct timeval tvnow;
+	struct timespec abs;
 
 	/* Write lock on jobs, read lock on nodes and partitions */
 	slurmctld_lock_t job_write_lock =
@@ -1258,19 +1207,21 @@ static void *_decay_thread(void *no_data)
 	if (decay_hl > 0)
 		decay_factor = 1 - (0.693 / decay_hl);
 
-	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+	/* setup timer */
+	gettimeofday(&tvnow, NULL);
+	abs.tv_sec = tvnow.tv_sec;
+	abs.tv_nsec = tvnow.tv_usec * 1000;
 
 	_read_last_decay_ran(&g_last_ran, &last_reset);
 	if (last_reset == 0)
 		last_reset = start_time;
 
-	pthread_cond_signal(&decay_init_cond);
+	slurm_cond_signal(&decay_init_cond);
 	slurm_mutex_unlock(&decay_init_mutex);
 
 	_init_grp_used_cpu_run_secs(g_last_ran);
 
-	while (1) {
+	while (!plugin_shutdown) {
 		now = start_time;
 
 		slurm_mutex_lock(&decay_lock);
@@ -1377,16 +1328,13 @@ static void *_decay_thread(void *no_data)
 		_write_last_decay_ran(g_last_ran, last_reset);
 
 		running_decay = 0;
-		slurm_mutex_unlock(&decay_lock);
 
 		/* Sleep until the next time. */
-		now = time(NULL);
-		elapsed = difftime(now, start_time);
-		if (elapsed < calc_period) {
-			sleep(calc_period - elapsed);
-			start_time = time(NULL);
-		} else
-			start_time = now;
+		abs.tv_sec += calc_period;
+		slurm_cond_timedwait(&decay_cond, &decay_lock, &abs);
+		slurm_mutex_unlock(&decay_lock);
+
+		start_time = time(NULL);
 		/* repeat ;) */
 	}
 	return NULL;
@@ -1439,8 +1387,17 @@ static void _filter_job(struct job_record *job_ptr,
 			return;
 	}
 
+	/*
+	 * Job is not in any partition, so there is nothing to return.
+	 * This can happen if the Partition was deleted, CALCULATE_RUNNING
+	 * is enabled, and this job is still waiting out MinJobAge before
+	 * being removed from the system.
+	 */
+	if (!job_ptr->part_ptr && !job_ptr->part_ptr_list)
+		return;
+
 	/* Filter by partition, job in one partition */
-	if (!job_ptr->part_ptr_list || !job_ptr->priority_array) {
+	if (!job_ptr->part_ptr_list) {
 		job_part_ptr =  job_ptr->part_ptr;
 		filter = 0;
 		if (part_ptr_list) {
@@ -1501,12 +1458,6 @@ static void _filter_job(struct job_record *job_ptr,
 	list_iterator_destroy(job_iter);
 }
 
-static void *_cleanup_thread(void *no_data)
-{
-	pthread_join(decay_handler_thread, NULL);
-	return NULL;
-}
-
 static void _internal_setup(void)
 {
 	char *tres_weights_str;
@@ -1527,7 +1478,8 @@ static void _internal_setup(void)
 	xfree(weight_tres);
 	if ((tres_weights_str = slurm_get_priority_weight_tres())) {
 		weight_tres = slurm_get_tres_weight_array(tres_weights_str,
-							  slurmctld_tres_cnt);
+							  slurmctld_tres_cnt,
+							  true);
 	}
 	xfree(tres_weights_str);
 	flags = slurm_get_priority_flags();
@@ -1704,7 +1656,6 @@ static void _set_usage_efctv(slurmdb_assoc_rec_t *assoc)
  */
 int init ( void )
 {
-	pthread_attr_t thread_attr;
 	char *temp = NULL;
 	/* Write lock on jobs, read lock on nodes and partitions */
 	slurmctld_lock_t job_write_lock =
@@ -1747,7 +1698,6 @@ int init ( void )
 			      "before we can init the priority/multifactor "
 			      "plugin");
 		assoc_mgr_root_assoc->usage->usage_efctv = 1.0;
-		slurm_attr_init(&thread_attr);
 
 		/* The decay_thread sets up some global variables that are
 		 * needed outside of the decay_thread (i.e. decay_factor,
@@ -1759,22 +1709,11 @@ int init ( void )
 		 * wait for it. */
 		slurm_mutex_lock(&decay_init_mutex);
 
-		if (pthread_create(&decay_handler_thread, &thread_attr,
-				   _decay_thread, NULL))
-			fatal("pthread_create error %m");
+		slurm_thread_create(&decay_handler_thread,
+				    _decay_thread, NULL);
 
 		slurm_cond_wait(&decay_init_cond, &decay_init_mutex);
 		slurm_mutex_unlock(&decay_init_mutex);
-
-		/* This is here to join the decay thread so we don't core
-		 * dump if in the sleep, since there is no other place to join
-		 * we have to create another thread to do it. */
-		slurm_attr_init(&thread_attr);
-		if (pthread_create(&cleanup_handler_thread, &thread_attr,
-				   _cleanup_thread, NULL))
-			fatal("pthread_create error %m");
-
-		slurm_attr_destroy(&thread_attr);
 	} else {
 		if (weight_fs) {
 			fatal("It appears you don't have any association "
@@ -1794,20 +1733,25 @@ int init ( void )
 
 int fini ( void )
 {
-	/* Daemon termination handled here */
-	slurm_mutex_lock(&decay_lock);
-	if (running_decay)
-		debug("Waiting for decay thread to finish.");
+	plugin_shutdown = time(NULL);
 
-	/* cancel the decay thread and then join the cleanup thread */
+	/* Daemon termination handled here */
+	if (running_decay)
+		debug("Waiting for priority decay thread to finish.");
+
+	slurm_mutex_lock(&decay_lock);
+
+	/* signal the decay thread to end */
 	if (decay_handler_thread)
-		pthread_cancel(decay_handler_thread);
-	if (cleanup_handler_thread)
-		pthread_join(cleanup_handler_thread, NULL);
+		slurm_cond_signal(&decay_cond);
 
 	xfree(weight_tres);
 
 	slurm_mutex_unlock(&decay_lock);
+
+	/* Now join outside the lock */
+	if (decay_handler_thread)
+		pthread_join(decay_handler_thread, NULL);
 
 	return SLURM_SUCCESS;
 }
@@ -1934,6 +1878,8 @@ extern List priority_p_get_priority_factors_list(
 	}
 
 	if (job_list && list_count(job_list)) {
+		time_t use_time;
+
 		ret_list = list_create(slurm_destroy_priority_factors_object);
 		itr = list_iterator_create(job_list);
 		while ((job_ptr = list_next(itr))) {
@@ -1948,8 +1894,12 @@ extern List priority_p_get_priority_factors_list(
 			/*
 			 * This means the job is not eligible yet
 			 */
-			if (!job_ptr->details->begin_time
-			    || (job_ptr->details->begin_time > start_time))
+			if (flags & PRIORITY_FLAGS_ACCRUE_ALWAYS)
+				use_time = job_ptr->details->submit_time;
+			else
+				use_time = job_ptr->details->begin_time;
+
+			if (!use_time || (use_time > start_time))
 				continue;
 
 			/*
@@ -2068,29 +2018,21 @@ extern void set_priority_factors(time_t start_time, struct job_record *job_ptr)
 
 	qos_ptr = job_ptr->qos_ptr;
 
-	if (weight_age) {
+	if (weight_age && job_ptr->details->accrue_time) {
 		uint32_t diff = 0;
-		time_t use_time;
 
-		if (flags & PRIORITY_FLAGS_ACCRUE_ALWAYS)
-			use_time = job_ptr->details->submit_time;
+		/*
+		 * Only really add an age priority if the
+		 * job_ptr->details->accrue_time is past the start_time.
+		 */
+		if (start_time > job_ptr->details->accrue_time)
+			diff = start_time - job_ptr->details->accrue_time;
+
+		if (diff < max_age)
+			job_ptr->prio_factors->priority_age =
+				(double)diff / (double)max_age;
 		else
-			use_time = job_ptr->details->begin_time;
-
-		/* Only really add an age priority if the use_time is
-		   past the start_time.
-		*/
-		if (start_time > use_time)
-			diff = start_time - use_time;
-
-		if (job_ptr->details->begin_time
-		    || (flags & PRIORITY_FLAGS_ACCRUE_ALWAYS)) {
-			if (diff < max_age) {
-				job_ptr->prio_factors->priority_age =
-					(double)diff / (double)max_age;
-			} else
-				job_ptr->prio_factors->priority_age = 1.0;
-		}
+			job_ptr->prio_factors->priority_age = 1.0;
 	}
 
 	if (job_ptr->assoc_ptr && weight_fs) {

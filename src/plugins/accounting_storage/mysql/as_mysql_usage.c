@@ -7,11 +7,11 @@
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -224,16 +224,17 @@ static void *_cluster_rollup_usage(void *arg)
 	 * epoch times we need to set the tm_isdst = -1 so we don't
 	 * have to worry about the time changes.  Not setting it to -1
 	 * will cause problems in the day and month with the date change.
+	 *
+	 * NOTE: slurm_mktime() implementation already sets it to -1 so
+	 *	 there's no need to manually set it beforehand.
 	 */
 
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
-	start_tm.tm_isdst = -1;
 	hour_start = slurm_mktime(&start_tm);
 
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
-	end_tm.tm_isdst = -1;
 	hour_end = slurm_mktime(&end_tm);
 
 /* 	info("hour start %s", slurm_ctime2(&hour_start)); */
@@ -254,11 +255,9 @@ static void *_cluster_rollup_usage(void *arg)
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
 	start_tm.tm_hour = 0;
-	start_tm.tm_isdst = -1;
 	day_start = slurm_mktime(&start_tm);
 
 	end_tm.tm_hour = 0;
-	end_tm.tm_isdst = -1;
 	day_end = slurm_mktime(&end_tm);
 
 /* 	info("day start %s", slurm_ctime2(&day_start)); */
@@ -276,14 +275,12 @@ static void *_cluster_rollup_usage(void *arg)
 	start_tm.tm_min = 0;
 	start_tm.tm_hour = 0;
 	start_tm.tm_mday = 1;
-	start_tm.tm_isdst = -1;
 	month_start = slurm_mktime(&start_tm);
 
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
 	end_tm.tm_hour = 0;
 	end_tm.tm_mday = 1;
-	end_tm.tm_isdst = -1;
 	month_end = slurm_mktime(&end_tm);
 
 /* 	info("month start %s", slurm_ctime2(&month_start)); */
@@ -939,8 +936,6 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 	slurm_mutex_lock(&as_mysql_cluster_list_lock);
 	itr = list_iterator_create(as_mysql_cluster_list);
 	while ((cluster_name = list_next(itr))) {
-		pthread_t rollup_tid;
-		pthread_attr_t rollup_attr;
 		local_rollup_t *local_rollup = xmalloc(sizeof(local_rollup_t));
 
 		local_rollup->archive_data = archive_data;
@@ -970,16 +965,8 @@ extern int as_mysql_roll_usage(mysql_conn_t *mysql_conn, time_t sent_start,
 		 * fashion buys a bunch on systems with lots
 		 * (millions) of jobs.
 		 */
-		slurm_attr_init(&rollup_attr);
-		if (pthread_attr_setdetachstate(&rollup_attr,
-						PTHREAD_CREATE_DETACHED))
-			error("pthread_attr_setdetachstate error %m");
-
-		if (pthread_create(&rollup_tid, &rollup_attr,
-				   _cluster_rollup_usage,
-				   (void *)local_rollup))
-			fatal("pthread_create: %m");
-		slurm_attr_destroy(&rollup_attr);
+		slurm_thread_create_detached(NULL, _cluster_rollup_usage,
+					     local_rollup);
 		roll_started++;
 	}
 	slurm_mutex_lock(&rolledup_lock);

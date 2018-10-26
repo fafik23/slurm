@@ -40,6 +40,8 @@ before_script:
   - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
   - wget https://github.com/lz4/lz4/archive/v1.8.0.tar.gz
   - tar -xvzf v1.8.0.tar.gz > /dev/null && cd lz4-1.8.0 && make > /dev/null && sudo make install > /dev/null && cd .. && rm -rf  lz4-1.8.0  v1.8.0.tar.gz > /dev/null
+  - export PATH=/usr/lib/ccache:$PATH
+  - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - export PATH=/usr/lib/ccache:$PATH

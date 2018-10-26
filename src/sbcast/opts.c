@@ -8,11 +8,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -108,6 +108,7 @@ extern void parse_command_line(int argc, char **argv)
 		params.force = true;
 
 	params.job_id  = NO_VAL;
+	params.pack_job_offset = NO_VAL;
 	params.step_id = NO_VAL;
 
 	if (getenv("SBCAST_PRESERVE"))
@@ -139,6 +140,10 @@ extern void parse_command_line(int argc, char **argv)
 			break;
 		case (int)'j':
 			params.job_id = strtol(optarg, &end_ptr, 10);
+			if (end_ptr[0] == '+') {
+				params.pack_job_offset =
+					strtol(end_ptr+1, &end_ptr, 10);
+			}
 			if (end_ptr[0] == '.')
 				params.step_id = strtol(end_ptr+1, NULL, 10);
 			break;
@@ -213,10 +218,6 @@ extern void parse_command_line(int argc, char **argv)
 
 	if (params.verbose)
 		_print_options();
-#ifdef HAVE_BG
-	fprintf(stderr, "sbcast not supported on BlueGene systems\n");
-	exit(1);
-#endif
 }
 
 /* map size in string to number, interpret suffix of "k" or "m" */
@@ -226,12 +227,10 @@ static uint32_t _map_size( char *buf )
 	char *end_ptr;
 
 	b_size = strtol(buf, &end_ptr, 10);
-	if ((b_size == LONG_MIN) || (b_size == LONG_MAX)
-	||  (b_size < 0)) {
+	if ((b_size == LONG_MIN) || (b_size == LONG_MAX) || (b_size < 0)) {
 		fprintf(stderr, "size specification is invalid, ignored\n");
 		b_size = 0;
-	}
-	else if (end_ptr[0] == '\0')
+	} else if (end_ptr[0] == '\0')
 		;
 	else if ((end_ptr[0] == 'k') || (end_ptr[0] == 'K'))
 		b_size *= 1024;
@@ -252,10 +251,23 @@ static void _print_options( void )
 	info("compress   = %u", params.compress);
 	info("force      = %s", params.force ? "true" : "false");
 	info("fanout     = %d", params.fanout);
-	if (params.step_id == NO_VAL)
-		info("jobid      = %u", params.job_id);
-	else
-		info("jobid      = %u.%u", params.job_id, params.step_id);
+	if (params.step_id == NO_VAL) {
+		if (params.pack_job_offset == NO_VAL) {
+			info("jobid      = %u", params.job_id);
+		} else {
+			info("jobid      = %u+%u",
+			     params.job_id, params.pack_job_offset);
+		}
+	} else {
+		if (params.pack_job_offset == NO_VAL) {
+			info("jobid      = %u.%u", params.job_id,
+			     params.step_id);
+		} else {
+			info("jobid      = %u+%u.%u",
+			     params.job_id, params.pack_job_offset,
+			     params.step_id);
+		}
+	}
 	info("preserve   = %s", params.preserve ? "true" : "false");
 	info("timeout    = %d", params.timeout);
 	info("verbose    = %d", params.verbose);
@@ -274,17 +286,16 @@ static void _help( void )
 {
 	printf ("\
 Usage: sbcast [OPTIONS] SOURCE DEST\n\
-  -C, --compress[=lib] compress the file being transmitted\n\
-  -f, --force          replace destination file as required\n\
-  -F, --fanout=num     specify message fanout\n\
-  -j, --jobid=#[.#]    specify job ID and optional step ID, unneeded if run\n\
-                       inside allocation\n\
-  -p, --preserve       preserve modes and times of source file\n\
-  -s, --size=num       block size in bytes (rounded off)\n\
-  -t, --timeout=secs   specify message timeout (seconds)\n\
-  -v, --verbose        provide detailed event logging\n\
-  -V, --version        print version information and exit\n\
+  -C, --compress[=lib]  compress the file being transmitted\n\
+  -f, --force           replace destination file as required\n\
+  -F, --fanout=num      specify message fanout\n\
+  -j, --jobid=#[+#][.#] specify job ID with optional pack job offset and/or step ID\n\
+  -p, --preserve        preserve modes and times of source file\n\
+  -s, --size=num        block size in bytes (rounded off)\n\
+  -t, --timeout=secs    specify message timeout (seconds)\n\
+  -v, --verbose         provide detailed event logging\n\
+  -V, --version         print version information and exit\n\
 \nHelp options:\n\
-  --help               show this help message\n\
-  --usage              display brief usage message\n");
+  --help                show this help message\n\
+  --usage               display brief usage message\n");
 }

@@ -18,6 +18,7 @@ START_TEST(invalid_protocol)
 }
 END_TEST
 
+#ifndef NDEBUG
 START_TEST(pack_null_req)
 {
 	Buf buf = init_buf(1024);
@@ -30,6 +31,7 @@ START_TEST(pack_null_req)
 	free_buf(buf);
 }
 END_TEST
+#endif
 
 START_TEST(pack_1702_req_null_ptrs)
 {
@@ -41,7 +43,7 @@ START_TEST(pack_1702_req_null_ptrs)
 	pack_req.job_id = 12345;
 
 	msg.msg_type         = REQUEST_JOB_ALLOCATION_INFO;
-	msg.protocol_version = SLURM_17_02_PROTOCOL_VERSION;
+	msg.protocol_version = SLURM_MIN_PROTOCOL_VERSION;
 	msg.data             = &pack_req;
 
 	rc = pack_msg(&msg, buf);
@@ -76,7 +78,7 @@ START_TEST(pack_1702_req)
 	pack_req.req_cluster = xstrdup("blah");
 
 	msg.msg_type         = REQUEST_JOB_ALLOCATION_INFO;
-	msg.protocol_version = SLURM_17_02_PROTOCOL_VERSION;
+	msg.protocol_version = SLURM_MIN_PROTOCOL_VERSION;
 	msg.data             = &pack_req;
 
 	rc = pack_msg(&msg, buf);
@@ -111,7 +113,7 @@ START_TEST(pack_1711_req_null_ptrs)
 	pack_req.job_id = 12345;
 
 	msg.msg_type         = REQUEST_JOB_ALLOCATION_INFO;
-	msg.protocol_version = SLURM_17_11_PROTOCOL_VERSION;
+	msg.protocol_version = SLURM_ONE_BACK_PROTOCOL_VERSION;
 	msg.data             = &pack_req;
 
 	rc = pack_msg(&msg, buf);
@@ -145,7 +147,7 @@ START_TEST(pack_1711_req)
 	pack_req.req_cluster = xstrdup("blah");
 
 	msg.msg_type         = REQUEST_JOB_ALLOCATION_INFO;
-	msg.protocol_version = SLURM_17_11_PROTOCOL_VERSION;
+	msg.protocol_version = SLURM_ONE_BACK_PROTOCOL_VERSION;
 	msg.data             = &pack_req;
 
 	rc = pack_msg(&msg, buf);
@@ -180,8 +182,12 @@ Suite* suite(SRunner *sr)
 	Suite* s = suite_create("Pack job_alloc_info_msg_t");
 	TCase* tc_core = tcase_create("Pack pack_job_alloc_info_msg_t");
 	tcase_add_test(tc_core, invalid_protocol);
-	if (srunner_fork_status(sr) != CK_NOFORK)
-		tcase_add_test_raise_signal(tc_core, pack_null_req, SIGABRT);
+#ifdef NDEBUG
+       printf("Can't perform pack_null_req test with NDEBUG set.\n");
+#else
+       if (srunner_fork_status(sr) != CK_NOFORK)
+               tcase_add_test_raise_signal(tc_core, pack_null_req, SIGABRT);
+#endif
 	tcase_add_test(tc_core, pack_1702_req_null_ptrs);
 	tcase_add_test(tc_core, pack_1702_req);
 	tcase_add_test(tc_core, pack_1711_req_null_ptrs);
@@ -208,4 +214,3 @@ int main(void)
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
-

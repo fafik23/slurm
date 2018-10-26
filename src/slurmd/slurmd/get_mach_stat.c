@@ -9,11 +9,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -29,13 +29,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -63,14 +63,14 @@
 #include <string.h>
 #include <syslog.h>
 
-#if defined(__sun) || defined(__APPLE__)
+#if defined(__APPLE__)
 #  include <sys/times.h>
 #  include <sys/types.h>
 #elif defined(__NetBSD__) || defined(__FreeBSD__)
 #  include <sys/times.h> /* for times(3) */
 #else
 /* NOTE: Getting the system uptime on AIX uses completely different logic.
- * sys/sysinfo.h on AIX defines structures that conflict with SLURM code. */
+ * sys/sysinfo.h on AIX defines structures that conflict with Slurm code. */
 #  include <sys/sysinfo.h>
 #endif
 
@@ -209,11 +209,7 @@ get_tmp_disk(uint32_t *tmp_disk, char *tmp_fs)
 
 	if (tmp_fs_name == NULL)
 		tmp_fs_name = "/tmp";
-#if defined (__sun)
-	if (statfs(tmp_fs_name, &stat_buf, 0, 0) == 0) {
-#else
 	if (statfs(tmp_fs_name, &stat_buf) == 0) {
-#endif
 		total_size = (long)stat_buf.f_blocks;
 	}
 	else if (errno != ENOENT) {
@@ -231,7 +227,7 @@ get_tmp_disk(uint32_t *tmp_disk, char *tmp_fs)
 
 extern int get_up_time(uint32_t *up_time)
 {
-#if defined(__sun) || defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
 	clock_t tm;
 	struct tms buf;
 
@@ -270,7 +266,7 @@ extern int get_up_time(uint32_t *up_time)
 
 extern int get_cpu_load(uint32_t *cpu_load)
 {
-#if defined(__sun) || defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
 	/* Not sure how to get CPU load on above systems.
 	 * Perhaps some method below works. */
 	*cpu_load = 0;
@@ -290,7 +286,7 @@ extern int get_cpu_load(uint32_t *cpu_load)
 
 extern int get_free_mem(uint64_t *free_mem)
 {
-#if defined(__sun) || defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__)
 	/* Not sure how to get CPU load on above systems.
 	 * Perhaps some method below works. */
 	*free_mem = 0;

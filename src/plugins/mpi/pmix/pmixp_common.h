@@ -5,11 +5,11 @@
  *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  \*****************************************************************************/
 
@@ -46,7 +46,7 @@
 #include <unistd.h>
 
 /* Common includes for all source files
- * Define SLURM translator header first to override
+ * Define Slurm translator header first to override
  * all translated functions
  */
 #include "src/common/slurm_xlator.h"
@@ -62,15 +62,8 @@
 #include "src/common/fd.h"
 #include "src/common/net.h"
 
-/* PMIx library header */
-#include <pmix_server.h>
-
-#ifndef PMIX_VERSION_MAJOR
-#define PMIX_VERSION_MAJOR 1L
-#endif
-
 /* ----------------------------------------------------------
- * SLURM environment that influence us:
+ * Slurm environment that influence us:
  * Job/step resource description
  * ---------------------------------------------------------- */
 #define PMIXP_STEP_NODES_ENV "SLURM_STEP_NODELIST"
@@ -107,6 +100,7 @@
 /* This variable will be propagated to server-side
  * part of libPMIx */
 #define PMIXP_DEBUG_LIB "SLURM_PMIX_SRV_DEBUG"
+#define PMIXP_DIRECT_CONN_EARLY "SLURM_PMIX_DIRECT_CONN_EARLY"
 
 /* ----------------------------------------------------------
  * This is libPMIx variable that we need to control it
@@ -136,6 +130,24 @@
 #define PMIXP_PP_BOUND "SLURM_PMIX_PP_LARGE_PWR2"
 /* Send/receive from the same thread (like regular MPI p2p benchmarks) */
 #define PMIXP_PP_SAMETHR "SLURM_PMIX_PP_SAME_THR"
+
+/* Request a collective test to be executed
+ * before running a job
+ */
+#define PMIXP_CPERF_ON "SLURM_PMIX_WANT_COLL_PERF"
+/* Smallest message size (power of 2) */
+#define PMIXP_CPERF_LOW "SLURM_PMIX_COLL_PERF_LOW_PWR2"
+/* Largest message size (power of 2) */
+#define PMIXP_CPERF_UP "SLURM_PMIX_COLL_PERF_UP_PWR2"
+/* Number of repetitions for the small messages */
+#define PMIXP_CPERF_SITER "SLURM_PMIX_COLL_PERF_ITER_SMALL"
+/* Number of repetitions for the large messages */
+#define PMIXP_CPERF_LITER "SLURM_PMIX_COLL_PERF_ITER_LARGE"
+/* The bound after which message is considered large */
+#define PMIXP_CPERF_BOUND "SLURM_PMIX_COLL_PERF_LARGE_PWR2"
+/* The prefered fence type, values:[auto|tree|ring] */
+#define PMIXP_COLL_FENCE "SLURM_PMIX_FENCE"
+#define SLURM_PMIXP_FENCE_BARRIER "SLURM_PMIX_FENCE_BARRIER"
 
 typedef enum {
 	PMIXP_P2P_INLINE,
@@ -168,5 +180,17 @@ typedef struct {
 	pmixp_p2p_send_complete_cb_t send_complete;
 } pmixp_p2p_data_t;
 
+#define PMIXP_MAX_NSLEN     255
+#define PMIXP_MAX_KEYLEN    511
+
+
+#define PMIXP_ERR_TIMEOUT                      -24
+#define PMIXP_ERR_BAD_PARAM                    -27
+#define PMIXP_ERR_INVALID_NAMESPACE            -44
+
+typedef struct {
+    char nspace[PMIXP_MAX_NSLEN+1];
+    uint32_t rank;
+} pmixp_proc_t;
 
 #endif /* PMIXP_COMMON_H */

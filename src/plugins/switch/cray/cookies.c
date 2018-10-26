@@ -5,11 +5,11 @@
  *  Copyright 2014 Cray Inc. All Rights Reserved.
  *  Written by David Gloe
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -85,34 +85,12 @@ static bool _in_slurmctld(void);
  */
 extern int start_lease_extender(void)
 {
-	pthread_attr_t attr_agent;
-	pthread_t thread_agent;
-	int retries = 0;
-
 	// Start lease extender in the slurmctld
 	if (!_in_slurmctld())
 		return SLURM_SUCCESS;
 
-	/* spawn an agent */
-	slurm_attr_init(&attr_agent);
-	if (pthread_attr_setdetachstate(&attr_agent,
-					PTHREAD_CREATE_DETACHED)) {
-		CRAY_ERR("pthread_attr_setdetachstate error %m");
-	}
+	slurm_thread_create_detached(NULL, _lease_extender, NULL);
 
-	retries = 0;
-	while (pthread_create(&thread_agent, &attr_agent,
-			      &_lease_extender, NULL)) {
-		error("pthread_create error %m");
-		if (++retries > 1) {
-			CRAY_ERR("Can't create pthread");
-			slurm_attr_destroy(&attr_agent);
-			return SLURM_ERROR;
-		}
-
-		usleep(1000);	/* sleep and retry */
-	}
-	slurm_attr_destroy(&attr_agent);
 	return SLURM_SUCCESS;
 }
 
@@ -170,7 +148,7 @@ extern int lease_cookies(slurm_cray_jobinfo_t *job, int32_t *nodes,
 
 	/*
 	 * xmalloc the space for the cookies and cookie_ids, so it can be freed
-	 * with xfree later, which is consistent with SLURM practices and how
+	 * with xfree later, which is consistent with Slurm practices and how
 	 * the rest of the structure will be freed.
 	 * We must free() the ALPS Common library allocated memory using free(),
 	 * not xfree().

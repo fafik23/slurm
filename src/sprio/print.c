@@ -7,11 +7,11 @@
  *  Written by Don Lipari <lipari1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -45,11 +45,12 @@
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/slurmctld/slurmctld.h"
-#include "src/sprio/print.h"
-#include "src/sprio/sprio.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+
+#include "src/sprio/print.h"
+#include "src/sprio/sprio.h"
 
 static int	_print_str(char *str, int width, bool right, bool cut_output);
 
@@ -69,6 +70,7 @@ int print_jobs_array(List jobs, List format)
 
 	/* Print the jobs of interest */
 	if (jobs) {
+		sort_job_list(jobs);
 		list_for_each (jobs, (ListForF) print_job_from_format,
 			       (void *) format);
 	}
@@ -76,7 +78,7 @@ int print_jobs_array(List jobs, List format)
 	return SLURM_SUCCESS;
 }
 
-static double _get_priority(priority_factors_object_t *prio_factors)
+double get_priority_from_factors(priority_factors_object_t *prio_factors)
 {
 	int i = 0;
 	double priority = prio_factors->priority_age
@@ -303,7 +305,7 @@ int _print_job_priority_normalized(priority_factors_object_t * job, int width,
 	else if (job == (priority_factors_object_t *) -1)
 		_print_str("", width, right, true);
 	else {
-		double priority = _get_priority(job);
+		double priority = get_priority_from_factors(job);
 		double prio = priority / (double) ((uint32_t) 0xffffffff);
 
 		sprintf(temp, "%16.14f", prio);
@@ -323,7 +325,7 @@ int _print_job_priority_weighted(priority_factors_object_t * job, int width,
 	else if (job == (priority_factors_object_t *) -1)
 		_print_str("", width, right, true);
 	else {
-		sprintf(temp, "%lld", (long long)_get_priority(job));
+		sprintf(temp, "%lld", (long long)get_priority_from_factors(job));
 		_print_str(temp, width, right, true);
 	}
 	if (suffix)
@@ -532,4 +534,3 @@ int _print_tres_weighted(priority_factors_object_t * job, int width,
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
 }
-

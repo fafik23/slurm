@@ -8,11 +8,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -68,7 +68,6 @@ static void  _add_delay(void);
 static int   _cancel_jobs(void);
 static void *_cancel_job_id (void *cancel_info);
 static void *_cancel_step_id (void *cancel_info);
-
 static int  _confirmation(job_info_t *job_ptr, uint32_t step_id);
 static void _filter_job_records(void);
 static void _load_job_records (void);
@@ -94,7 +93,6 @@ typedef struct job_cancel_info {
 	pthread_cond_t  *num_active_threads_cond;
 } job_cancel_info_t;
 
-static	pthread_attr_t  attr;
 static	int num_active_threads = 0;
 static	pthread_mutex_t  num_active_threads_lock;
 static	pthread_cond_t   num_active_threads_cond;
@@ -452,8 +450,7 @@ static void _cancel_jobid_by_state(uint32_t job_state, int *rc)
 {
 	job_cancel_info_t *cancel_info;
 	job_info_t *job_ptr;
-	pthread_t dummy;
-	int err, i, j;
+	int i, j;
 
 	if (opt.job_cnt == 0)
 		return;
@@ -524,20 +521,16 @@ static void _cancel_jobid_by_state(uint32_t job_state, int *rc)
 			if (opt.step_id[j] == SLURM_BATCH_SCRIPT) {
 				cancel_info->job_id_str =
 					_build_jobid_str(job_ptr);
-				err = pthread_create(&dummy, &attr,
-						     _cancel_job_id,
-						     cancel_info);
-				if (err)  /* Run in-line as needed */
-					_cancel_job_id(cancel_info);
+				slurm_thread_create_detached(NULL,
+							     _cancel_job_id,
+							     cancel_info);
 				job_ptr->job_id = 0;
 			} else {
 				cancel_info->job_id = job_ptr->job_id;
 				cancel_info->step_id = opt.step_id[j];
-				err = pthread_create(&dummy, &attr,
-						     _cancel_step_id,
-						     cancel_info);
-				if (err)  /* Run in-line as needed */
-					_cancel_step_id(cancel_info);
+				slurm_thread_create_detached(NULL,
+							     _cancel_step_id,
+							     cancel_info);
 			}
 
 			if (opt.interactive) {
@@ -557,10 +550,9 @@ static void _cancel_jobid_by_state(uint32_t job_state, int *rc)
 static void
 _cancel_jobs_by_state(uint32_t job_state, int *rc)
 {
-	int i, err;
+	int i;
 	job_cancel_info_t *cancel_info;
 	job_info_t *job_ptr = job_buffer_ptr->job_array;
-	pthread_t dummy;
 
 	/* Spawn a thread to cancel each job or job step marked for
 	 * cancellation */
@@ -604,9 +596,7 @@ _cancel_jobs_by_state(uint32_t job_state, int *rc)
 		}
 		slurm_mutex_unlock(&num_active_threads_lock);
 
-		err = pthread_create(&dummy, &attr, _cancel_job_id,cancel_info);
-		if (err)   /* Run in-line if thread create fails */
-			_cancel_job_id(cancel_info);
+		slurm_thread_create_detached(NULL, _cancel_job_id, cancel_info);
 		job_ptr->job_id = 0;
 
 		if (opt.interactive) {
@@ -626,10 +616,6 @@ _cancel_jobs_by_state(uint32_t job_state, int *rc)
 static int _cancel_jobs(void)
 {
 	int rc = 0;
-
-	slurm_attr_init(&attr);
-	if (pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
 
 	slurm_mutex_init(&num_active_threads_lock);
 	slurm_cond_init(&num_active_threads_cond, NULL);
@@ -655,7 +641,6 @@ static int _cancel_jobs(void)
 	}
 	slurm_mutex_unlock(&num_active_threads_lock);
 
-	slurm_attr_destroy(&attr);
 	slurm_mutex_destroy(&num_active_threads_lock);
 	slurm_cond_destroy(&num_active_threads_cond);
 
@@ -707,7 +692,7 @@ _cancel_job_id (void *ci)
 	char *job_type = "";
 	DEF_TIMERS;
 
-	if (cancel_info->sig == (uint16_t) NO_VAL) {
+	if (cancel_info->sig == NO_VAL16) {
 		cancel_info->sig = SIGKILL;
 		sig_set = false;
 	}
@@ -778,7 +763,9 @@ _cancel_job_id (void *ci)
 		error_code = slurm_get_errno();
 		if ((opt.verbose > 0) ||
 		    ((error_code != ESLURM_ALREADY_DONE) &&
-		     (error_code != ESLURM_INVALID_JOB_ID))) {
+		     (error_code != ESLURM_INVALID_JOB_ID) &&
+		     ((error_code != ESLURM_NOT_PACK_WHOLE) ||
+		      (opt.job_cnt != 0)))) {
 			error("Kill job error on job id %s: %s",
 			      cancel_info->job_id_str,
 			      slurm_strerror(slurm_get_errno()));
@@ -814,7 +801,7 @@ _cancel_step_id (void *ci)
 	bool sig_set = true;
 	DEF_TIMERS;
 
-	if (cancel_info->sig == (uint16_t) NO_VAL) {
+	if (cancel_info->sig == NO_VAL16) {
 		cancel_info->sig = SIGKILL;
 		sig_set = false;
 	}
@@ -924,12 +911,8 @@ _confirmation(job_info_t *job_ptr, uint32_t step_id)
 static int _signal_job_by_str(void)
 {
 	job_cancel_info_t *cancel_info;
-	int err, i, rc = 0;
-	pthread_t dummy;
+	int i, rc = 0;
 
-	slurm_attr_init(&attr);
-	if (pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
 	slurm_mutex_init(&num_active_threads_lock);
 	slurm_cond_init(&num_active_threads_cond, NULL);
 
@@ -953,9 +936,7 @@ static int _signal_job_by_str(void)
 		}
 		slurm_mutex_unlock(&num_active_threads_lock);
 
-		err = pthread_create(&dummy, &attr, _cancel_job_id,cancel_info);
-		if (err)	/* Run in-line if thread create fails */
-			_cancel_job_id(cancel_info);
+		slurm_thread_create_detached(NULL, _cancel_job_id, cancel_info);
 	}
 
 	/* Wait all spawned threads to finish */
@@ -965,8 +946,6 @@ static int _signal_job_by_str(void)
 				&num_active_threads_lock);
 	}
 	slurm_mutex_unlock(&num_active_threads_lock);
-
-	slurm_attr_destroy(&attr);
 
 	return rc;
 }

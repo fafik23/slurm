@@ -4,11 +4,11 @@
  *  Copyright (C) 2012 SchedMD LLC.
  *  Written by Danny Auble <da@schedmd.com> et. al.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -294,7 +294,7 @@ static void _agent_proc_connect(int fe_comm_socket,uint32_t fe_auth_key)
 
 	while (1) {
 		fe_comm_conn = slurm_accept_msg_conn(fe_comm_socket, &be_addr);
-		if (fe_comm_conn != SLURM_SOCKET_ERROR) {
+		if (fe_comm_conn != SLURM_ERROR) {
 			if (_validate_connect(fe_comm_conn, fe_auth_key))
 				be_connected = true;
 			break;
@@ -372,7 +372,7 @@ static void *_agent_thread(void *arg)
 			_agent_proc_connect(fe_comm_socket, fe_auth_key);;
 		}
 	}
-	slurm_shutdown_msg_engine(fe_comm_socket);
+	close(fe_comm_socket);
 
 	return NULL;
 }
@@ -399,8 +399,6 @@ static void _spawn_fe_agent(void)
 	int fe_comm_socket = -1;
 	slurm_addr_t comm_addr;
 	uint16_t comm_port;
-	pthread_attr_t agent_attr;
-	pthread_t agent_tid;
 	agent_data_t *agent_data_ptr;
 
 	/* Open socket for back-end program to communicate with */
@@ -425,15 +423,8 @@ static void _spawn_fe_agent(void)
 	agent_data_ptr = xmalloc(sizeof(agent_data_t));
 	agent_data_ptr->fe_auth_key = fe_auth_key;
 	agent_data_ptr->fe_comm_socket = fe_comm_socket;
-	slurm_attr_init(&agent_attr);
-	pthread_attr_setdetachstate(&agent_attr, PTHREAD_CREATE_DETACHED);
-	while ((pthread_create(&agent_tid, &agent_attr, &_agent_thread,
-			       (void *) agent_data_ptr))) {
-		if (errno != EAGAIN)
-			fatal("pthread_create(): %m");
-		sleep(1);
-	}
-	slurm_attr_destroy(&agent_attr);
+
+	slurm_thread_create_detached(NULL, _agent_thread, agent_data_ptr);
 }
 
 /*
@@ -550,7 +541,7 @@ srun_job_t * _read_job_srun_agent(void)
 		}
 	}
 
-	slurm_shutdown_msg_engine(resp_socket);
+	close(resp_socket);
 	buffer = create_buf(job_data, buf_size);
 	srun_job = _unpack_srun_job_rec(buffer);
 	free_buf(buffer);	/* This does xfree(job_data) */
@@ -743,7 +734,7 @@ bad_line:
 }
 
 /*
- * Read a line from SLURM MPMD command file or write the equivalent POE line.
+ * Read a line from Slurm MPMD command file or write the equivalent POE line.
  * line IN/OUT - line to read or write
  * length IN - size of line in bytes
  * step_id IN - -1 if input line, otherwise the step ID to output
@@ -804,7 +795,7 @@ static bool _multi_prog_parse(char *line, int length, int step_id, int task_id)
 	}
 }
 
-/* Convert a SLURM format MPMD file into a POE MPMD command file */
+/* Convert a Slurm format MPMD file into a POE MPMD command file */
 static void _re_write_cmdfile(char *slurm_cmd_fname, char *poe_cmd_fname,
 			      uint32_t step_id, int task_cnt)
 {
@@ -822,7 +813,7 @@ static void _re_write_cmdfile(char *slurm_cmd_fname, char *poe_cmd_fname,
 		return;
 	}
 
-	/* Read and parse SLURM MPMD format file here */
+	/* Read and parse Slurm MPMD format file here */
 	while (fgets(in_line, sizeof(in_line), fp))
 		_multi_prog_parse(in_line, 512, -1, task_cnt);
 	fclose(fp);
@@ -933,14 +924,14 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 		debug("got pe_rm_connect called");
 		launch_common_set_stdio_fds(job, &cio_fds, &opt);
 	} else {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: unknown caller");
 		error("%s", *error_msg);
 		return -1;
 	}
 
-	/* translate the ip to a node list which SLURM uses to send
+	/* translate the ip to a node list which Slurm uses to send
 	   messages instead of IP addresses (at this point anyway)
 	*/
 	for (i=0; i<connect_param->machine_count; i++) {
@@ -948,7 +939,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 		if (!name) {
 			if (hl)
 				hostlist_destroy(hl);
-			*error_msg = malloc(sizeof(char) * err_msg_len);
+			*error_msg = malloc(err_msg_len);
 			snprintf(*error_msg, err_msg_len,
 				 "pe_rm_connect: unknown host for ip %s",
 				 connect_param->machine_name[i]);
@@ -968,7 +959,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	}
 
 	if (!hl) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: machine_count 0? it came in as "
 			 "%d but we didn't get a hostlist",
@@ -989,19 +980,19 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	total_node_list = hostlist_ranged_string_xmalloc(total_hl);
 	node_cnt = hostlist_count(total_hl);
 
-	opt.argc = my_argc;
-	opt.argv = my_argv;
-	opt.user_managed_io = true;
+	sropt.argc = my_argc;
+	sropt.argv = my_argv;
+	sropt.user_managed_io = true;
 	/* Disable binding of the pvmd12 task so it has access to all resources
 	 * allocated to the job step and can use them for spawned tasks. */
-	opt.cpu_bind_type = CPU_BIND_NONE;
+	sropt.cpu_bind_type = CPU_BIND_NONE;
 	orig_task_num = task_num;
 	if (slurm_step_ctx_daemon_per_node_hack(job->step_ctx,
 						total_node_list,
 						node_cnt, &task_num)
 	    != SLURM_SUCCESS) {
 		xfree(total_node_list);
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: problem with hack: %s",
 			 slurm_strerror(errno));
@@ -1018,7 +1009,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 
 	if (launch_g_step_launch(job, &cio_fds, &global_rc,
 				 &step_callbacks, &opt)) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: problem with launch: %s",
 			 slurm_strerror(errno));
@@ -1030,7 +1021,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 				SLURM_STEP_CTX_USER_MANAGED_SOCKETS,
 				&fd_cnt, &ctx_sockfds);
 	if (ctx_sockfds == NULL) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: Unable to get pmd IO socket array %d",
 			 rc);
@@ -1038,7 +1029,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 		return -1;
 	}
 	if (fd_cnt != task_num) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: looking for %d sockets but "
 			 "got back %d",
@@ -1053,7 +1044,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	   dangling reference set here.  This shouldn't matter, but
 	   Clang reported it so we are making things quite here.
 	*/
-	opt.argv = NULL;
+	sropt.argv = NULL;
 	return 0;
 }
 
@@ -1075,7 +1066,7 @@ extern void pe_rm_free(rmhandle_t *resource_mgr)
 		/* Since we can't relaunch the step here don't worry about the
 		   return code.
 		*/
-		launch_g_step_wait(job, got_alloc, &opt, -1);
+		launch_g_step_wait(job, got_alloc, &opt);
 		/* We are at the end so don't worry about freeing the
 		   srun_job_t pointer */
 		fini_srun(job, got_alloc, &rc, slurm_started);
@@ -1187,7 +1178,7 @@ extern int pe_rm_get_event(rmhandle_t resource_mgr, job_event_t **job_event,
 		debug("pe_rm_get_event called");
 		return 0;
 	} else if (pm_type != PM_POE) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_get_event: unknown caller");
 		error("%s", *error_msg);
@@ -1261,7 +1252,7 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 		debug("pe_rm_get_job_info called");
 		return 0;
 	} else if (pm_type != PM_POE) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_get_job_info: unknown caller");
 		error("%s", *error_msg);
@@ -1291,7 +1282,7 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 
 	slurm_step_ctx_get(job->step_ctx, SLURM_STEP_CTX_RESP, &resp);
 	if (!resp) {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_get_job_info: no step response in step ctx");
 		error("%s", *error_msg);
@@ -1412,7 +1403,7 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 		setenv("SLURM_JOB_NODELIST", job->nodelist, 1);
 	}
 
-	if (!opt.preserve_env) {
+	if (!sropt.preserve_env) {
 		snprintf(value, sizeof(value), "%u", job->ntasks);
 		setenv("SLURM_NTASKS", value, 1);
 		snprintf(value, sizeof(value), "%u", job->nhosts);
@@ -1504,7 +1495,7 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 	if (geteuid() == 0)
 		error("POE will not run as user root");
 
-	/* SLURM was originally written against 1300, so we will
+	/* Slurm was originally written against 1300, so we will
 	 * return that, no matter what comes in so we always work.
 	 */
 	*rmapi_version = 1300;
@@ -1660,7 +1651,7 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 			xfree(opt.network);
 			if (adapter_use) {
 				if (!xstrcmp(adapter_use, "dedicated"))
-					opt.exclusive = true;
+					sropt.exclusive = true;
 				xfree(adapter_use);
 			}
 			if (collectives) {
@@ -1717,14 +1708,14 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 	/* This has to be done after init_srun so as to not get over
 	   written. */
 	if (getenv("SLURM_PRESERVE_ENV"))
-		opt.preserve_env = true;
+		sropt.preserve_env = true;
 	if ((tmp_char = getenv("SRUN_EXC_NODES")))
 		opt.exc_nodes = xstrdup(tmp_char);
 	if ((tmp_char = getenv("SRUN_WITH_NODES")))
 		opt.nodelist = xstrdup(tmp_char);
 	if ((tmp_char = getenv("SRUN_RELATIVE"))) {
-		opt.relative = atoi(tmp_char);
-		opt.relative_set = 1;
+		sropt.relative = atoi(tmp_char);
+		sropt.relative_set = 1;
 	}
 
 	if (pm_type == PM_PMD) {
@@ -1735,7 +1726,7 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 		if ((srun_debug = getenv("SLURM_STEP_ID")))
 			step_id = atoi(srun_debug);
 		if (job_id == -1 || step_id == -1) {
-			*error_msg = malloc(sizeof(char) * err_msg_len);
+			*error_msg = malloc(err_msg_len);
 			snprintf(*error_msg, err_msg_len,
 				 "pe_rm_init: SLURM_JOB_ID or SLURM_STEP_ID "
 				 "not found %d.%d", job_id, step_id);
@@ -1745,7 +1736,7 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 
 		job = _read_job_srun_agent();
 		if (!job) {
-			*error_msg = malloc(sizeof(char) * err_msg_len);
+			*error_msg = malloc(err_msg_len);
 			snprintf(*error_msg, err_msg_len,
 				 "pe_rm_init: no job created");
 			error("%s", *error_msg);
@@ -1755,14 +1746,14 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 		job->jobid = job_id;
 		job->stepid = step_id;
 
-		opt.ifname = opt.ofname = opt.efname = "/dev/null";
+		sropt.ifname = sropt.ofname = sropt.efname = "/dev/null";
 		job_update_io_fnames(job, &opt);
 	} else if (pm_type == PM_POE) {
 		/* Create agent thread to forward job credential needed for
 		 * PMD to fanout child processes on other nodes */
 		_spawn_fe_agent();
 	} else {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_init: unknown caller");
 		error("%s", *error_msg);
@@ -1849,7 +1840,7 @@ int pe_rm_submit_job(rmhandle_t resource_mgr, job_command_t job_cmd,
 		if (slurm_cmd_fname)
 			poe_cmd_fname = getenv("MP_CMDFILE");
 	} else {
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_submit_job: unknown caller");
 		error("%s", *error_msg);
@@ -1859,9 +1850,9 @@ int pe_rm_submit_job(rmhandle_t resource_mgr, job_command_t job_cmd,
 	debug("got pe_rm_submit_job called %d", job_cmd.job_format);
 	if (job_cmd.job_format != 1) {
 		/* We don't handle files */
-		*error_msg = malloc(sizeof(char) * err_msg_len);
+		*error_msg = malloc(err_msg_len);
 		snprintf(*error_msg, err_msg_len,
-			 "pe_rm_submit_job: SLURM doesn't handle files "
+			 "pe_rm_submit_job: Slurm doesn't handle files "
 			 "to submit_job");
 		error("%s", *error_msg);
 		return -1;

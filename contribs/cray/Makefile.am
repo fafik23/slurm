@@ -2,7 +2,7 @@
 # Makefile for cray tools
 #
 
-SUBDIRS = csm
+SUBDIRS = csm slurmsmwd
 
 AUTOMAKE_OPTIONS = foreign
 
@@ -32,7 +32,6 @@ endif
 EXTRA_DIST = \
 	$(NATIVE_EXTRA_DIST)		\
 	etc_sysconfig_slurm		\
-	libalps_test_programs.tar.gz	\
 	opt_modulefiles_slurm.in	\
 	pam_job.c 			\
 	plugstack.conf.template		\

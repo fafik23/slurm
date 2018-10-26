@@ -5,11 +5,11 @@
  *  Copyright (C) 2015-2017 Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  \*****************************************************************************/
 
@@ -41,7 +41,7 @@
 #include "pmixp_common.h"
 
 void pmixp_xfree_xmalloced(void *x);
-void pmixp_free_Buf(void *x);
+void pmixp_free_buf(void *x);
 int pmixp_usock_create_srv(char *path);
 size_t pmixp_read_buf(int fd, void *buf, size_t count, int *shutdown,
 		      bool blocking);
@@ -118,6 +118,7 @@ static inline void pmixp_list_init_pre(pmixp_list_t *l,
 				       pmixp_list_elem_t *h,
 				       pmixp_list_elem_t *t)
 {
+	xassert(l && h && t);
 	l->head = h;
 	l->tail = t;
 
@@ -136,13 +137,11 @@ static inline void pmixp_list_fini_pre(pmixp_list_t *l,
 				       pmixp_list_elem_t **h,
 				       pmixp_list_elem_t **t)
 {
-#if PMIXP_LIST_DEBUG
 	/* list supposed to be empty */
 	xassert(l->head && l->tail);
 	xassert(l->head->next == l->tail);
 	xassert(l->head == l->tail->prev);
 	xassert(!l->count);
-#endif
 
 	*h = l->head;
 	*t = l->tail;
@@ -169,6 +168,7 @@ static inline void pmixp_list_fini(pmixp_list_t *l)
 static inline void pmixp_list_enq(pmixp_list_t *l, pmixp_list_elem_t *elem)
 {
 #if PMIXP_LIST_DEBUG
+	xassert(elem);
 	xassert(l->head && l->tail);
 	xassert(!l->head->data && !l->tail->data);
 	xassert(!l->tail->next && !l->head->prev);
@@ -340,21 +340,23 @@ static inline void pmixp_rlist_init(
 	pmixp_rlist_t *l, pmixp_list_t *elem_src, size_t pre_alloc)
 {
 	pmixp_list_elem_t *h, *t;
-
+	xassert(l && elem_src && pre_alloc);
 	l->src_list = elem_src;
 	l->pre_alloc = pre_alloc;
 
 	/* initialize local list */
 	h = __pmixp_rlist_get_free(elem_src, pre_alloc);
 	t = __pmixp_rlist_get_free(elem_src, pre_alloc);
+	xassert(h && t);
 	pmixp_list_init_pre(&l->list,h, t);
 }
 
 static inline void pmixp_rlist_fini(pmixp_rlist_t *l)
 {
 	pmixp_list_elem_t *h, *t;
-
+	xassert(l);
 	pmixp_list_fini_pre(&l->list, &h, &t);
+	xassert(h && t);
 	pmixp_list_enq(l->src_list, h);
 	pmixp_list_enq(l->src_list, t);
 }
@@ -403,7 +405,9 @@ static inline void *pmixp_rlist_pop(pmixp_rlist_t *l)
 {
 	pmixp_list_elem_t *elem = NULL;
 	void *val = NULL;
-
+#if PMIXP_LIST_DEBUG
+	xassert(l);
+#endif
 	/* user is responsible to ensure that
 	 * list is not empty
 	 */
@@ -415,17 +419,26 @@ static inline void *pmixp_rlist_pop(pmixp_rlist_t *l)
 
 static inline pmixp_list_elem_t *pmixp_rlist_begin(pmixp_rlist_t *l)
 {
+#if PMIXP_LIST_DEBUG
+	xassert(l);
+#endif
 	return pmixp_list_begin(&l->list);
 }
 
 static inline pmixp_list_elem_t *pmixp_rlist_end(pmixp_rlist_t *l)
 {
+#if PMIXP_LIST_DEBUG
+	xassert(l);
+#endif
 	return pmixp_list_end(&l->list);
 }
 
 static inline pmixp_list_elem_t *pmixp_rlist_next(
 	pmixp_rlist_t *l, pmixp_list_elem_t *cur)
 {
+#if PMIXP_LIST_DEBUG
+	xassert(l && cur);
+#endif
 	return pmixp_list_next(&l->list, cur);
 }
 
@@ -433,6 +446,9 @@ static inline pmixp_list_elem_t *pmixp_rlist_rem(
 	pmixp_rlist_t *l, pmixp_list_elem_t *elem)
 {
 	pmixp_list_elem_t *ret = NULL;
+#if PMIXP_LIST_DEBUG
+	xassert(l && elem);
+#endif
 	ret = pmixp_list_rem(&l->list, elem);
 	pmixp_list_enq(l->src_list, elem);
 	return ret;

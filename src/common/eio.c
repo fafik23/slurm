@@ -6,11 +6,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -115,7 +115,7 @@ eio_handle_t *eio_handle_create(uint16_t shutdown_wait)
 	fd_set_close_on_exec(eio->fds[0]);
 	fd_set_close_on_exec(eio->fds[1]);
 
-	xassert(eio->magic = EIO_MAGIC);
+	xassert((eio->magic = EIO_MAGIC));
 
 	eio->obj_list = list_create(eio_obj_destroy);
 	eio->new_objs = list_create(eio_obj_destroy);
@@ -138,7 +138,7 @@ void eio_handle_destroy(eio_handle_t *eio)
 	FREE_NULL_LIST(eio->new_objs);
 	slurm_mutex_destroy(&eio->shutdown_mutex);
 
-	xassert(eio->magic = ~EIO_MAGIC);
+	xassert((eio->magic = ~EIO_MAGIC));
 	xfree(eio);
 }
 
@@ -198,12 +198,14 @@ int eio_message_socket_accept(eio_obj_t *obj, List objs)
 	fd_set_close_on_exec(fd);
 	fd_set_blocking(fd);
 
-	/* Should not call slurm_get_addr() because the IP may not be
-	 * in /etc/hosts. */
+	/*
+	 * Should not call slurm_get_addr() because the IP may not be
+	 * in /etc/hosts.
+	 */
 	uc = (unsigned char *)&addr.sin_addr.s_addr;
 	port = addr.sin_port;
-	debug2("got message connection from %u.%u.%u.%u:%hu %d",
-	       uc[0], uc[1], uc[2], uc[3], ntohs(port), fd);
+	debug2("%s: got message connection from %u.%u.%u.%u:%hu %d",
+	       __func__, uc[0], uc[1], uc[2], uc[3], ntohs(port), fd);
 	fflush(stdout);
 
 	msg = xmalloc(sizeof(slurm_msg_t));
@@ -212,16 +214,16 @@ again:
 	if (slurm_receive_msg(fd, msg, obj->ops->timeout) != 0) {
 		if (errno == EINTR)
 			goto again;
-		error("slurm_receive_msg[%u.%u.%u.%u]: %m",
-		      uc[0], uc[1], uc[2], uc[3]);
+		error("%s: slurm_receive_msg[%u.%u.%u.%u]: %m",
+		      __func__, uc[0], uc[1], uc[2], uc[3]);
 		goto cleanup;
 	}
 
 	(*obj->ops->handle_msg)(obj->arg, msg);
 
 cleanup:
-	if ((msg->conn_fd >= 0) && (close(msg->conn_fd) < 0))
-		error ("close(%d): %m", msg->conn_fd);
+	if ((msg->conn_fd >= STDERR_FILENO) && (close(msg->conn_fd) < 0))
+		error("%s: close(%d): %m", __func__, msg->conn_fd);
 	slurm_free_msg(msg);
 
 	return SLURM_SUCCESS;
@@ -234,7 +236,7 @@ int eio_signal_shutdown(eio_handle_t *eio)
 	slurm_mutex_lock(&eio->shutdown_mutex);
 	eio->shutdown_time = time(NULL);
 	slurm_mutex_unlock(&eio->shutdown_mutex);
-	if (eio && (write(eio->fds[1], &c, sizeof(char)) != 1))
+	if (write(eio->fds[1], &c, sizeof(char)) != 1)
 		return error("eio_handle_signal_shutdown: write; %m");
 	return 0;
 }
@@ -596,4 +598,3 @@ bool eio_remove_obj(eio_obj_t *obj, List objs)
 	list_iterator_destroy(i);
 	return ret;
 }
-

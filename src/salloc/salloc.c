@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  salloc.c - Request a SLURM job allocation and
+ *  salloc.c - Request a Slurm job allocation and
  *             launch a user-specified command.
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
@@ -8,11 +8,11 @@
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -28,13 +28,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -42,6 +42,7 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -63,6 +64,8 @@
 #include "src/common/read_config.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
+#include "src/common/tres_bind.h"
+#include "src/common/tres_frequency.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
@@ -70,22 +73,6 @@
 
 #include "src/salloc/salloc.h"
 #include "src/salloc/opt.h"
-
-#ifdef HAVE_BG
-#include "src/common/node_select.h"
-#include "src/plugins/select/bluegene/bg_enums.h"
-#elif defined(HAVE_ALPS_CRAY)
-#include "src/common/node_select.h"
-
-#ifdef HAVE_REAL_CRAY
-/*
- * On Cray installations, the libjob headers are not automatically installed
- * by default, while libjob.so always is, and kernels are > 2.6. Hence it is
- * simpler to just duplicate the single declaration here.
- */
-extern uint64_t job_getjid(pid_t pid);
-#endif
-#endif
 
 #ifndef __USE_XOPEN_EXTENDED
 extern pid_t getpgid(pid_t pid);
@@ -134,14 +121,7 @@ static void _set_submit_dir_env(void);
 static void _signal_while_allocating(int signo);
 static void _timeout_handler(srun_timeout_msg_t *msg);
 static void _user_msg_handler(srun_user_msg_t *msg);
-
-#ifdef HAVE_BG
-static int _wait_bluegene_block_ready(
-			resource_allocation_response_msg_t *alloc);
-static int _blocks_dealloc(void);
-#else
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc);
-#endif
 
 bool salloc_shutdown = false;
 /* Signals that are considered terminal before resource allocation. */
@@ -256,7 +236,7 @@ int main(int argc, char **argv)
 			env_cache_set = true;
 			if (xstrcmp(user, "nobody") == 0) {
 				error("Invalid user id %u: %m",
-				      (uint32_t)opt.uid);
+				      (uint32_t) opt.uid);
 				exit(error_exit);
 			}
 
@@ -283,6 +263,10 @@ int main(int argc, char **argv)
 		slurm_init_job_desc_msg(desc);
 		if (_fill_job_desc_from_opts(desc) == -1)
 			exit(error_exit);
+		if (pack_inx || !pack_fini)
+			set_env_from_opts(&opt, &env, pack_inx);
+		else
+			set_env_from_opts(&opt, &env, -1);
 		if (job_req_list)
 			list_append(job_req_list, desc);
 		if (!first_job)
@@ -293,6 +277,8 @@ int main(int argc, char **argv)
 		exit(error_exit);    /* error already logged */
 	}
 	_match_job_name(job_req_list, opt.job_name);
+	if (!job_req_list)
+		desc->bitflags &= (~JOB_SALLOC_FLAG);
 
 	/*
 	 * Job control for interactive salloc sessions: only if ...
@@ -312,16 +298,12 @@ int main(int argc, char **argv)
 		 * after first making sure stdin is not redirected.
 		 */
 	} else if ((tpgid = tcgetpgrp(STDIN_FILENO)) < 0) {
-#ifdef HAVE_ALPS_CRAY
-		verbose("no controlling terminal");
-#else
-		if (!opt.no_shell) {
+		if (!saopt.no_shell) {
 			error("no controlling terminal: please set --no-shell");
 			exit(error_exit);
 		}
-#endif
 #ifdef SALLOC_RUN_FOREGROUND
-	} else if ((!opt.no_shell) && (pid == getpgrp())) {
+	} else if ((!saopt.no_shell) && (pid == getpgrp())) {
 		if (tpgid == pid)
 			is_interactive = true;
 		while (tcgetpgrp(STDIN_FILENO) != pid) {
@@ -334,7 +316,7 @@ int main(int argc, char **argv)
 		}
 	}
 #else
-	} else if ((!opt.no_shell) && (getpgrp() == tcgetpgrp(STDIN_FILENO))) {
+	} else if ((!saopt.no_shell) && (getpgrp() == tcgetpgrp(STDIN_FILENO))) {
 		is_interactive = true;
 	}
 #endif
@@ -411,8 +393,13 @@ int main(int argc, char **argv)
 		sleep(++retries);
 	}
 
-	/* become the user after the allocation has been requested. */
-	if (opt.uid != (uid_t) -1) {
+	/* If the requested uid is different than ours, become that uid */
+	if ((getuid() != opt.uid) && (opt.uid != (uid_t) -1)) {
+		/* drop extended groups before changing uid/gid */
+		if ((setgroups(0, NULL) < 0)) {
+			error("setgroups: %m");
+			exit(error_exit);
+		}
 		if (setuid(opt.uid) < 0) {
 			error("setuid: %m");
 			exit(error_exit);
@@ -461,6 +448,8 @@ int main(int argc, char **argv)
 	} else if (!allocation_interrupted) {
 		/* Allocation granted to regular job */
 		my_job_id = alloc->job_id;
+
+		print_multi_line_string(alloc->job_submit_user_msg, -1);
 		info("Granted job allocation %u", my_job_id);
 
 		if (_proc_alloc(alloc) != SLURM_SUCCESS)
@@ -468,12 +457,12 @@ int main(int argc, char **argv)
 	}
 
 	after = time(NULL);
-	if ((opt.bell == BELL_ALWAYS) ||
-	     ((opt.bell == BELL_AFTER_DELAY) &&
+	if ((saopt.bell == BELL_ALWAYS) ||
+	     ((saopt.bell == BELL_AFTER_DELAY) &&
 	      ((after - before) > DEFAULT_BELL_DELAY))) {
 		_ring_terminal_bell();
 	}
-	if (opt.no_shell)
+	if (saopt.no_shell)
 		exit(0);
 	if (allocation_interrupted) {
 		/* salloc process received a signal after
@@ -659,19 +648,12 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
 			working_cluster_rec->rpc_version);
 	}
 
-#ifdef HAVE_BG
-	if (!_wait_bluegene_block_ready(alloc)) {
-		if (!allocation_interrupted)
-			error("Something is wrong with the boot of the block.");
-		return SLURM_ERROR;
-	}
-#else
 	if (!_wait_nodes_ready(alloc)) {
 		if (!allocation_interrupted)
 			error("Something is wrong with the boot of the nodes.");
 		return SLURM_ERROR;
 	}
-#endif
+
 	return SLURM_SUCCESS;
 }
 
@@ -694,10 +676,11 @@ static void _match_job_name(List job_req_list, char *job_name)
 
 	iter = list_iterator_create(job_req_list);
 	while ((desc = (job_desc_msg_t *) list_next(iter))) {
-		if ((i++ < cnt) && !xstrcmp(desc->name, "sh")) {
+		if ((i++ < cnt) && (desc->bitflags & JOB_SALLOC_FLAG)) {
 			xfree(desc->name);
 			desc->name = xstrdup(job_name);
 		}
+		desc->bitflags &= (~JOB_SALLOC_FLAG);
 	}
 	list_iterator_destroy(iter);
 }
@@ -758,37 +741,26 @@ static void _set_submit_dir_env(void)
 /* Returns 0 on success, -1 on failure */
 static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 {
-#if defined HAVE_ALPS_CRAY && defined HAVE_REAL_CRAY
-	uint64_t pagg_id = job_getjid(getpid());
-	/*
-	 * Interactive sessions require pam_job.so in /etc/pam.d/common-session
-	 * since creating sgi_job containers requires root permissions. This is
-	 * the only exception where we allow the fallback of using the SID to
-	 * confirm the reservation (caught later, in do_basil_confirm).
-	 */
-	if (pagg_id == (uint64_t)-1) {
-		error("No SGI job container ID detected - please enable the "
-		      "Cray job service via /etc/init.d/job");
-	} else {
-		if (!desc->select_jobinfo)
-			desc->select_jobinfo = select_g_select_jobinfo_alloc();
-
-		select_g_select_jobinfo_set(desc->select_jobinfo,
-					    SELECT_JOBDATA_PAGG_ID, &pagg_id);
-	}
-#endif
 	desc->contiguous = opt.contiguous ? 1 : 0;
 	if (opt.core_spec != NO_VAL16)
 		desc->core_spec = opt.core_spec;
+	desc->extra = xstrdup(opt.extra);
 	desc->features = xstrdup(opt.constraints);
 	desc->cluster_features = xstrdup(opt.c_constraints);
-	desc->gres = xstrdup(opt.gres);
 	if (opt.immediate == 1)
 		desc->immediate = 1;
+	if (saopt.default_job_name)
+		desc->bitflags |= JOB_SALLOC_FLAG;
 	desc->name = xstrdup(opt.job_name);
 	desc->reservation = xstrdup(opt.reservation);
 	desc->profile  = opt.profile;
 	desc->wckey  = xstrdup(opt.wckey);
+
+	desc->x11 = opt.x11;
+	if (desc->x11) {
+		desc->x11_magic_cookie = xstrdup(opt.x11_magic_cookie);
+		desc->x11_target_port = opt.x11_target_port;
+	}
 
 	desc->cpu_freq_min = opt.cpu_freq_min;
 	desc->cpu_freq_max = opt.cpu_freq_max;
@@ -802,12 +774,13 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->req_nodes = xstrdup(opt.nodelist);
 	desc->exc_nodes = xstrdup(opt.exc_nodes);
 	desc->partition = xstrdup(opt.partition);
-	desc->min_nodes = opt.min_nodes;
 
-	if (opt.max_nodes)
-		desc->max_nodes = opt.max_nodes;
-	else if (opt.nodes_set)
-		desc->max_nodes = opt.min_nodes;
+	if (opt.nodes_set) {
+		desc->min_nodes = opt.min_nodes;
+		if (opt.max_nodes)
+			desc->max_nodes = opt.max_nodes;
+	} else if (opt.ntasks_set && (opt.ntasks == 0))
+		desc->min_nodes = 0;
 
 	desc->user_id = opt.uid;
 	desc->group_id = opt.gid;
@@ -856,37 +829,18 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.hold)
 		desc->priority     = 0;
-#ifdef HAVE_BG
-	if (opt.geometry[0] > 0) {
-		int i;
-		for (i = 0; i < SYSTEM_DIMENSIONS; i++)
-			desc->geometry[i] = opt.geometry[i];
-	}
-#endif
-	memcpy(desc->conn_type, opt.conn_type, sizeof(desc->conn_type));
-
 	if (opt.reboot)
 		desc->reboot = 1;
-	if (opt.no_rotate)
-		desc->rotate = 0;
-	if (opt.blrtsimage)
-		desc->blrtsimage = xstrdup(opt.blrtsimage);
-	if (opt.linuximage)
-		desc->linuximage = xstrdup(opt.linuximage);
-	if (opt.mloaderimage)
-		desc->mloaderimage = xstrdup(opt.mloaderimage);
-	if (opt.ramdiskimage)
-		desc->ramdiskimage = xstrdup(opt.ramdiskimage);
 
 	/* job constraints */
-	if (opt.mincpus > -1)
-		desc->pn_min_cpus = opt.mincpus;
-	if (opt.realmem > -1)
-		desc->pn_min_memory = opt.realmem;
+	if (opt.pn_min_cpus > -1)
+		desc->pn_min_cpus = opt.pn_min_cpus;
+	if (opt.pn_min_memory > -1)
+		desc->pn_min_memory = opt.pn_min_memory;
 	else if (opt.mem_per_cpu > -1)
 		desc->pn_min_memory = opt.mem_per_cpu | MEM_PER_CPU;
-	if (opt.tmpdisk > -1)
-		desc->pn_min_tmp_disk = opt.tmpdisk;
+	if (opt.pn_min_tmp_disk > -1)
+		desc->pn_min_tmp_disk = opt.pn_min_tmp_disk;
 	if (opt.overcommit) {
 		desc->min_cpus = opt.min_nodes;
 		desc->overcommit = opt.overcommit;
@@ -920,11 +874,11 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	if (opt.time_min  != NO_VAL)
 		desc->time_min = opt.time_min;
 	if (opt.job_flags)
-		desc->bitflags = opt.job_flags;
+		desc->bitflags |= opt.job_flags;
 	desc->shared = opt.shared;
 	desc->job_id = opt.jobid;
 
-	desc->wait_all_nodes = opt.wait_all_nodes;
+	desc->wait_all_nodes = saopt.wait_all_nodes;
 	if (opt.warn_signal)
 		desc->warn_signal = opt.warn_signal;
 	if (opt.warn_time)
@@ -948,6 +902,36 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->bitflags |= JOB_NTASKS_SET;
 
 	desc->clusters = xstrdup(opt.clusters);
+
+	if (opt.cpus_per_gpu)
+		xstrfmtcat(desc->cpus_per_tres, "gpu:%d", opt.cpus_per_gpu);
+	if (opt.gpu_bind)
+		xstrfmtcat(opt.tres_bind, "gpu:%s", opt.gpu_bind);
+	if (tres_bind_verify_cmdline(opt.tres_bind)) {
+		error("Invalid --tres-bind argument: %s. Ignored",
+		      opt.tres_bind);
+		xfree(opt.tres_bind);
+	}
+	desc->tres_bind = xstrdup(opt.tres_bind);
+	xfmt_tres_freq(&opt.tres_freq, "gpu", opt.gpu_freq);
+	if (tres_freq_verify_cmdline(opt.tres_freq)) {
+		error("Invalid --tres-freq argument: %s. Ignored",
+		      opt.tres_freq);
+		xfree(opt.tres_freq);
+	}
+	desc->tres_freq = xstrdup(opt.tres_freq);
+	xfmt_tres(&desc->tres_per_job,    "gpu", opt.gpus);
+	xfmt_tres(&desc->tres_per_node,   "gpu", opt.gpus_per_node);
+	if (opt.gres) {
+		if (desc->tres_per_node)
+			xstrfmtcat(desc->tres_per_node, ",%s", opt.gres);
+		else
+			desc->tres_per_node = xstrdup(opt.gres);
+	}
+	xfmt_tres(&desc->tres_per_socket, "gpu", opt.gpus_per_socket);
+	xfmt_tres(&desc->tres_per_task,   "gpu", opt.gpus_per_task);
+	if (opt.mem_per_gpu)
+		xstrfmtcat(desc->mem_per_tres, "gpu:%"PRIi64, opt.mem_per_gpu);
 
 	return 0;
 }
@@ -1071,8 +1055,8 @@ static void _job_complete_handler(srun_job_complete_msg_t *comp)
 					killpg(tpgid, SIGHUP);
 			}
 
-			if (opt.kill_command_signal_set)
-				signal = opt.kill_command_signal;
+			if (saopt.kill_command_signal_set)
+				signal = saopt.kill_command_signal;
 #ifdef SALLOC_KILL_CMD
 			else if (is_interactive)
 				signal = SIGHUP;
@@ -1127,8 +1111,7 @@ static void _user_msg_handler(srun_user_msg_t *msg)
 
 static void _ping_handler(srun_ping_msg_t *msg)
 {
-	/* the api will respond so there really isn't anything to do
-	   here */
+	/* the api will respond so there really is nothing to do here */
 }
 
 static void _node_fail_handler(srun_node_fail_msg_t *msg)
@@ -1139,16 +1122,20 @@ static void _node_fail_handler(srun_node_fail_msg_t *msg)
 static void _set_rlimits(char **env)
 {
 	slurm_rlimits_info_t *rli;
-	char env_name[25] = "SLURM_RLIMIT_";
+	char env_name[32] = "SLURM_RLIMIT_";
 	char *env_value, *p;
 	struct rlimit r;
-	//unsigned long env_num;
 	rlim_t env_num;
+	int header_len = sizeof("SLURM_RLIMIT_");
 
 	for (rli = get_slurm_rlimits_info(); rli->name; rli++) {
 		if (rli->propagate_flag != PROPAGATE_RLIMITS)
 			continue;
-		strcpy(&env_name[sizeof("SLURM_RLIMIT_")-1], rli->name);
+		if ((header_len + strlen(rli->name)) >= sizeof(env_name)) {
+			error("%s: env_name(%s) too long", __func__, env_name);
+			continue;
+		}
+		strcpy(&env_name[header_len - 1], rli->name);
 		env_value = getenvp(env, env_name);
 		if (env_value == NULL)
 			continue;
@@ -1173,100 +1160,6 @@ static void _set_rlimits(char **env)
 	}
 }
 
-#ifdef HAVE_BG
-/* returns 1 if job and nodes are ready for job to begin, 0 otherwise */
-static int _wait_bluegene_block_ready(resource_allocation_response_msg_t *alloc)
-{
-	int is_ready = 0, i, rc;
-	char *block_id = NULL;
-	int cur_delay = 0;
-	int max_delay = BG_FREE_PREVIOUS_BLOCK + BG_MIN_BLOCK_BOOT +
-			(BG_INCR_BLOCK_BOOT * alloc->node_cnt);
-
-	select_g_select_jobinfo_get(alloc->select_jobinfo,
-				    SELECT_JOBDATA_BLOCK_ID,
-				    &block_id);
-
-	for (i = 0; (cur_delay < max_delay); i++) {
-		if (i == 1)
-			info("Waiting for block %s to become ready for job",
-			     block_id);
-		if (i) {
-			sleep(POLL_SLEEP);
-			rc = _blocks_dealloc();
-			if ((rc == 0) || (rc == -1))
-				cur_delay += POLL_SLEEP;
-			debug("still waiting");
-		}
-
-		rc = slurm_job_node_ready(alloc->job_id);
-
-		if (rc == READY_JOB_FATAL)
-			break;				/* fatal error */
-		if ((rc == READY_JOB_ERROR) || (rc == EAGAIN))
-			continue;			/* retry */
-		if ((rc & READY_JOB_STATE) == 0)	/* job killed */
-			break;
-		if (rc & READY_NODE_STATE) {		/* job and node ready */
-			is_ready = 1;
-			break;
-		}
-		if (allocation_interrupted || allocation_revoked)
-			break;
-	}
-	if (is_ready)
-     		info("Block %s is ready for job", block_id);
-	else if (!allocation_interrupted)
-		error("Block %s still not ready", block_id);
-	else	/* allocation_interrupted and slurmctld not responing */
-		is_ready = 0;
-
-	xfree(block_id);
-
-	return is_ready;
-}
-
-/*
- * Test if any BG blocks are in deallocating state since they are
- * probably related to this job we will want to sleep longer
- * RET	1:  deallocate in progress
- *	0:  no deallocate in progress
- *     -1: error occurred
- */
-static int _blocks_dealloc(void)
-{
-	static block_info_msg_t *bg_info_ptr = NULL, *new_bg_ptr = NULL;
-	int rc = 0, error_code = 0, i;
-
-	if (bg_info_ptr) {
-		error_code = slurm_load_block_info(bg_info_ptr->last_update,
-						   &new_bg_ptr, SHOW_ALL);
-		if (error_code == SLURM_SUCCESS)
-			slurm_free_block_info_msg(bg_info_ptr);
-		else if (slurm_get_errno() == SLURM_NO_CHANGE_IN_DATA) {
-			error_code = SLURM_SUCCESS;
-			new_bg_ptr = bg_info_ptr;
-		}
-	} else {
-		error_code = slurm_load_block_info((time_t) NULL,
-						   &new_bg_ptr, SHOW_ALL);
-	}
-
-	if (error_code) {
-		error("slurm_load_block_info: %s",
-		      slurm_strerror(slurm_get_errno()));
-		return -1;
-	}
-	for (i = 0; i<new_bg_ptr->record_count; i++) {
-		if (new_bg_ptr->block_array[i].state == BG_BLOCK_TERM) {
-			rc = 1;
-			break;
-		}
-	}
-	bg_info_ptr = new_bg_ptr;
-	return rc;
-}
-#else
 /* returns 1 if job and nodes are ready for job to begin, 0 otherwise */
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 {
@@ -1285,9 +1178,9 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 	}
 
 	if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD"))
-		opt.wait_all_nodes = 1;	/* Wait for boot & addresses */
-	if (opt.wait_all_nodes == (uint16_t) NO_VAL)
-		opt.wait_all_nodes = 0;
+		saopt.wait_all_nodes = 1;	/* Wait for boot & addresses */
+	if (saopt.wait_all_nodes == NO_VAL16)
+		saopt.wait_all_nodes = 0;
 
 	for (i = 0; (cur_delay < max_delay); i++) {
 		if (i) {
@@ -1309,7 +1202,7 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 			break;
 		}
 		if ((rc & READY_JOB_STATE) && 
-		    ((rc & READY_NODE_STATE) || !opt.wait_all_nodes)) {
+		    ((rc & READY_NODE_STATE) || !saopt.wait_all_nodes)) {
 			is_ready = 1;
 			break;
 		}
@@ -1341,4 +1234,3 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 
 	return is_ready;
 }
-#endif	/* HAVE_BG */

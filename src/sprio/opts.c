@@ -7,11 +7,11 @@
  *  Written by Don Lipari <lipari1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -108,6 +108,7 @@ parse_command_line( int argc, char* *argv )
 		{"clusters",   required_argument, 0, 'M'},
 		{"norm",       no_argument,       0, 'n'},
 		{"format",     required_argument, 0, 'o'},
+		{"sort",       required_argument, 0, 'S'},
 		{"partition",  required_argument, 0, 'p'},
 		{"user",       required_argument, 0, 'u'},
 		{"users",      required_argument, 0, 'u'},
@@ -126,7 +127,7 @@ parse_command_line( int argc, char* *argv )
 	/* get defaults from environment */
 	_opt_env();
 
-	while ((opt_char = getopt_long(argc, argv, "hj::lM:no:p:u:vVw",
+	while ((opt_char = getopt_long(argc, argv, "hj::lM:no:S:p:u:vVw",
 				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
@@ -161,6 +162,10 @@ parse_command_line( int argc, char* *argv )
 		case (int) 'o':
 			xfree(params.format);
 			params.format = xstrdup(optarg);
+			break;
+		case (int) 'S':
+			xfree(params.sort);
+			params.sort = xstrdup(optarg);
 			break;
 		case (int) 'p':
 			xfree(params.parts);
@@ -246,9 +251,7 @@ extern int parse_format( char* format )
 		job_format_add_prefix( params.format_list, 0, 0, prefix);
 	}
 
-	field_size = strlen( format );
-	tmp_format = xmalloc( field_size + 1 );
-	strcpy( tmp_format, format );
+	tmp_format = xstrdup(format);
 
 	token = strtok_r( tmp_format, "%", &tmp_char);
 	if (token && (format[0] != '%'))	/* toss header */

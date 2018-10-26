@@ -4,11 +4,11 @@
  *  Copyright (C) 2017      Mellanox Technologies. All rights reserved.
  *  Written by Artem Polyakov <artpol84@gmail.com, artemp@mellanox.com>.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  \*****************************************************************************/
 
@@ -156,10 +156,13 @@ static int _load_ucx_lib()
 	 * To avoid that we need to disable memory hooks before
 	 * loading UCX library.
 	 */
+	setenv("UCX_MEM_MMAP_RELOC", "no", 1);
 	setenv("UCX_MEM_MALLOC_HOOKS", "no", 1);
+	setenv("UCX_MEM_MALLOC_RELOC", "no", 1);
+	setenv("UCX_MEM_EVENTS", "no", 1);
 
 #ifdef PMIXP_UCX_LIBPATH
-	/* If this SLURM build doesn't allow RPATH's
+	/* If this Slurm build doesn't allow RPATH's
 	 * try to open library by it's full path that
 	 * we have from autoconf
 	 */
@@ -219,7 +222,7 @@ int pmixp_dconn_ucx_prepare(pmixp_dconn_handlers_t *handlers,
 	pmixp_rlist_init(&_rcv_complete, &_free_list, PMIXP_UCX_LIST_PREALLOC);
 
 
-	status = ucp_config_read(NULL, NULL, &config);
+	status = ucp_config_read("SLURM", NULL, &config);
 	if (status != UCS_OK) {
 		PMIXP_ERROR("Fail to read UCX config: %s",
 			    ucs_status_string(status));
@@ -637,8 +640,7 @@ static void _ucx_fini(void *_priv)
 		slurm_mutex_unlock(&_ucx_worker_lock);
 	} else {
 		slurm_mutex_lock(&_ucx_worker_lock);
-		pmixp_rlist_init(&priv->pending, &_free_list,
-				 PMIXP_UCX_LIST_PREALLOC);
+		pmixp_rlist_fini(&priv->pending);
 		slurm_mutex_unlock(&_ucx_worker_lock);
 	}
 	xfree(priv);
@@ -664,8 +666,9 @@ static int _ucx_connect(void *_priv, void *ep_data, size_t ep_len,
 	if (status != UCS_OK) {
 		PMIXP_ERROR("ucp_ep_create failed: %s",
 			    ucs_status_string(status));
-		rc = SLURM_ERROR;
-		goto exit;
+		xfree(priv->ucx_addr);
+		slurm_mutex_unlock(&_ucx_worker_lock);
+		return SLURM_ERROR;
 	}
 	priv->connected = true;
 
@@ -673,7 +676,6 @@ static int _ucx_connect(void *_priv, void *ep_data, size_t ep_len,
 	if (init_msg) {
 		pmixp_rlist_push(&priv->pending, init_msg);
 	}
-exit:
 	slurm_mutex_unlock(&_ucx_worker_lock);
 
 	/* we need to send data while being unlocked */

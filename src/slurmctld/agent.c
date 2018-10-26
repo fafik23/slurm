@@ -10,11 +10,11 @@
  *  Derived from pdsh written by Jim Garlick <garlick1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -30,13 +30,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *****************************************************************************
  *  Theory of operation:
@@ -101,6 +101,10 @@
 #include "src/slurmctld/srun_comm.h"
 
 #define MAX_RETRIES		100
+#define MAX_RPC_PACK_CNT	100
+#define RPC_PACK_MAX_AGE	30	/* Rebuild data over 30 seconds old */
+#define DUMP_RPC_COUNT 		25
+#define HOSTLIST_MAX_SIZE 	80
 
 typedef enum {
 	DSH_NEW,        /* Request not yet started */
@@ -122,7 +126,6 @@ typedef struct thd_complete {
 
 typedef struct thd {
 	pthread_t thread;		/* thread ID */
-	pthread_attr_t attr;		/* thread attributes */
 	state_t state;			/* thread state */
 	time_t start_time;		/* start time */
 	time_t end_time;		/* end time or delta time
@@ -171,8 +174,10 @@ typedef struct mail_info {
 	char *message;
 } mail_info_t;
 
+static void _agent_defer(void);
 static void _agent_retry(int min_wait, bool wait_too);
 static int  _batch_launch_defer(queued_request_t *queued_req_ptr);
+static int  _signal_defer(queued_request_t *queued_req_ptr);
 static inline int _comm_err(char *node_name, slurm_msg_type_t msg_type);
 static void _list_delete_retry(void *retry_entry);
 static agent_info_t *_make_agent_info(agent_arg_t *agent_arg_ptr);
@@ -185,7 +190,6 @@ static void _queue_agent_retry(agent_info_t * agent_info_ptr, int count);
 static int  _setup_requeue(agent_arg_t *agent_arg_ptr, thd_t *thread_ptr,
 			   int *count, int *spot);
 static void _sig_handler(int dummy);
-static void _spawn_retry_agent(agent_arg_t * agent_arg_ptr);
 static void *_thread_per_group_rpc(void *args);
 static int   _valid_agent_arg(agent_arg_t *agent_arg_ptr);
 static void *_wdog(void *args);
@@ -194,11 +198,16 @@ static mail_info_t *_mail_alloc(void);
 static void  _mail_free(void *arg);
 static void *_mail_proc(void *arg);
 static char *_mail_type_str(uint16_t mail_type);
+static char **_build_mail_env(void);
 
-static pthread_mutex_t retry_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t defer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mail_mutex  = PTHREAD_MUTEX_INITIALIZER;
-static List retry_list = NULL;		/* agent_arg_t list for retry */
+static pthread_mutex_t retry_mutex = PTHREAD_MUTEX_INITIALIZER;
+static List defer_list = NULL;		/* agent_arg_t list for requests
+					 * requiring job write lock */
 static List mail_list = NULL;		/* pending e-mail requests */
+static List retry_list = NULL;		/* agent_arg_t list for retry */
+
 
 static pthread_mutex_t agent_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  agent_cnt_cond  = PTHREAD_COND_INITIALIZER;
@@ -210,9 +219,16 @@ static pthread_mutex_t pending_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  pending_cond = PTHREAD_COND_INITIALIZER;
 static int pending_wait_time = NO_VAL16;
 static bool pending_mail = false;
-static pthread_t pending_thread_id = (pthread_t) 0;
+static bool pending_thread_running = false;
 
 static bool run_scheduler    = false;
+
+static uint32_t *rpc_stat_counts = NULL, *rpc_stat_types = NULL;
+static uint32_t stat_type_count = 0;
+static uint32_t rpc_count = 0;
+static uint32_t *rpc_type_list;
+static char **rpc_host_list = NULL;
+static time_t cache_build_time = 0;
 
 /*
  * agent - party responsible for transmitting an common RPC in parallel
@@ -224,8 +240,7 @@ static bool run_scheduler    = false;
  */
 void *agent(void *args)
 {
-	int i, delay, rc, retries = 0;
-	pthread_attr_t attr_wdog;
+	int i, delay;
 	pthread_t thread_wdog = 0;
 	agent_arg_t *agent_arg_ptr = args;
 	agent_info_t *agent_info_ptr = NULL;
@@ -268,28 +283,67 @@ void *agent(void *args)
 	if (_valid_agent_arg(agent_arg_ptr))
 		goto cleanup;
 
+#if defined HAVE_NATIVE_CRAY
+	if (agent_arg_ptr->msg_type == REQUEST_REBOOT_NODES) {
+		char *argv[3], *pname;
+		pid_t child;
+		int i, rc, status = 0;
+
+		if (!agent_arg_ptr->hostlist) {
+			error("%s: hostlist is NULL", __func__);
+			goto cleanup;
+		}
+		if (!slurmctld_conf.reboot_program) {
+			error("%s: RebootProgram is NULL", __func__);
+			goto cleanup;
+		}
+
+		pname = strrchr(slurmctld_conf.reboot_program, '/');
+		if (pname)
+			argv[0] = pname + 1;
+		else
+			argv[0] = slurmctld_conf.reboot_program;
+		argv[1] = hostlist_deranged_string_xmalloc(
+					agent_arg_ptr->hostlist);
+		argv[2] = NULL;
+
+		child = fork();
+		if (child == 0) {
+			for (i = 0; i < 1024; i++)
+				(void) close(i);
+			(void) setpgid(0, 0);
+			(void) execv(slurmctld_conf.reboot_program, argv);
+			exit(1);
+		} else if (child < 0) {
+			error("fork: %m");
+		} else {
+			(void) waitpid(child, &status, 0);
+			if (WIFEXITED(status)) {
+				rc = WEXITSTATUS(status);
+				if (rc != 0) {
+					error("RebootProgram exit status of %d",
+					      rc);
+				}
+			} else if (WIFSIGNALED(status)) {
+				error("RebootProgram signaled: %s",
+				      strsignal(WTERMSIG(status)));
+			}
+		}
+		xfree(argv[1]);
+		goto cleanup;
+	}
+#endif
+
 	/* initialize the agent data structures */
 	agent_info_ptr = _make_agent_info(agent_arg_ptr);
 	thread_ptr = agent_info_ptr->thread_struct;
 
 	/* start the watchdog thread */
-	slurm_attr_init(&attr_wdog);
-	if (pthread_attr_setdetachstate
-	    (&attr_wdog, PTHREAD_CREATE_JOINABLE))
-		error("pthread_attr_setdetachstate error %m");
-	while (pthread_create(&thread_wdog, &attr_wdog, _wdog,
-			      (void *) agent_info_ptr)) {
-		error("pthread_create error %m");
-		if (++retries > MAX_RETRIES)
-			fatal("Can't create pthread");
-		usleep(10000);	/* sleep and retry */
-	}
-	slurm_attr_destroy(&attr_wdog);
+	slurm_thread_create(&thread_wdog, _wdog, agent_info_ptr);
 
 	debug2("got %d threads to send out", agent_info_ptr->thread_count);
 	/* start all the other threads (up to AGENT_THREAD_COUNT active) */
 	for (i = 0; i < agent_info_ptr->thread_count; i++) {
-
 		/* wait until "room" for another thread */
 		slurm_mutex_lock(&agent_info_ptr->thread_mutex);
 		while (agent_info_ptr->threads_active >=
@@ -302,27 +356,9 @@ void *agent(void *args)
 		 *      _thread_per_group_rpc() */
 		task_specific_ptr = _make_task_data(agent_info_ptr, i);
 
-		slurm_attr_init(&thread_ptr[i].attr);
-		if (pthread_attr_setdetachstate(&thread_ptr[i].attr,
-						PTHREAD_CREATE_DETACHED))
-			error("pthread_attr_setdetachstate error %m");
-		while ((rc = pthread_create(&thread_ptr[i].thread,
-					    &thread_ptr[i].attr,
-					    _thread_per_group_rpc,
-					    (void *) task_specific_ptr))) {
-			error("pthread_create error %m");
-			if (agent_info_ptr->threads_active)
-				slurm_cond_wait(&agent_info_ptr->thread_cond,
-						&agent_info_ptr->thread_mutex);
-			else {
-				slurm_mutex_unlock(&agent_info_ptr->
-						     thread_mutex);
-				usleep(10000);	/* sleep and retry */
-				slurm_mutex_lock(&agent_info_ptr->
-						   thread_mutex);
-			}
-		}
-		slurm_attr_destroy(&thread_ptr[i].attr);
+		slurm_thread_create_detached(&thread_ptr[i].thread,
+					     _thread_per_group_rpc,
+					     task_specific_ptr);
 		agent_info_ptr->threads_active++;
 		slurm_mutex_unlock(&agent_info_ptr->thread_mutex);
 	}
@@ -384,12 +420,12 @@ static int _valid_agent_arg(agent_arg_t *agent_arg_ptr)
 	xassert(agent_arg_ptr->hostlist);
 
 	if (agent_arg_ptr->node_count == 0)
-		return SLURM_FAILURE;	/* no messages to be sent */
+		return SLURM_ERROR;	/* no messages to be sent */
 	hostlist_cnt = hostlist_count(agent_arg_ptr->hostlist);
 	if (agent_arg_ptr->node_count != hostlist_cnt) {
 		error("%s: node_count RPC different from hosts listed (%d!=%d)",
 		     __func__, agent_arg_ptr->node_count, hostlist_cnt);
-		return SLURM_FAILURE;	/* no messages to be sent */
+		return SLURM_ERROR;	/* no messages to be sent */
 	}
 	return SLURM_SUCCESS;
 }
@@ -541,7 +577,7 @@ static void _update_wdog_state(thd_t *thread_ptr,
  * _wdog - Watchdog thread. Send SIGUSR1 to threads which have been active
  *	for too long.
  * IN args - pointer to agent_info_t with info on threads to watch
- * Sleep between polls with exponential times (from 0.125 to 1.0 second)
+ * Sleep between polls with exponential times (from 0.005 to 1.0 second)
  */
 static void *_wdog(void *args)
 {
@@ -682,7 +718,7 @@ static void _notify_slurmctld_nodes(agent_info_t *agent_ptr,
 	int is_ret_list = 1;
 	/* Locks: Read config, write job, write node */
 	slurmctld_lock_t node_write_lock =
-	    { READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+	    { READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 	thd_t *thread_ptr = agent_ptr->thread_struct;
 	int i;
 
@@ -847,7 +883,7 @@ static void *_thread_per_group_rpc(void *args)
 	int sig_array[2] = {SIGUSR1, 0};
 	/* Locks: Write job, write node */
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 	/* Lock: Read node */
 	slurmctld_lock_t node_read_lock = {
 		NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
@@ -888,7 +924,8 @@ static void *_thread_per_group_rpc(void *args)
 	msg.msg_type = msg_type;
 	msg.data     = task_ptr->msg_args_ptr;
 #if 0
- 	info("sending message type %u to %s", msg_type, thread_ptr->nodelist);
+	info("%s: sending %s to %s", __func__, rpc_num2string(msg_type),
+	     thread_ptr->nodelist);
 #endif
 	if (task_ptr->get_reply) {
 		if (thread_ptr->addr) {
@@ -896,18 +933,14 @@ static void *_thread_per_group_rpc(void *args)
 
 			if (!(ret_list = slurm_send_addr_recv_msgs(
 				     &msg, thread_ptr->nodelist, 0))) {
-				error("_thread_per_group_rpc: "
-				      "no ret_list given");
+				error("%s: no ret_list given", __func__);
 				goto cleanup;
 			}
-
-
 		} else {
 			if (!(ret_list = slurm_send_recv_msgs(
 				     thread_ptr->nodelist,
 				     &msg, 0, true))) {
-				error("_thread_per_group_rpc: "
-				      "no ret_list given");
+				error("%s: no ret_list given", __func__);
 				goto cleanup;
 			}
 		}
@@ -919,15 +952,28 @@ static void *_thread_per_group_rpc(void *args)
 			//info("no address given");
 			if (slurm_conf_get_addr(thread_ptr->nodelist,
 					       &msg.address) == SLURM_ERROR) {
-				error("_thread_per_group_rpc: "
-				      "can't find address for host %s, "
-				      "check slurm.conf",
-				      thread_ptr->nodelist);
+				error("%s: can't find address for host %s, check slurm.conf",
+				      __func__, thread_ptr->nodelist);
 				goto cleanup;
 			}
 		}
 		//info("sending %u to %s", msg_type, thread_ptr->nodelist);
-		if (slurm_send_only_node_msg(&msg) == SLURM_SUCCESS) {
+		if (msg_type == SRUN_JOB_COMPLETE) {
+			/*
+			 * The srun runs as a single thread, while the kernel
+			 * listen() may be queuing messages for further
+			 * processing. If we get our SYN in the listen queue
+			 * at the same time the last MESSAGE_TASK_EXIT is being
+			 * processed, srun may exit meaning this message is
+			 * never received, leading to a series of error
+			 * messages from slurm_send_only_node_msg().
+			 * So, we use this different function that blindly
+			 * flings the message out and disregards any
+			 * communication problems that may arise.
+			 */
+			slurm_send_msg_maybe(&msg);
+			thread_state = DSH_DONE;
+		} else if (slurm_send_only_node_msg(&msg) == SLURM_SUCCESS) {
 			thread_state = DSH_DONE;
 		} else {
 			if (!srun_agent) {
@@ -965,9 +1011,7 @@ static void *_thread_per_group_rpc(void *args)
 			rc = SLURM_SUCCESS;
 			lock_slurmctld(job_write_lock);
 			if (job_epilog_complete(kill_job->job_id,
-						ret_data_info->
-						node_name,
-						rc))
+						ret_data_info->node_name, rc))
 				run_scheduler = true;
 			unlock_slurmctld(job_write_lock);
 		}
@@ -988,8 +1032,8 @@ static void *_thread_per_group_rpc(void *args)
 		    (ret_data_info->type != RESPONSE_FORWARD_FAILED)) {
 			batch_job_launch_msg_t *launch_msg_ptr =
 				task_ptr->msg_args_ptr;
-			uint32_t job_id = launch_msg_ptr->job_id;
-			info("Killing non-startable batch job %u: %s",
+			job_id = launch_msg_ptr->job_id;
+			info("Killing non-startable batch JobId=%u: %s",
 			     job_id, slurm_strerror(rc));
 			thread_state = DSH_DONE;
 			ret_data_info->err = thread_state;
@@ -1006,7 +1050,7 @@ static void *_thread_per_group_rpc(void *args)
 			resource_allocation_response_msg_t *msg_ptr =
 				task_ptr->msg_args_ptr;
 			job_id = msg_ptr->job_id;
-			info("Killing interactive job %u: %s",
+			info("Killing interactive JobId=%u: %s",
 			     job_id, slurm_strerror(rc));
 			thread_state = DSH_FAILED;
 			lock_slurmctld(job_write_lock);
@@ -1026,7 +1070,7 @@ static void *_thread_per_group_rpc(void *args)
 				continue;
 			msg_ptr = list_peek(pack_alloc_list);
 			job_id = msg_ptr->job_id;
-			info("Killing interactive job %u: %s",
+			info("Killing interactive JobId=%u: %s",
 			     job_id, slurm_strerror(rc));
 			thread_state = DSH_FAILED;
 			lock_slurmctld(job_write_lock);
@@ -1034,6 +1078,36 @@ static void *_thread_per_group_rpc(void *args)
 				     false, false, _wif_status());
 			unlock_slurmctld(job_write_lock);
 			continue;
+		}
+
+		if (msg_type == REQUEST_SIGNAL_TASKS) {
+			struct job_record *job_ptr;
+			signal_tasks_msg_t *msg_ptr =
+				task_ptr->msg_args_ptr;
+
+			if ((msg_ptr->signal == SIGCONT) ||
+			    (msg_ptr->signal == SIGSTOP)) {
+				job_id = msg_ptr->job_id;
+				lock_slurmctld(job_write_lock);
+				job_ptr = find_job_record(job_id);
+				if (job_ptr == NULL) {
+					info("%s: invalid JobId=%u",
+					     __func__, job_id);
+				} else if (rc == SLURM_SUCCESS) {
+					if (msg_ptr->signal == SIGSTOP) {
+						job_ptr->job_state |=
+							JOB_STOPPED;
+					} else { // SIGCONT
+						job_ptr->job_state &=
+							~JOB_STOPPED;
+					}
+				}
+
+				if (job_ptr)
+					job_ptr->job_state &= ~JOB_SIGNALING;
+
+				unlock_slurmctld(job_write_lock);
+			}
 		}
 
 		if (((msg_type == REQUEST_SIGNAL_TASKS) ||
@@ -1108,7 +1182,20 @@ static void *_thread_per_group_rpc(void *args)
 
 cleanup:
 	xfree(args);
-
+	if (!ret_list && (msg_type == REQUEST_SIGNAL_TASKS)) {
+		struct job_record *job_ptr;
+		signal_tasks_msg_t *msg_ptr =
+			task_ptr->msg_args_ptr;
+		if ((msg_ptr->signal == SIGCONT) ||
+		    (msg_ptr->signal == SIGSTOP)) {
+			job_id = msg_ptr->job_id;
+			lock_slurmctld(job_write_lock);
+			job_ptr = find_job_record(job_id);
+			if (job_ptr)
+				job_ptr->job_state &= ~JOB_SIGNALING;
+			unlock_slurmctld(job_write_lock);
+		}
+	}
 	/* handled at end of thread just in case resend is needed */
 	destroy_forward(&msg.forward);
 	slurm_mutex_lock(thread_mutex_ptr);
@@ -1125,7 +1212,7 @@ cleanup:
 
 /*
  * Signal handler.  We are really interested in interrupting hung communictions
- * and causing them to return EINTR. Multiple interupts might be required.
+ * and causing them to return EINTR. Multiple interrupts might be required.
  */
 static void _sig_handler(int dummy)
 {
@@ -1286,6 +1373,7 @@ static void *_agent_init(void *arg)
 	int min_wait;
 	bool mail_too;
 	struct timespec ts = {0, 0};
+	time_t last_defer_attempt = (time_t) 0;
 
 	while (true) {
 		slurm_mutex_lock(&pending_mutex);
@@ -1305,32 +1393,32 @@ static void *_agent_init(void *arg)
 		pending_wait_time = NO_VAL16;
 		slurm_mutex_unlock(&pending_mutex);
 
+		if (last_defer_attempt + 2 < last_job_update) {
+			last_defer_attempt = time(NULL);
+			_agent_defer();
+		}
+
 		_agent_retry(min_wait, mail_too);
 	}
 
 	slurm_mutex_lock(&pending_mutex);
-	pending_thread_id = (pthread_t) 0;
+	pending_thread_running = false;
 	slurm_mutex_unlock(&pending_mutex);
 	return NULL;
 }
+
 extern void agent_init(void)
 {
-	pthread_attr_t thread_attr;
-
 	slurm_mutex_lock(&pending_mutex);
-	if (pending_thread_id != (pthread_t) 0) {
+	if (pending_thread_running) {
 		error("%s: thread already running", __func__);
 		slurm_mutex_unlock(&pending_mutex);
 		return;
 	}
 
-	slurm_attr_init(&thread_attr);
-	if (pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
-	if (pthread_create(&pending_thread_id, &thread_attr, _agent_init, NULL))
-		fatal("pthread_create error %m");
+	slurm_thread_create_detached(NULL, _agent_init, NULL);
+	pending_thread_running = true;
 	slurm_mutex_unlock(&pending_mutex);
-	slurm_attr_destroy(&thread_attr);
 }
 
 /*
@@ -1352,23 +1440,135 @@ extern void agent_trigger(int min_wait, bool mail_too)
 	slurm_mutex_unlock(&pending_mutex);
 }
 
+/* agent_pack_pending_rpc_stats - pack counts of pending RPCs into a buffer */
+extern void agent_pack_pending_rpc_stats(Buf buffer)
+{
+	time_t now;
+	int i;
+	queued_request_t *queued_req_ptr = NULL;
+	agent_arg_t *agent_arg_ptr = NULL;
+	ListIterator list_iter;
+
+	now = time(NULL);
+	if (difftime(now, cache_build_time) <= RPC_PACK_MAX_AGE)
+		goto pack_it;	/* Send cached data */
+	cache_build_time = now;
+
+	if (rpc_stat_counts) {	/* Clear existing data */
+		stat_type_count = 0;
+		memset(rpc_stat_counts, 0, sizeof(uint32_t) * MAX_RPC_PACK_CNT);
+		memset(rpc_stat_types,  0, sizeof(uint32_t) * MAX_RPC_PACK_CNT);
+
+		rpc_count = 0;
+		/* the other variables need not be cleared */
+	} else {		/* Allocate buffers for data */
+		stat_type_count = 0;
+		rpc_stat_counts = xmalloc(sizeof(uint32_t) * MAX_RPC_PACK_CNT);
+		rpc_stat_types  = xmalloc(sizeof(uint32_t) * MAX_RPC_PACK_CNT);
+
+		rpc_count = 0;
+		rpc_host_list = xmalloc(sizeof(char *) * DUMP_RPC_COUNT);
+		for (i = 0; i < DUMP_RPC_COUNT; i++) {
+			rpc_host_list[i] = xmalloc(HOSTLIST_MAX_SIZE);
+		}
+		rpc_type_list = xmalloc(sizeof(uint32_t) * DUMP_RPC_COUNT);
+	}
+
+	slurm_mutex_lock(&retry_mutex);
+	if (retry_list) {
+		list_iter = list_iterator_create(retry_list);
+		/* iterate through list, find type slot or make a new one */
+		while ((queued_req_ptr = (queued_request_t *)
+					 list_next(list_iter))) {
+			agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
+			if (rpc_count < DUMP_RPC_COUNT) {
+				rpc_type_list[rpc_count] =
+						agent_arg_ptr->msg_type;
+				hostlist_ranged_string(agent_arg_ptr->hostlist,
+						HOSTLIST_MAX_SIZE,
+						rpc_host_list[rpc_count]);
+				rpc_count++;
+			}
+			for (i = 0; i < MAX_RPC_PACK_CNT; i++) {
+				if (rpc_stat_types[i] == 0) {
+					rpc_stat_types[i] =
+						agent_arg_ptr->msg_type;
+					stat_type_count++;
+				} else if (rpc_stat_types[i] !=
+					   agent_arg_ptr->msg_type)
+					continue;
+				rpc_stat_counts[i]++;
+				break;
+			}
+		}
+		list_iterator_destroy(list_iter);
+	}
+	slurm_mutex_unlock(&retry_mutex);
+
+pack_it:
+	pack32_array(rpc_stat_types,  stat_type_count, buffer);
+	pack32_array(rpc_stat_counts, stat_type_count, buffer);
+
+	pack32_array(rpc_type_list, rpc_count, buffer);
+	packstr_array(rpc_host_list, rpc_count, buffer);
+}
+
+static void _agent_defer(void)
+{
+	int rc = -1;
+	queued_request_t *queued_req_ptr = NULL;
+	agent_arg_t *agent_arg_ptr = NULL;
+	/* Write lock on jobs */
+	slurmctld_lock_t job_write_lock = { .job = WRITE_LOCK };
+
+	lock_slurmctld(job_write_lock);
+	slurm_mutex_lock(&defer_mutex);
+	if (defer_list) {
+		/* first try to find a new (never tried) record */
+		while ((queued_req_ptr = list_pop(defer_list))) {
+			agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
+			if (agent_arg_ptr->msg_type ==
+			    REQUEST_BATCH_JOB_LAUNCH)
+				rc = _batch_launch_defer(queued_req_ptr);
+			else if (agent_arg_ptr->msg_type ==
+				 REQUEST_SIGNAL_TASKS)
+				rc = _signal_defer(queued_req_ptr);
+			else
+				fatal("%s: Invalid message type (%u)",
+				      __func__, agent_arg_ptr->msg_type);
+
+			if (rc == -1) {   /* abort request */
+				_purge_agent_args(
+					queued_req_ptr->agent_arg_ptr);
+				xfree(queued_req_ptr);
+			} else if (rc == 0) {
+				/* ready to process now, move to retry_list */
+				slurm_mutex_lock(&retry_mutex);
+				if (!retry_list)
+					retry_list =
+						list_create(_list_delete_retry);
+				list_append(retry_list, queued_req_ptr);
+				slurm_mutex_unlock(&retry_mutex);
+			}
+		}
+	}
+
+	slurm_mutex_unlock(&defer_mutex);
+	unlock_slurmctld(job_write_lock);
+
+	return;
+}
+
 /* Do the work requested by agent_retry (retry pending RPCs).
  * This is a separate thread so the job records can be locked */
 static void _agent_retry(int min_wait, bool mail_too)
 {
-	int rc;
 	time_t now = time(NULL);
 	queued_request_t *queued_req_ptr = NULL;
 	agent_arg_t *agent_arg_ptr = NULL;
 	ListIterator retry_iter;
-	pthread_t thread_mail = 0;
-	pthread_attr_t attr_mail;
 	mail_info_t *mi = NULL;
-	/* Write lock on jobs */
-	slurmctld_lock_t job_write_lock =
-		{ NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
-	lock_slurmctld(job_write_lock);
 	slurm_mutex_lock(&retry_mutex);
 	if (retry_list) {
 		static time_t last_msg_time = (time_t) 0;
@@ -1401,7 +1601,6 @@ static void _agent_retry(int min_wait, bool mail_too)
 		/* too much work already */
 		slurm_mutex_unlock(&agent_cnt_mutex);
 		slurm_mutex_unlock(&retry_mutex);
-		unlock_slurmctld(job_write_lock);
 		return;
 	}
 	slurm_mutex_unlock(&agent_cnt_mutex);
@@ -1411,19 +1610,9 @@ static void _agent_retry(int min_wait, bool mail_too)
 		retry_iter = list_iterator_create(retry_list);
 		while ((queued_req_ptr = (queued_request_t *)
 				list_next(retry_iter))) {
-			rc = _batch_launch_defer(queued_req_ptr);
-			if (rc == -1) {		/* abort request */
-				_purge_agent_args(queued_req_ptr->
-						  agent_arg_ptr);
-				xfree(queued_req_ptr);
-				list_remove(retry_iter);
-				continue;
-			}
-			if (rc > 0)
-				continue;
  			if (queued_req_ptr->last_attempt == 0) {
 				list_remove(retry_iter);
-				break;
+				break;		/* Process this request now */
 			}
 		}
 		list_iterator_destroy(retry_iter);
@@ -1438,16 +1627,6 @@ static void _agent_retry(int min_wait, bool mail_too)
 		/* next try to find an older record to retry */
 		while ((queued_req_ptr = (queued_request_t *)
 				list_next(retry_iter))) {
-			rc = _batch_launch_defer(queued_req_ptr);
-			if (rc == -1) { 	/* abort request */
-				_purge_agent_args(queued_req_ptr->
-						  agent_arg_ptr);
-				xfree(queued_req_ptr);
-				list_remove(retry_iter);
-				continue;
-			}
-			if (rc > 0)
-				continue;
 			age = difftime(now, queued_req_ptr->last_attempt);
 			if (age > min_wait) {
 				list_remove(retry_iter);
@@ -1457,37 +1636,26 @@ static void _agent_retry(int min_wait, bool mail_too)
 		list_iterator_destroy(retry_iter);
 	}
 	slurm_mutex_unlock(&retry_mutex);
-	unlock_slurmctld(job_write_lock);
 
 	if (queued_req_ptr) {
 		agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
 		xfree(queued_req_ptr);
 		if (agent_arg_ptr) {
-			_spawn_retry_agent(agent_arg_ptr);
+			debug2("Spawning RPC agent for msg_type %s",
+			       rpc_num2string(agent_arg_ptr->msg_type));
+			slurm_thread_create_detached(NULL, agent, agent_arg_ptr);
 		} else
 			error("agent_retry found record with no agent_args");
 	} else if (mail_too) {
 		slurm_mutex_lock(&agent_cnt_mutex);
 		slurm_mutex_lock(&mail_mutex);
 		while (mail_list && (agent_thread_cnt < MAX_SERVER_THREADS)) {
-			int retries = 0;
 			mi = (mail_info_t *) list_dequeue(mail_list);
 			if (!mi)
 				break;
 
 			agent_thread_cnt++;
-			slurm_attr_init(&attr_mail);
-			if (pthread_attr_setdetachstate
-			    (&attr_mail, PTHREAD_CREATE_DETACHED))
-				error("pthread_attr_setdetachstate error %m");
-			while (pthread_create(&thread_mail, &attr_mail,
-					      _mail_proc, (void *) mi)) {
-				error("pthread_create error %m");
-				if (++retries > MAX_RETRIES)
-					fatal("Can't create pthread");
-				usleep(10000);	/* sleep and retry */
-			}
-			slurm_attr_destroy(&attr_mail);
+			slurm_thread_create_detached(NULL, _mail_proc, mi);
 		}
 		slurm_mutex_unlock(&mail_mutex);
 		slurm_mutex_unlock(&agent_cnt_mutex);
@@ -1514,76 +1682,65 @@ void agent_queue_request(agent_arg_t *agent_arg_ptr)
 
 	if (agent_arg_ptr->msg_type == REQUEST_SHUTDOWN) {
 		/* execute now */
-		pthread_attr_t attr_agent;
-		pthread_t thread_agent;
-		int rc;
-		slurm_attr_init(&attr_agent);
-		if (pthread_attr_setdetachstate
-				(&attr_agent, PTHREAD_CREATE_DETACHED))
-			error("pthread_attr_setdetachstate error %m");
-		rc = pthread_create(&thread_agent, &attr_agent,
-				    agent, (void *) agent_arg_ptr);
-		slurm_attr_destroy(&attr_agent);
-		if (rc == 0) {
-			usleep(10000);	/* give agent a chance to start */
-			return;
-		}
+		slurm_thread_create_detached(NULL, agent, agent_arg_ptr);
+		/* give agent a chance to start */
+		usleep(10000);
+		return;
 	}
 
 	queued_req_ptr = xmalloc(sizeof(queued_request_t));
 	queued_req_ptr->agent_arg_ptr = agent_arg_ptr;
 /*	queued_req_ptr->last_attempt  = 0; Implicit */
 
-	slurm_mutex_lock(&retry_mutex);
-
-	if (retry_list == NULL)
-		retry_list = list_create(_list_delete_retry);
-	list_append(retry_list, (void *)queued_req_ptr);
-	slurm_mutex_unlock(&retry_mutex);
-
+	if (((agent_arg_ptr->msg_type == REQUEST_BATCH_JOB_LAUNCH) &&
+	     (_batch_launch_defer(queued_req_ptr) != 0)) ||
+	    ((agent_arg_ptr->msg_type == REQUEST_SIGNAL_TASKS) &&
+	     (_signal_defer(queued_req_ptr) != 0))) {
+		slurm_mutex_lock(&defer_mutex);
+		if (defer_list == NULL)
+			defer_list = list_create(_list_delete_retry);
+		list_append(defer_list, (void *)queued_req_ptr);
+		slurm_mutex_unlock(&defer_mutex);
+	} else {
+		slurm_mutex_lock(&retry_mutex);
+		if (retry_list == NULL)
+			retry_list = list_create(_list_delete_retry);
+		list_append(retry_list, (void *)queued_req_ptr);
+		slurm_mutex_unlock(&retry_mutex);
+	}
 	/* now process the request in a separate pthread
 	 * (if we can create another pthread to do so) */
 	agent_trigger(999, false);
 }
 
-/* _spawn_retry_agent - pthread_create an agent for the given task */
-static void _spawn_retry_agent(agent_arg_t * agent_arg_ptr)
-{
-	int retries = 0;
-	pthread_attr_t attr_agent;
-	pthread_t thread_agent;
-
-	if (agent_arg_ptr == NULL)
-		return;
-
-	debug2("Spawning RPC agent for msg_type %s",
-	       rpc_num2string(agent_arg_ptr->msg_type));
-	slurm_attr_init(&attr_agent);
-	if (pthread_attr_setdetachstate(&attr_agent,
-					PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
-	while (pthread_create(&thread_agent, &attr_agent,
-			agent, (void *) agent_arg_ptr)) {
-		error("pthread_create error %m");
-		if (++retries > MAX_RETRIES)
-			fatal("Can't create pthread");
-		usleep(10000);	/* sleep and retry */
-	}
-	slurm_attr_destroy(&attr_agent);
-}
-
 /* agent_purge - purge all pending RPC requests */
 extern void agent_purge(void)
 {
+	int i;
+
 	if (retry_list) {
 		slurm_mutex_lock(&retry_mutex);
 		FREE_NULL_LIST(retry_list);
 		slurm_mutex_unlock(&retry_mutex);
 	}
+	if (defer_list) {
+		slurm_mutex_lock(&defer_mutex);
+		FREE_NULL_LIST(defer_list);
+		slurm_mutex_unlock(&defer_mutex);
+	}
 	if (mail_list) {
 		slurm_mutex_lock(&mail_mutex);
 		FREE_NULL_LIST(mail_list);
 		slurm_mutex_unlock(&mail_mutex);
+	}
+
+	xfree(rpc_stat_counts);
+	xfree(rpc_stat_types);
+	xfree(rpc_type_list);
+	if (rpc_host_list) {
+		for (i = 0; i < DUMP_RPC_COUNT; i++)
+			xfree(rpc_host_list[i]);
+		xfree(rpc_host_list);
 	}
 }
 
@@ -1666,6 +1823,20 @@ static void _mail_free(void *arg)
 	}
 }
 
+static char **_build_mail_env(void)
+{
+	char **my_env;
+
+        my_env = xmalloc(sizeof(char *));
+        my_env[0] = NULL;
+        if (slurmctld_conf.cluster_name) {
+                setenvf(&my_env, "SLURM_CLUSTER_NAME", "%s",
+                        slurmctld_conf.cluster_name);
+        }
+
+	 return my_env;
+}
+
 /* process an email request and free the record */
 static void *_mail_proc(void *arg)
 {
@@ -1677,6 +1848,8 @@ static void *_mail_proc(void *arg)
 		error("fork(): %m");
 	} else if (pid == 0) {	/* child */
 		int fd_0, fd_1, fd_2, i;
+		char **my_env = NULL;
+		my_env = _build_mail_env();
 		for (i = 0; i < 1024; i++)
 			(void) close(i);
 		if ((fd_0 = open("/dev/null", O_RDWR)) == -1)	// fd = 0
@@ -1687,7 +1860,7 @@ static void *_mail_proc(void *arg)
 			error("Couldn't do a dup on fd 2 %m");
 		execle(slurmctld_conf.mail_prog, "mail",
 			"-s", mi->message, mi->user_name,
-			NULL, NULL);
+			NULL, my_env);
 		error("Failed to exec %s: %m",
 			slurmctld_conf.mail_prog);
 		exit(1);
@@ -1788,7 +1961,9 @@ static void _set_job_term_info(struct job_record *job_ptr, uint16_t mail_type,
 		int exit_code_min, exit_code_max;
 
 		base_state = job_ptr->job_state & JOB_STATE_BASE;
-		if (job_ptr->array_recs) {
+		if (job_ptr->array_recs &&
+		    !(job_ptr->mail_type & MAIL_ARRAY_TASKS)) {
+			/* Summarize array tasks. */
 			exit_status_min = job_ptr->array_recs->min_exit_code;
 			exit_status_max = job_ptr->array_recs->max_exit_code;
 			if (WIFEXITED(exit_status_min) &&
@@ -1817,6 +1992,11 @@ static void _set_job_term_info(struct job_record *job_ptr, uint16_t mail_type,
 				snprintf(buf, buf_len, ", %s",
 					 job_state_string(base_state));
 			}
+
+			if (job_ptr->array_recs->array_flags &
+			    ARRAY_TASK_REQUEUED)
+				strncat(buf, ", with requeued tasks",
+					buf_len - strlen(buf) - 1);
 		} else {
 			exit_status_max = job_ptr->exit_code;
 			if (WIFEXITED(exit_status_max)) {
@@ -1874,14 +2054,14 @@ extern void mail_job_info (struct job_record *job_ptr, uint16_t mail_type)
 	_set_job_time(job_ptr, mail_type, job_time, sizeof(job_time));
 	_set_job_term_info(job_ptr, mail_type, term_msg, sizeof(term_msg));
 	if (job_ptr->array_recs && !(job_ptr->mail_type & MAIL_ARRAY_TASKS)) {
-		mi->message = xstrdup_printf("SLURM Job_id=%u_* (%u) Name=%s "
-					     "%s%s%s",
+		mi->message = xstrdup_printf("Slurm Array Summary Job_id=%u_* (%u) Name=%s "
+					     "%s%s",
 					     job_ptr->array_job_id,
 					     job_ptr->job_id, job_ptr->name,
 					     _mail_type_str(mail_type),
-					     job_time, term_msg);
+					     term_msg);
 	} else if (job_ptr->array_task_id != NO_VAL) {
-		mi->message = xstrdup_printf("SLURM Job_id=%u_%u (%u) Name=%s "
+		mi->message = xstrdup_printf("Slurm Array Task Job_id=%u_%u (%u) Name=%s "
 					     "%s%s%s",
 					     job_ptr->array_job_id,
 					     job_ptr->array_task_id,
@@ -1889,7 +2069,7 @@ extern void mail_job_info (struct job_record *job_ptr, uint16_t mail_type)
 					     _mail_type_str(mail_type),
 					     job_time, term_msg);
 	} else {
-		mi->message = xstrdup_printf("SLURM Job_id=%u Name=%s %s%s%s",
+		mi->message = xstrdup_printf("Slurm Job_id=%u Name=%s %s%s%s",
 					     job_ptr->job_id, job_ptr->name,
 					     _mail_type_str(mail_type),
 					     job_time, term_msg);
@@ -1918,9 +2098,6 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 	int nodes_ready = 0, tmp = 0;
 
 	agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
-	if (agent_arg_ptr->msg_type != REQUEST_BATCH_JOB_LAUNCH)
-		return 0;
-
 	if (difftime(now, queued_req_ptr->last_attempt) < 10) {
 		/* Reduce overhead by only testing once every 10 secs */
 		return 1;
@@ -1930,8 +2107,7 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 	job_ptr = find_job_record(launch_msg_ptr->job_id);
 	if ((job_ptr == NULL) ||
 	    (!IS_JOB_RUNNING(job_ptr) && !IS_JOB_SUSPENDED(job_ptr))) {
-		info("agent(batch_launch): removed pending request for "
-		     "cancelled job %u",
+		info("agent(batch_launch): removed pending request for cancelled JobId=%u",
 		     launch_msg_ptr->job_id);
 		return -1;	/* job cancelled while waiting */
 	}
@@ -1963,8 +2139,7 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 					agent_arg_ptr->hostlist);
 		node_ptr = find_node_record(hostname);
 		if (node_ptr == NULL) {
-			error("agent(batch_launch) removed pending request for "
-			      "job %u, missing node %s",
+			error("agent(batch_launch) removed pending request for JobId=%u, missing node %s",
 			      launch_msg_ptr->job_id, hostname);
 			xfree(hostname);
 			return -1;	/* invalid request?? */
@@ -1990,12 +2165,49 @@ static int _batch_launch_defer(queued_request_t *queued_req_ptr)
 	} else if (difftime(now, queued_req_ptr->first_attempt) >=
 				 slurm_get_resume_timeout()) {
 		/* Nodes will get marked DOWN and job requeued, if possible */
-		error("agent waited too long for nodes to respond, abort launch of job %u",
+		error("agent waited too long for nodes to respond, abort launch of JobId=%u",
 		      job_ptr->job_id);
 		return -1;
 	}
 
 	queued_req_ptr->last_attempt  = now;
+	return 1;
+}
+
+/* Test if a job signal request should be defered
+ * RET -1: abort the request
+ *      0: execute the request now
+ *      1: defer the request
+ */
+static int _signal_defer(queued_request_t *queued_req_ptr)
+{
+	agent_arg_t *agent_arg_ptr;
+	signal_tasks_msg_t *signal_msg_ptr;
+	time_t now = time(NULL);
+	struct job_record *job_ptr;
+
+	agent_arg_ptr = queued_req_ptr->agent_arg_ptr;
+	signal_msg_ptr = (signal_tasks_msg_t *)agent_arg_ptr->msg_args;
+	job_ptr = find_job_record(signal_msg_ptr->job_id);
+
+	if (job_ptr == NULL) {
+		info("agent(signal_task): removed pending request for cancelled JobId=%u",
+		     signal_msg_ptr->job_id);
+		return -1;	/* job cancelled while waiting */
+	}
+
+	if (job_ptr->state_reason != WAIT_PROLOG)
+		return 0;
+
+	if (queued_req_ptr->first_attempt == 0) {
+		queued_req_ptr->first_attempt = now;
+	} else if (difftime(now, queued_req_ptr->first_attempt) >=
+				 2 * slurm_get_batch_start_timeout()) {
+		error("agent waited too long for nodes to respond, abort signal of JobId=%u",
+		      job_ptr->job_id);
+		return -1;
+	}
+
 	return 1;
 }
 

@@ -9,11 +9,11 @@
  *  Written by Jason King <jking@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -29,13 +29,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -57,7 +57,7 @@
 char local_dir_path[1024];
 bool nrt_need_state_save = false;
 
-static void _spawn_state_save_thread(char *dir);
+static void *_state_save_thread(void *arg);
 static int  _switch_p_libstate_save(char * dir_name, bool free_flag);
 
 /* Type for error string table entries */
@@ -109,14 +109,14 @@ static slurm_errtab_t slurm_errtab[] = {
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *      <application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "switch" for SLURM switch) and <method> is a description
- * of how this plugin satisfies that application.  SLURM will only load
+ * the plugin (e.g., "switch" for Slurm switch) and <method> is a description
+ * of how this plugin satisfies that application.  Slurm will only load
  * a switch plugin if the plugin_type string has a prefix of "switch/".
  *
  * plugin_version - an unsigned 32-bit integer containing the Slurm version
@@ -296,7 +296,8 @@ extern int switch_p_libstate_restore ( char * dir_name, bool recover )
 		START_TIMER;
 		info("switch_p_libstate_restore() starting");
 	}
-	_spawn_state_save_thread(xstrdup(dir_name));
+	slurm_thread_create_detached(NULL, _state_save_thread,
+				     xstrdup(dir_name));
 	if (!recover)   /* clean start, no recovery */
 		return nrt_init();
 
@@ -500,7 +501,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 	}
 	while (token) {
 		/* bulk_xfer options */
-		if (!strncasecmp(token, "bulk_xfer=", 10)) {
+		if (!xstrncasecmp(token, "bulk_xfer=", 10)) {
 			long int resources;
 			char *end_ptr = NULL;
 			bulk_xfer = true;
@@ -521,7 +522,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			bulk_xfer = true;
 
 		/* device name options */
-		} else if (!strncasecmp(token, "devname=", 8)) {
+		} else if (!xstrncasecmp(token, "devname=", 8)) {
 			char *name_ptr = token + 8;
 			if (nrt_adapter_name_check(name_ptr, list)) {
 				debug("switch/nrt: Found adapter %s in "
@@ -539,7 +540,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* device type options */
-		} else if (!strncasecmp(token, "devtype=", 8)) {
+		} else if (!xstrncasecmp(token, "devtype=", 8)) {
 			char *type_ptr = token + 8;
 			if (!xstrcasecmp(type_ptr, "ib")) {
 				dev_type = NRT_IB;
@@ -565,7 +566,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* instances options */
-		} else if (!strncasecmp(token, "instances=", 10)) {
+		} else if (!xstrncasecmp(token, "instances=", 10)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+10, &end_ptr, 10);
@@ -595,13 +596,13 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 		 *        If you add to this list please add to the list in
 		 *        src/plugins/launch/poe/launch_poe.c
 		 */
-		} else if ((!strncasecmp(token, "lapi",  4)) ||
-			   (!strncasecmp(token, "mpi",   3)) ||
-			   (!strncasecmp(token, "pami",  4)) ||
-			   (!strncasecmp(token, "pgas", 4)) ||
-			   (!strncasecmp(token, "shmem", 5)) ||
-			   (!strncasecmp(token, "test", 4)) ||
-			   (!strncasecmp(token, "upc",   3))) {
+		} else if ((!xstrncasecmp(token, "lapi",  4)) ||
+			   (!xstrncasecmp(token, "mpi",   3)) ||
+			   (!xstrncasecmp(token, "pami",  4)) ||
+			   (!xstrncasecmp(token, "pgas", 4)) ||
+			   (!xstrncasecmp(token, "shmem", 5)) ||
+			   (!xstrncasecmp(token, "test", 4)) ||
+			   (!xstrncasecmp(token, "upc",   3))) {
 			if (protocol)
 				xstrcat(protocol, ",");
 			xstrcat(protocol, token);
@@ -612,7 +613,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			sn_all = false;
 
 		/* Collective Acceleration Units (CAU) */
-		} else if (!strncasecmp(token, "cau=", 4)) {
+		} else if (!xstrncasecmp(token, "cau=", 4)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+4, &end_ptr, 10);
@@ -626,7 +627,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* Immediate Send Slots Per Window */
-		} else if (!strncasecmp(token, "immed=", 6)) {
+		} else if (!xstrncasecmp(token, "immed=", 6)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+6, &end_ptr, 10);
@@ -1045,19 +1046,6 @@ static void *_state_save_thread(void *arg)
 	}
 
 	return NULL;
-}
-
-static void _spawn_state_save_thread(char *dir)
-{
-	pthread_attr_t attr;
-	pthread_t id;
-
-	slurm_attr_init(&attr);
-
-	if (pthread_create(&id, &attr, &_state_save_thread, (void *)dir) != 0)
-		error("Could not start switch/nrt state saving pthread");
-
-	slurm_attr_destroy(&attr);
 }
 
 extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)

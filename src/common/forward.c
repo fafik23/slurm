@@ -7,11 +7,11 @@
  *  Written by Danny Auble <auble1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -54,8 +54,6 @@
 #include "src/common/slurm_protocol_interface.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-
-#define MAX_RETRIES 3
 
 typedef struct {
 	pthread_cond_t *notify;
@@ -182,8 +180,7 @@ void *_forward_thread(void *arg)
 		 */
 		if (slurm_msg_sendto(fd,
 				     get_buf_data(buffer),
-				     get_buf_offset(buffer),
-				     SLURM_PROTOCOL_NO_SEND_RECV_FLAGS ) < 0) {
+				     get_buf_offset(buffer)) < 0) {
 			error("forward_thread: slurm_msg_sendto: %m");
 
 			slurm_mutex_lock(&fwd_struct->forward_mutex);
@@ -497,15 +494,6 @@ static void _start_msg_tree_internal(hostlist_t hl, hostlist_t* sp_hl,
 		fwd_tree_in->timeout  = slurm_get_msg_timeout() * 1000;
 
 	for (j = 0; j < hl_count; j++) {
-		pthread_attr_t attr_agent;
-		pthread_t thread_agent;
-		int retries = 0;
-
-		slurm_attr_init(&attr_agent);
-		if (pthread_attr_setdetachstate
-		    (&attr_agent, PTHREAD_CREATE_DETACHED))
-			error("pthread_attr_setdetachstate error %m");
-
 		fwd_tree = xmalloc(sizeof(fwd_tree_t));
 		memcpy(fwd_tree, fwd_tree_in, sizeof(fwd_tree_t));
 
@@ -529,15 +517,7 @@ static void _start_msg_tree_internal(hostlist_t hl, hostlist_t* sp_hl,
 		(*fwd_tree->p_thr_count)++;
 		slurm_mutex_unlock(fwd_tree->tree_mutex);
 
-		while (pthread_create(&thread_agent, &attr_agent,
-				      _fwd_tree_thread, (void *)fwd_tree)) {
-			error("pthread_create error %m");
-			if (++retries > MAX_RETRIES)
-				fatal("Can't create pthread");
-			usleep(100000);	/* sleep and try again */
-		}
-		slurm_attr_destroy(&attr_agent);
-
+		slurm_thread_create_detached(NULL, _fwd_tree_thread, fwd_tree);
 	}
 }
 
@@ -549,21 +529,12 @@ static void _forward_msg_internal(hostlist_t hl, hostlist_t* sp_hl,
 	int j;
 	forward_msg_t *fwd_msg = NULL;
 	char *buf = NULL, *tmp_char = NULL;
-	pthread_attr_t attr_agent;
-	pthread_t thread_agent;
 
 	if (timeout <= 0)
 		/* convert secs to msec */
 		timeout  = slurm_get_msg_timeout() * 1000;
 
 	for (j = 0; j < hl_count; j++) {
-		int retries = 0;
-
-		slurm_attr_init(&attr_agent);
-		if (pthread_attr_setdetachstate
-		    (&attr_agent, PTHREAD_CREATE_DETACHED))
-			error("pthread_attr_setdetachstate error %m");
-
 		fwd_msg = xmalloc(sizeof(forward_msg_t));
 
 		fwd_msg->fwd_struct = fwd_struct;
@@ -592,15 +563,7 @@ static void _forward_msg_internal(hostlist_t hl, hostlist_t* sp_hl,
 
 		forward_init(&fwd_msg->header.forward, NULL);
 		fwd_msg->header.forward.nodelist = buf;
-		while (pthread_create(&thread_agent, &attr_agent,
-				     _forward_thread,
-				     (void *)fwd_msg)) {
-			error("pthread_create error %m");
-			if (++retries > MAX_RETRIES)
-				fatal("Can't create pthread");
-			usleep(100000);	/* sleep and try again */
-		}
-		slurm_attr_destroy(&attr_agent);
+		slurm_thread_create_detached(NULL, _forward_thread, fwd_msg);
 	}
 }
 

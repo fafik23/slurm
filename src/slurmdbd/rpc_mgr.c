@@ -7,11 +7,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -58,14 +58,6 @@
 #include "src/slurmdbd/rpc_mgr.h"
 #include "src/slurmdbd/slurmdbd.h"
 
-#define MAX_THREAD_COUNT 100
-
-/*
- *  Maximum message size. Messages larger than this value (in bytes)
- *  will not be received.
- */
-#define MAX_MSG_SIZE     (16*1024*1024)
-
 /* Local functions */
 static void _connection_fini_callback(void *arg);
 
@@ -85,7 +77,7 @@ extern void *rpc_mgr(void *no_data)
 
 	/* initialize port for RPCs */
 	if ((sockfd = slurm_init_msg_engine_port(get_dbd_port()))
-	    == SLURM_SOCKET_ERROR)
+	    == SLURM_ERROR)
 		fatal("slurm_init_msg_engine_port error %m");
 
 	slurm_persist_conn_recv_server_init();
@@ -101,7 +93,7 @@ extern void *rpc_mgr(void *no_data)
 		 */
 		if ((newsockfd = slurm_accept_msg_conn(sockfd,
 						       &cli_addr)) ==
-		    SLURM_SOCKET_ERROR) {
+		    SLURM_ERROR) {
 			slurm_persist_conn_free_thread_loc(i);
 			if (errno != EINTR)
 				error("slurm_accept_msg_conn: %m");
@@ -117,18 +109,18 @@ extern void *rpc_mgr(void *no_data)
 		conn_arg->conn->callback_fini = _connection_fini_callback;
 		conn_arg->conn->shutdown = &shutdown_time;
 		conn_arg->conn->version = SLURM_MIN_PROTOCOL_VERSION;
-		conn_arg->conn->rem_host = xmalloc_nz(sizeof(char) * 16);
+		conn_arg->conn->rem_host = xmalloc_nz(16);
 		/* Don't fill in the rem_port here.  It will be filled in
 		 * later if it is a slurmctld connection. */
 		slurm_get_ip_str(&cli_addr, &port,
-				 conn_arg->conn->rem_host, sizeof(char) * 16);
+				 conn_arg->conn->rem_host, 16);
 
 		slurm_persist_conn_recv_thread_init(
 			conn_arg->conn, i, conn_arg);
 	}
 
 	debug("rpc_mgr shutting down");
-	(void) slurm_shutdown_msg_engine(sockfd);
+	close(sockfd);
 	pthread_exit((void *) 0);
 	return NULL;
 }
@@ -154,6 +146,7 @@ static void _connection_fini_callback(void *arg)
 			cluster_rec.name = conn->conn->cluster_name;
 			cluster_rec.control_host = conn->conn->rem_host;
 			cluster_rec.control_port = conn->conn->rem_port;
+			cluster_rec.rpc_version = conn->conn->version;
 			cluster_rec.tres_str = conn->tres_str;
 			debug("cluster %s has disconnected",
 			      conn->conn->cluster_name);

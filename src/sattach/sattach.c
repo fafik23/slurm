@@ -7,22 +7,22 @@
  *  Written by Christopher J. Morrone <morrone2@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -174,7 +174,7 @@ int sattach(int argc, char **argv)
 
 	io = client_io_handler_create(opt.fds, layout->task_cnt,
 				      layout->node_cnt, fake_cred,
-				      opt.labelio, NO_VAL);
+				      opt.labelio, NO_VAL, NO_VAL);
 	client_io_handler_start(io);
 
 	if (opt.pty) {
@@ -452,7 +452,6 @@ static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 	eio_obj_t *obj;
 	int i;
 	message_thread_state_t *mts;
-	pthread_attr_t attr;
 
 	debug("Entering _msg_thr_create()");
 	mts = (message_thread_state_t *)xmalloc(sizeof(message_thread_state_t));
@@ -474,14 +473,7 @@ static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 		eio_new_initial_obj(mts->msg_handle, obj);
 	}
 
-	slurm_attr_init(&attr);
-	if (pthread_create(&mts->msg_thread, &attr,
-			   _msg_thr_internal, (void *)mts) != 0) {
-		error("pthread_create of message thread: %m");
-		slurm_attr_destroy(&attr);
-		goto fail;
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create(&mts->msg_thread, _msg_thr_internal, mts);
 
 	return mts;
 fail:
@@ -653,10 +645,7 @@ _mpir_dump_proctable()
 
 	for (i = 0; i < MPIR_proctable_size; i++) {
 		tv = &MPIR_proctable[i];
-		if (!tv)
-			break;
 		info("task:%d, host:%s, pid:%d, executable:%s",
 		     i, tv->host_name, tv->pid, tv->executable_name);
 	}
 }
-

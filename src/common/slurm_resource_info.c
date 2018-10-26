@@ -5,11 +5,11 @@
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -193,6 +193,9 @@ void slurm_sprint_cpu_bind_type(char *str, cpu_bind_type_t cpu_bind_type)
 	if (cpu_bind_type & CPU_AUTO_BIND_TO_SOCKETS)
 		strcat(str, "autobind=sockets,");
 
+	if (cpu_bind_type & CPU_BIND_OFF)
+		strcat(str, "off,");
+
 	if (*str) {
 		str[strlen(str)-1] = '\0';	/* remove trailing ',' */
 	} else {
@@ -246,7 +249,7 @@ void slurm_print_cpu_bind_help(void)
 	} else {
 		printf(
 "CPU bind options:\n"
-"    --cpu_bind=         Bind tasks to CPUs\n"
+"    --cpu-bind=         Bind tasks to CPUs\n"
 "        q[uiet]         quietly bind before task runs (default)\n"
 "        v[erbose]       verbosely report binding before task runs\n"
 "        no[ne]          don't bind tasks to CPUs (default)\n"
@@ -270,63 +273,69 @@ void slurm_print_cpu_bind_help(void)
 }
 
 /*
- * verify cpu_bind arguments
+ * verify cpu_bind arguments, set default values as needed
  *
  * we support different launch policy names
  * we also allow a verbose setting to be specified
- *     --cpu_bind=threads
- *     --cpu_bind=cores
- *     --cpu_bind=sockets
- *     --cpu_bind=v
- *     --cpu_bind=rank,v
- *     --cpu_bind=rank
- *     --cpu_bind={MAP_CPU|MASK_CPU}:0,1,2,3,4
+ *     --cpu-bind=threads
+ *     --cpu-bind=cores
+ *     --cpu-bind=sockets
+ *     --cpu-bind=v
+ *     --cpu-bind=rank,v
+ *     --cpu-bind=rank
+ *     --cpu-bind={MAP_CPU|MASK_CPU}:0,1,2,3,4
  *
- *
- * returns -1 on error, 0 otherwise
+ * arg IN - user task binding option
+ * cpu_bind OUT - task binding string
+ * flags OUT OUT - task binding flags
+ * default_cpu_bind IN - default task binding (based upon Slurm configuration)
+ * RET SLURM_SUCCESS, SLURM_ERROR (-1) on failure, 1 for return for "help" arg
  */
-int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
-			  cpu_bind_type_t *flags)
+extern int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
+				 cpu_bind_type_t *flags,
+				 uint32_t default_cpu_bind)
 {
 	char *buf, *p, *tok;
-	int bind_bits =
-		CPU_BIND_NONE|CPU_BIND_RANK|CPU_BIND_MAP|CPU_BIND_MASK;
-	int bind_to_bits =
-		CPU_BIND_TO_SOCKETS|CPU_BIND_TO_CORES|CPU_BIND_TO_THREADS;
-	uint32_t task_plugin_param = slurm_get_task_plugin_param();
+	int bind_bits, bind_to_bits;
 	bool have_binding = _have_task_affinity();
 	bool log_binding = true;
 	int rc = SLURM_SUCCESS;
 
-	bind_bits    |= CPU_BIND_LDRANK|CPU_BIND_LDMAP|CPU_BIND_LDMASK;
-	bind_to_bits |= CPU_BIND_TO_LDOMS|CPU_BIND_TO_BOARDS;
+	bind_bits = CPU_BIND_NONE | CPU_BIND_RANK | CPU_BIND_MAP |
+		    CPU_BIND_MASK | CPU_BIND_LDRANK | CPU_BIND_LDMAP |
+		    CPU_BIND_LDMASK;
+	bind_to_bits = CPU_BIND_TO_SOCKETS | CPU_BIND_TO_CORES |
+		       CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS |
+		       CPU_BIND_TO_BOARDS;
 
 	if (arg == NULL) {
-		if ((*flags != 0) || 		/* already set values */
-		    (task_plugin_param == 0))	/* no system defaults */
-			return 0;
+		if (((*flags & bind_to_bits) != 0) ||	/* already set values */
+		   ((*flags & bind_bits) != 0) ||	/* already set values */
+		    (*cpu_bind != NULL) ||		/* already set values */
+		    (default_cpu_bind == 0))		/* no system defaults */
+			return SLURM_SUCCESS;
 
 		/* set system defaults */
 		xfree(*cpu_bind);
-		if (task_plugin_param & CPU_BIND_NONE)
+		if (default_cpu_bind & CPU_BIND_NONE)
 			*flags = CPU_BIND_NONE;
-		else if (task_plugin_param & CPU_BIND_TO_SOCKETS)
+		else if (default_cpu_bind & CPU_BIND_TO_SOCKETS)
 			*flags = CPU_BIND_TO_SOCKETS;
-		else if (task_plugin_param & CPU_BIND_TO_CORES)
+		else if (default_cpu_bind & CPU_BIND_TO_CORES)
 			*flags = CPU_BIND_TO_CORES;
-		else if (task_plugin_param & CPU_BIND_TO_THREADS)
+		else if (default_cpu_bind & CPU_BIND_TO_THREADS)
 			*flags |= CPU_BIND_TO_THREADS;
-		else if (task_plugin_param & CPU_BIND_TO_LDOMS)
+		else if (default_cpu_bind & CPU_BIND_TO_LDOMS)
 			*flags |= CPU_BIND_TO_LDOMS;
-		else if (task_plugin_param & CPU_BIND_TO_BOARDS)
+		else if (default_cpu_bind & CPU_BIND_TO_BOARDS)
 			*flags |= CPU_BIND_TO_BOARDS;
-		if (task_plugin_param & CPU_BIND_VERBOSE)
+		if (default_cpu_bind & CPU_BIND_VERBOSE)
 			*flags |= CPU_BIND_VERBOSE;
-	    	return 0;
+		return SLURM_SUCCESS;
 	}
 
 	/* Start with system default verbose flag (if set) */
-	if (task_plugin_param & CPU_BIND_VERBOSE)
+	if (default_cpu_bind & CPU_BIND_VERBOSE)
 		*flags |= CPU_BIND_VERBOSE;
 
     	buf = xstrdup(arg);
@@ -347,8 +356,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 			return 1;
 		}
 		if (!have_binding && log_binding) {
-			info("cluster configuration lacks support for cpu "
-			     "binding");
+			info("cluster configuration lacks support for cpu binding");
 			log_binding = false;
 		}
 		if ((xstrcasecmp(tok, "q") == 0) ||
@@ -366,8 +374,8 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if (xstrcasecmp(tok, "rank") == 0) {
 			_clear_then_set((int *)flags, bind_bits, CPU_BIND_RANK);
 			xfree(*cpu_bind);
-		} else if ((strncasecmp(tok, "map_cpu", 7) == 0) ||
-		           (strncasecmp(tok, "mapcpu", 6) == 0)) {
+		} else if ((xstrncasecmp(tok, "map_cpu", 7) == 0) ||
+		           (xstrncasecmp(tok, "mapcpu", 6) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -376,12 +384,11 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 			if (list && *list) {
 				*cpu_bind = _expand_mult(list, "map_cpu", &rc);
 			} else {
-				error("missing list for \"--cpu_bind="
-				      "map_cpu:<list>\"");
+				error("missing list for \"--cpu-bind=map_cpu:<list>\"");
 				rc = SLURM_ERROR;
 			}
-		} else if ((strncasecmp(tok, "mask_cpu", 8) == 0) ||
-		           (strncasecmp(tok, "maskcpu", 7) == 0)) {
+		} else if ((xstrncasecmp(tok, "mask_cpu", 8) == 0) ||
+		           (xstrncasecmp(tok, "maskcpu", 7) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -390,16 +397,15 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 			if (list && *list) {
 				*cpu_bind = _expand_mult(list, "mask_cpu", &rc);
 			} else {
-				error("missing list for \"--cpu_bind="
-				      "mask_cpu:<list>\"");
+				error("missing list for \"--cpu-bind=mask_cpu:<list>\"");
 				rc = SLURM_ERROR;
 			}
 		} else if (xstrcasecmp(tok, "rank_ldom") == 0) {
 			_clear_then_set((int *)flags, bind_bits,
 					CPU_BIND_LDRANK);
 			xfree(*cpu_bind);
-		} else if ((strncasecmp(tok, "map_ldom", 8) == 0) ||
-		           (strncasecmp(tok, "mapldom", 7) == 0)) {
+		} else if ((xstrncasecmp(tok, "map_ldom", 8) == 0) ||
+		           (xstrncasecmp(tok, "mapldom", 7) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -409,12 +415,11 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 			if (list && *list) {
 				*cpu_bind = _expand_mult(list, "map_ldom", &rc);
 			} else {
-				error("missing list for \"--cpu_bind="
-				      "map_ldom:<list>\"");
+				error("missing list for \"--cpu-bind=map_ldom:<list>\"");
 				rc = SLURM_ERROR;
 			}
-		} else if ((strncasecmp(tok, "mask_ldom", 9) == 0) ||
-		           (strncasecmp(tok, "maskldom", 8) == 0)) {
+		} else if ((xstrncasecmp(tok, "mask_ldom", 9) == 0) ||
+		           (xstrncasecmp(tok, "maskldom", 8) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -424,72 +429,32 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 			if (list && *list) {
 				*cpu_bind = _expand_mult(list, "mask_ldom",&rc);
 			} else {
-				error("missing list for \"--cpu_bind="
+				error("missing list for \"--cpu-bind="
 				      "mask_ldom:<list>\"");
 				rc = SLURM_ERROR;
 			}
 		} else if ((xstrcasecmp(tok, "socket") == 0) ||
 		           (xstrcasecmp(tok, "sockets") == 0)) {
-			if (task_plugin_param &
-			    (CPU_BIND_NONE | CPU_BIND_TO_CORES |
-			     CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS |
-			     CPU_BIND_TO_BOARDS)) {
-				debug("--cpu_bind=sockets incompatible with "
-				      "TaskPluginParam configuration "
-				      "parameter");
-			}
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_SOCKETS);
 		} else if ((xstrcasecmp(tok, "core") == 0) ||
 		           (xstrcasecmp(tok, "cores") == 0)) {
-			if (task_plugin_param &
-			    (CPU_BIND_NONE | CPU_BIND_TO_SOCKETS |
-			     CPU_BIND_TO_THREADS | CPU_BIND_TO_LDOMS |
-			     CPU_BIND_TO_BOARDS)) {
-				debug("--cpu_bind=cores incompatible with "
-				      "TaskPluginParam configuration "
-				      "parameter");
-			}
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_CORES);
 		} else if ((xstrcasecmp(tok, "thread") == 0) ||
 		           (xstrcasecmp(tok, "threads") == 0)) {
-			if (task_plugin_param &
-			    (CPU_BIND_NONE | CPU_BIND_TO_SOCKETS |
-			     CPU_BIND_TO_CORES | CPU_BIND_TO_LDOMS |
-			     CPU_BIND_TO_BOARDS)) {
-				debug("--cpu_bind=threads incompatible with "
-				      "TaskPluginParam configuration "
-				      "parameter");
-			}
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_THREADS);
 		} else if ((xstrcasecmp(tok, "ldom") == 0) ||
 		           (xstrcasecmp(tok, "ldoms") == 0)) {
-			if (task_plugin_param &
-			    (CPU_BIND_NONE | CPU_BIND_TO_SOCKETS |
-			     CPU_BIND_TO_CORES | CPU_BIND_TO_THREADS |
-			     CPU_BIND_TO_BOARDS)) {
-				debug("--cpu_bind=threads incompatible with "
-				      "TaskPluginParam configuration "
-				      "parameter");
-			}
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_LDOMS);
 		} else if ((xstrcasecmp(tok, "board") == 0) ||
 		           (xstrcasecmp(tok, "boards") == 0)) {
-			if (task_plugin_param &
-			    (CPU_BIND_NONE | CPU_BIND_TO_SOCKETS |
-			     CPU_BIND_TO_CORES | CPU_BIND_TO_THREADS |
-			     CPU_BIND_TO_LDOMS)) {
-				debug("--cpu_bind=threads incompatible with "
-				      "TaskPluginParam configuration "
-				      "parameter");
-			}
 			_clear_then_set((int *)flags, bind_to_bits,
 				       CPU_BIND_TO_BOARDS);
 		} else {
-			error("unrecognized --cpu_bind argument \"%s\"", tok);
+			error("unrecognized --cpu-bind argument \"%s\"", tok);
 			rc = SLURM_ERROR;
 		}
 	}
@@ -497,19 +462,115 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 
 	/* Set system default CPU binding as needed */
 	if ((rc == SLURM_SUCCESS) && (*flags & (~CPU_BIND_VERBOSE)) == 0) {
-                if (task_plugin_param & CPU_BIND_NONE)
+                if (default_cpu_bind & CPU_BIND_NONE)
                         *flags = CPU_BIND_NONE;
-                else if (task_plugin_param & CPU_BIND_TO_SOCKETS)
+                else if (default_cpu_bind & CPU_BIND_TO_SOCKETS)
                         *flags = CPU_BIND_TO_SOCKETS;
-                else if (task_plugin_param & CPU_BIND_TO_CORES)
+                else if (default_cpu_bind & CPU_BIND_TO_CORES)
                         *flags = CPU_BIND_TO_CORES;
-                else if (task_plugin_param & CPU_BIND_TO_THREADS)
+                else if (default_cpu_bind & CPU_BIND_TO_THREADS)
                         *flags |= CPU_BIND_TO_THREADS;
-                else if (task_plugin_param & CPU_BIND_TO_LDOMS)
+                else if (default_cpu_bind & CPU_BIND_TO_LDOMS)
                         *flags |= CPU_BIND_TO_LDOMS;
-                else if (task_plugin_param & CPU_BIND_TO_BOARDS)
+                else if (default_cpu_bind & CPU_BIND_TO_BOARDS)
                         *flags |= CPU_BIND_TO_BOARDS;
 	}
+
+	return rc;
+}
+
+/*
+ * Translate a CPU bind string to its equivalent numeric value
+ * cpu_bind_str IN - string to translate
+ * flags OUT - equlvalent numeric value
+ * RET SLURM_SUCCESS or SLURM_ERROR
+ */
+extern int xlate_cpu_bind_str(char *cpu_bind_str, uint32_t *flags)
+{
+	int rc = SLURM_SUCCESS;
+	char *save_ptr = NULL, *tok, *tmp;
+	bool have_bind_type = false;
+
+	*flags = 0;
+	if (!cpu_bind_str)
+		return rc;
+
+	tmp = xstrdup(cpu_bind_str);
+	tok = strtok_r(tmp, ",;", &save_ptr);
+	while (tok) {
+		if ((xstrcasecmp(tok, "no") == 0) ||
+		    (xstrcasecmp(tok, "none") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_NONE;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "board") == 0) ||
+			   (xstrcasecmp(tok, "boards") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_TO_BOARDS;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "socket") == 0) ||
+			   (xstrcasecmp(tok, "sockets") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_TO_SOCKETS;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "ldom") == 0) ||
+			   (xstrcasecmp(tok, "ldoms") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_TO_LDOMS;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "core") == 0) ||
+			   (xstrcasecmp(tok, "cores") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_TO_CORES;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "thread") == 0) ||
+			   (xstrcasecmp(tok, "threads") == 0)) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_TO_THREADS;
+				have_bind_type = true;
+			}
+		} else if (xstrcasecmp(tok, "off") == 0) {
+			if (have_bind_type) {
+				rc = SLURM_ERROR;
+				break;
+			} else {
+				*flags |= CPU_BIND_OFF;
+				have_bind_type = true;
+			}
+		} else if ((xstrcasecmp(tok, "v") == 0) ||
+			   (xstrcasecmp(tok, "verbose") == 0)) {
+		        *flags |= CPU_BIND_VERBOSE;
+		} else {
+			/* Other options probably not desirable to support */
+			rc = SLURM_ERROR;
+			break;
+		}
+		tok = strtok_r(NULL, ",;", &save_ptr);
+	}
+	xfree(tmp);
 
 	return rc;
 }
@@ -518,7 +579,7 @@ void slurm_print_mem_bind_help(void)
 {
 			printf(
 "Memory bind options:\n"
-"    --mem_bind=         Bind memory to locality domains (ldom)\n"
+"    --mem-bind=         Bind memory to locality domains (ldom)\n"
 "        nosort          avoid sorting pages at startup\n"
 "        sort            sort pages at startup\n"
 "        q[uiet]         quietly bind before task runs (default)\n"
@@ -538,10 +599,10 @@ void slurm_print_mem_bind_help(void)
  *
  * we support different memory binding names
  * we also allow a verbose setting to be specified
- *     --mem_bind=v
- *     --mem_bind=rank,v
- *     --mem_bind=rank
- *     --mem_bind={MAP_MEM|MASK_MEM}:0,1,2,3,4
+ *     --mem-bind=v
+ *     --mem-bind=rank,v
+ *     --mem-bind=rank
+ *     --mem-bind={MAP_MEM|MASK_MEM}:0,1,2,3,4
  *
  * returns -1 on error, 0 otherwise
  */
@@ -596,8 +657,8 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 		} else if (xstrcasecmp(tok, "local") == 0) {
 			_clear_then_set((int *)flags, bind_bits,MEM_BIND_LOCAL);
 			xfree(*mem_bind);
-		} else if ((strncasecmp(tok, "map_mem", 7) == 0) ||
-		           (strncasecmp(tok, "mapmem", 6) == 0)) {
+		} else if ((xstrncasecmp(tok, "map_mem", 7) == 0) ||
+		           (xstrncasecmp(tok, "mapmem", 6) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -606,11 +667,11 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 			if (list && *list) {
 				*mem_bind = _expand_mult(list, "map_mem", &rc);
 			} else {
-				error("missing list for \"--mem_bind=map_mem:<list>\"");
+				error("missing list for \"--mem-bind=map_mem:<list>\"");
 				rc = SLURM_ERROR;
 			}
-		} else if ((strncasecmp(tok, "mask_mem", 8) == 0) ||
-		           (strncasecmp(tok, "maskmem", 7) == 0)) {
+		} else if ((xstrncasecmp(tok, "mask_mem", 8) == 0) ||
+		           (xstrncasecmp(tok, "maskmem", 7) == 0)) {
 			char *list;
 			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
@@ -619,11 +680,11 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 			if (list && *list) {
 				*mem_bind = _expand_mult(list, "mask_mem", &rc);
 			} else {
-				error("missing list for \"--mem_bind=mask_mem:<list>\"");
+				error("missing list for \"--mem-bind=mask_mem:<list>\"");
 				rc = SLURM_ERROR;
 			}
 		} else {
-			error("unrecognized --mem_bind argument \"%s\"", tok);
+			error("unrecognized --mem-bind argument \"%s\"", tok);
 			rc = SLURM_ERROR;
 		}
 	}

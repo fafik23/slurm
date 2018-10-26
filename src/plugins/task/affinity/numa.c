@@ -6,11 +6,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 #include "affinity.h"
@@ -64,7 +64,7 @@ static char * _memset_to_str(nodemask_t *mask, char *str)
 		begin = 1;
 		if (!ret && val)
 			ret = ptr;
-		*ptr++ = val_to_char(val);
+		*ptr++ = slurm_hex_to_char(val);
 	}
 	*ptr = 0;
 	return ret ? ret : ptr - 1;
@@ -82,7 +82,7 @@ static int _str_to_memset(nodemask_t *mask, const char* str)
 
 	nodemask_zero(mask);
 	while (ptr >= str) {
-		char val = char_to_val(*ptr);
+		char val = slurm_char_to_hex(*ptr);
 		if (val == (char) -1)
 			return -1;
 		if (val & 1)
@@ -138,7 +138,7 @@ void slurm_chk_memset(nodemask_t *mask, stepd_step_rec_t *job)
 		}
 	}
 
-	fprintf(stderr, "mem_bind%s%s - "
+	fprintf(stderr, "mem-bind%s%s - "
 			"%s, task %2u %2u [%u]: mask 0x%s%s\n",
 			mode, bind_type,
 			conf->hostname,
@@ -259,7 +259,7 @@ extern uint16_t slurm_get_numa_node(uint16_t cpuid)
 
 	collective = numa_allocate_cpumask();
 	if (maxcpus > collective->size) {
-		error("%s: Size mismatch!!!! %d %"PRIu64,
+		error("%s: Size mismatch!!!! %d %lu",
 		      __func__, maxcpus, collective->size);
 		numa_free_cpumask(collective);
 		return 0;

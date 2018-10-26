@@ -12,11 +12,11 @@
  *  and Danny Auble <da@schedmd.com> @ SchedMD.
  *  Adapted by Yoann Blein <yoann.blein@bull.net> @ Bull.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -32,22 +32,20 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
 \*****************************************************************************/
 
 #include "config.h"
 
-#ifndef _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
+#define _GNU_SOURCE
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -63,6 +61,7 @@
 #include "src/common/proc_args.h"
 #include "src/common/xstring.h"
 #include "src/common/slurm_acct_gather_profile.h"
+#include "src/common/slurm_jobacct_gather.h"
 #include "../hdf5_api.h"
 #include "sh5util.h"
 
@@ -103,6 +102,23 @@
 // #define GRP_TOTALS "Totals"
 
 // Data types supported by all HDF5 plugins of this type
+
+/*
+ * H5_VERSION_LE (lifted from 1.10.1 H5public.h) was not added until 1.8.7
+ * (centos 6 has 1.8.5 by default)
+ */
+#ifndef H5_VERSION_LE
+#define H5_VERSION_LE(Maj,Min,Rel) \
+	(((H5_VERS_MAJOR==Maj) && (H5_VERS_MINOR==Min) &&		\
+	  (H5_VERS_RELEASE<=Rel)) ||					\
+	 ((H5_VERS_MAJOR==Maj) && (H5_VERS_MINOR<Min)) ||		\
+	 (H5_VERS_MAJOR<Maj))
+#endif
+
+/* H5free_memory was introduced in 1.8.13, before it just needed to be 'free' */
+#if H5_VERSION_LE(1,8,13)
+#define H5free_memory free
+#endif
 
 sh5util_opts_t params;
 
@@ -288,18 +304,23 @@ static void _remove_empty_output(void)
 	struct stat sb;
 
 	if (stat(params.output, &sb) == -1) {
-		/* Ignore the error as the file may have
-		 * not been created yet.
+		/*
+		 * Ignore the error as the file may have not been created yet.
 		 */
 		return;
 	}
 
-	/* Remove the file if 0 size which means
+	/*
+	 * Remove the file if 0 size which means
 	 * the program failed somewhere along the
 	 * way and the file is just left hanging...
 	 */
-	if (sb.st_size == 0)
-		remove(params.output);
+	if ((sb.st_size == 0)) {
+		info("Output file generated is empty, removing it: %s",
+		     params.output);
+		if (remove(params.output) == -1)
+			error("%s: remove(%s): %m", __func__, params.output);
+	}
 }
 
 static void _init_opts(void)
@@ -506,8 +527,10 @@ _check_params(void)
 	return 0;
 }
 
-/* Copy the group "/{NodeName}" of the hdf5 file file_name into the location
- * jgid_nodes */
+/*
+ * Copy the group "/{NodeName}" of the hdf5 file file_name into the location
+ * jgid_nodes
+ */
 static int _merge_node_step_data(char* file_name, hid_t jgid_nodes,
 				 sh5util_file_t *sh5util_file)
 {
@@ -534,8 +557,10 @@ static int _merge_node_step_data(char* file_name, hid_t jgid_nodes,
 		goto endit;
 	}
 
-	if (!params.keepfiles)
-		remove(file_name);
+	if (!params.keepfiles &&
+	    (remove(file_name) == -1))
+		error("%s: remove(%s): %m", __func__, file_name);
+
 endit:
 	xfree(group_name);
 	H5Fclose(fid_nodestep);
@@ -720,6 +745,10 @@ endit:
 
 	if (jgid_steps != -1)
 		H5Gclose(jgid_steps);
+	if (jgid_step != -1)
+		H5Gclose(jgid_step);
+	if (jgid_nodes != -1)
+		H5Gclose(jgid_nodes);
 	if (fid_job != -1)
 		H5Fclose(fid_job);
 
@@ -1023,10 +1052,10 @@ static int _extract_series_table(hid_t fid_job, table_t *table, List fields,
 		m_name = H5Tget_member_name(tid, (unsigned)i);
 		/* continue if the field must not be extracted */
 		if (!list_find_first(fields, _str_cmp, m_name)) {
-			free(m_name);
+			H5free_memory(m_name);
 			continue;
 		}
-		free(m_name);
+		H5free_memory(m_name);
 
 		/* get the member type */
 		if ((m_tid = H5Tget_member_type(tid, (unsigned)i)) < 0)
@@ -1218,16 +1247,16 @@ static void _item_analysis_uint(hsize_t nb_tables, hid_t *tables,
 {
 	size_t   i;
 	uint64_t min_val;
-	size_t   min_idx;
+	size_t   min_idx = 0;
 	uint64_t max_val;
-	size_t   max_idx;
+	size_t   max_idx = 0;
 	uint64_t sum, sum_max = 0;
 	double   avg, avg_max = 0;
 	size_t   nb_series_in_smp;
 	uint64_t v;
 	uint64_t values[nb_tables];
 	uint8_t  *buffer;
-	uint64_t et, et_max = 0;
+	uint64_t et = 0, et_max = 0;
 
 	buffer = xmalloc(buf_size);
 	for (;;) {
@@ -1319,16 +1348,16 @@ static void _item_analysis_double(hsize_t nb_tables, hid_t *tables,
 {
 	size_t   i;
 	double   min_val;
-	size_t   min_idx;
+	size_t   min_idx = 0;
 	double   max_val;
-	size_t   max_idx;
+	size_t   max_idx = 0;
 	double   sum, sum_max = 0;
 	double   avg, avg_max = 0;
 	size_t   nb_series_in_smp;
 	double   v;
 	double   values[nb_tables];
 	uint8_t  *buffer;
-	uint64_t et, et_max = 0;
+	uint64_t et = 0, et_max = 0;
 
 	buffer = xmalloc(buf_size);
 	for (;;) {
@@ -1482,10 +1511,10 @@ static herr_t _extract_item_step(hid_t g_id, const char *step_name,
 		for (j = 0; j < nmembers; j++) {
 			m_name = H5Tget_member_name(tid, (unsigned)j);
 			if (xstrcasecmp(params.data_item, m_name) == 0) {
-				free(m_name);
+				H5free_memory(m_name);
 				break;
 			}
-			free(m_name);
+			H5free_memory(m_name);
 		}
 
 		if (j == nmembers) {
@@ -1650,7 +1679,7 @@ static int _fields_intersection(hid_t fid_job, List tables, List fields)
 			for (i = 0; i < nb_fields; i++) {
 				field = H5Tget_member_name(tid, i);
 				list_append(fields, xstrdup(field));
-				free(field);
+				H5free_memory(field);
 			}
 		} else {
 			/* gather fields */
@@ -1675,7 +1704,7 @@ static int _fields_intersection(hid_t fid_job, List tables, List fields)
 			list_iterator_destroy(it2);
 			/* clean up fields */
 			for (i = 0; i < nb_fields; i++)
-				free(l_fields[i]);
+				H5free_memory(l_fields[i]);
 		}
 
 		H5Tclose(tid);

@@ -6,11 +6,11 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -143,17 +143,22 @@ _is_valid_timespec(const char *s)
 	int digit;
 	int dash;
 	int colon;
-
+	bool already_digit = false;
 	digit = dash = colon = 0;
 
 	while (*s) {
 		if (*s >= '0' && *s <= '9') {
-			++digit;
+			if (!already_digit) {
+				++digit;
+				already_digit = true;
+			}
 		} else if (*s == '-') {
+			already_digit = false;
 			++dash;
 			if (colon)
 				return false;
 		} else if (*s == ':') {
+			already_digit = false;
 			++colon;
 		} else {
 			return false;
@@ -169,9 +174,6 @@ _is_valid_timespec(const char *s)
 		return false;
 
 	if (dash) {
-		if (colon == 0
-		    && digit < 1)
-			return false;
 		if (colon == 1
 		    && digit < 3)
 			return false;
@@ -208,7 +210,7 @@ static int _get_delta(char *time_str, int *pos, long *delta)
 		if (isspace((int)time_str[offset]))
 			continue;
 		for (i=0; un[i].name; i++) {
-			if (!strncasecmp((time_str + offset),
+			if (!xstrncasecmp((time_str + offset),
 					 un[i].name, un[i].name_len)) {
 				offset += un[i].name_len;
 				cnt    *= un[i].multiplier;
@@ -296,7 +298,7 @@ _get_time(char *time_str, int *pos, int *hour, int *minute, int * second)
 	while (isspace((int)time_str[offset])) {
 		offset++;
 	}
-	if (strncasecmp(time_str+offset, "pm", 2)== 0) {
+	if (xstrncasecmp(time_str+offset, "pm", 2)== 0) {
 		hr += 12;
 		if (hr > 23) {
 			if (hr == 24)
@@ -305,7 +307,7 @@ _get_time(char *time_str, int *pos, int *hour, int *minute, int * second)
 				goto prob;
 		}
 		offset += 2;
-	} else if (strncasecmp(time_str+offset, "am", 2) == 0) {
+	} else if (xstrncasecmp(time_str+offset, "am", 2) == 0) {
 		if (hr > 11) {
 			if (hr == 12)
 				hr = 0;
@@ -463,7 +465,7 @@ extern time_t parse_time(char *time_str, int past)
 	struct tm res_tm;
 	time_t ret_time;
 
-	if (strncasecmp(time_str, "uts", 3) == 0) {
+	if (xstrncasecmp(time_str, "uts", 3) == 0) {
 		char *last = NULL;
 		long uts = strtol(time_str+3, &last, 10);
 		if ((uts < 1000000) || (uts == LONG_MAX) ||
@@ -480,14 +482,14 @@ extern time_t parse_time(char *time_str, int past)
 		if (isblank((int)time_str[pos]) ||
 		    (time_str[pos] == '-') || (time_str[pos] == 'T'))
 			continue;
-		if (strncasecmp(time_str+pos, "today", 5) == 0) {
+		if (xstrncasecmp(time_str+pos, "today", 5) == 0) {
 			month = time_now_tm->tm_mon;
 			mday  = time_now_tm->tm_mday;
 			year  = time_now_tm->tm_year;
 			pos += 4;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "tomorrow", 8) == 0) {
+		if (xstrncasecmp(time_str+pos, "tomorrow", 8) == 0) {
 			time_t later = time_now + (24 * 60 * 60);
 			struct tm *later_tm = slurm_localtime(&later);
 			month = later_tm->tm_mon;
@@ -496,35 +498,35 @@ extern time_t parse_time(char *time_str, int past)
 			pos += 7;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "midnight", 8) == 0) {
+		if (xstrncasecmp(time_str+pos, "midnight", 8) == 0) {
 			hour   = 0;
 			minute = 0;
 			second = 0;
 			pos += 7;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "noon", 4) == 0) {
+		if (xstrncasecmp(time_str+pos, "noon", 4) == 0) {
 			hour   = 12;
 			minute = 0;
 			second = 0;
 			pos += 3;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "fika", 4) == 0) {
+		if (xstrncasecmp(time_str+pos, "fika", 4) == 0) {
 			hour   = 15;
 			minute = 0;
 			second = 0;
 			pos += 3;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "teatime", 7) == 0) {
+		if (xstrncasecmp(time_str+pos, "teatime", 7) == 0) {
 			hour   = 16;
 			minute = 0;
 			second = 0;
 			pos += 6;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "now", 3) == 0) {
+		if (xstrncasecmp(time_str+pos, "now", 3) == 0) {
 			int i;
 			long delta = 0;
 			time_t later;
@@ -632,7 +634,6 @@ extern time_t parse_time(char *time_str, int past)
 	res_tm.tm_mday  = mday;
 	res_tm.tm_mon   = month;
 	res_tm.tm_year  = year;
-	res_tm.tm_isdst = -1;
 
 /* 	printf("%d/%d/%d %d:%d\n",month+1,mday,year,hour,minute); */
 	if ((ret_time = slurm_mktime(&res_tm)) != -1)

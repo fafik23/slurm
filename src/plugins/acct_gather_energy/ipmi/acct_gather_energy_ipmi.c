@@ -4,11 +4,11 @@
  *  Copyright (C) 2012
  *  Initially written by Thomas Cadeau @ Bull. Adapted by Yoann Blein @ Bull.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
  *  This file is patterned after jobcomp_linux.c, written by Morris Jette and
@@ -96,14 +96,14 @@ slurmd_conf_t *conf = NULL;
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *	<application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "jobacct" for SLURM job completion logging) and <method>
- * is a description of how this plugin satisfies that application.  SLURM will
+ * the plugin (e.g., "jobacct" for Slurm job completion logging) and <method>
+ * is a description of how this plugin satisfies that application.  Slurm will
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
@@ -161,7 +161,9 @@ static bool flag_energy_accounting_shutdown = false;
 static bool flag_thread_started = false;
 static bool flag_init = false;
 static pthread_mutex_t ipmi_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_t cleanup_handler_thread = 0;
+static pthread_cond_t ipmi_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 pthread_t thread_ipmi_id_launcher = 0;
 pthread_t thread_ipmi_id_run = 0;
 
@@ -189,12 +191,6 @@ static bool _run_in_daemon(void)
 	}
 
 	return run;
-}
-
-static void _task_sleep(int rem)
-{
-	while (rem)
-		rem = sleep(rem);	// subject to interupt
 }
 
 static int _running_profile(void)
@@ -261,18 +257,18 @@ static int _init_ipmi_config (void)
 	if (ipmi_monitoring_init(ipmimonitoring_init_flags, &errnum) < 0) {
 		error("ipmi_monitoring_init: %s",
 		      ipmi_monitoring_ctx_strerror(errnum));
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	if (!(ipmi_ctx = ipmi_monitoring_ctx_create())) {
 		error("ipmi_monitoring_ctx_create");
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 	if (sdr_cache_directory) {
 		if (ipmi_monitoring_ctx_sdr_cache_directory(
 			    ipmi_ctx, sdr_cache_directory) < 0) {
 			error("ipmi_monitoring_ctx_sdr_cache_directory: %s",
 			      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 	}
 	/* Must call otherwise only default interpretations ever used */
@@ -280,7 +276,7 @@ static int _init_ipmi_config (void)
 		    ipmi_ctx, sensor_config_file) < 0) {
 		error("ipmi_monitoring_ctx_sensor_config_file: %s",
 		      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	if (slurm_ipmi_conf.reread_sdr_cache)
@@ -352,7 +348,7 @@ static int _check_power_sensor(void)
 			      MAX_LOG_ERRORS);
 			check_err_cnt++;
 		}
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	check_err_cnt = 0;
@@ -365,12 +361,12 @@ static int _check_power_sensor(void)
 		if (sensor_units < 0) {
 			error("ipmi_monitoring_sensor_read_sensor_units: %s",
 			      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 		if (sensor_units != slurm_ipmi_conf.variable) {
 			error("Configured sensor is not in Watt, "
 			      "please check ipmi.conf");
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 
 		/* update current value of the sensor */
@@ -381,7 +377,7 @@ static int _check_power_sensor(void)
 			    (uint32_t) (*((double *)sensor_reading));
 		} else {
 			error("ipmi read an empty value for power consumption");
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 		++i;
 	} while (ipmi_monitoring_sensor_iterator_next(ipmi_ctx));
@@ -399,7 +395,7 @@ static int _find_power_sensor(void)
 {
 	int sensor_count;
 	int i;
-	int rc = SLURM_FAILURE;
+	int rc = SLURM_ERROR;
 	void* sensor_reading;
 	int sensor_units, record_id;
 	static uint8_t find_err_cnt = 0;
@@ -426,7 +422,7 @@ static int _find_power_sensor(void)
 			      MAX_LOG_ERRORS);
 			find_err_cnt++;
 		}
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	find_err_cnt = 0;
@@ -438,7 +434,7 @@ static int _find_power_sensor(void)
 		if (sensor_units < 0) {
 			error("ipmi_monitoring_sensor_read_sensor_units: %s",
 			      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 
 		if (sensor_units != slurm_ipmi_conf.variable)
@@ -448,7 +444,7 @@ static int _find_power_sensor(void)
 		if (record_id < 0) {
 			error("ipmi_monitoring_sensor_read_record_id: %s",
 			      ipmi_monitoring_ctx_errormsg(ipmi_ctx));
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 
 		sensor_reading =
@@ -473,7 +469,7 @@ static int _find_power_sensor(void)
 			last_update_time = time(NULL);
 		} else {
 			error("ipmi read an empty value for power consumption");
-			rc = SLURM_FAILURE;
+			rc = SLURM_ERROR;
 			continue;
 		}
 		rc = SLURM_SUCCESS;
@@ -523,7 +519,7 @@ static int _read_ipmi_values(void)
 			      MAX_LOG_ERRORS);
 			read_err_cnt++;
 		}
-		return SLURM_FAILURE;
+		return SLURM_ERROR;
 	}
 
 	read_err_cnt = 0;
@@ -537,7 +533,7 @@ static int _read_ipmi_values(void)
 			    (uint32_t) (*((double *)sensor_reading));
 		} else {
 			error("ipmi read an empty value for power consumption");
-			return SLURM_FAILURE;
+			return SLURM_ERROR;
 		}
 		++i;
 	} while (ipmi_monitoring_sensor_iterator_next(ipmi_ctx));
@@ -616,7 +612,7 @@ static int _thread_update_node_energy(void)
 static int _thread_init(void)
 {
 	static bool first = true;
-	static bool first_init = SLURM_FAILURE;
+	static bool first_init = SLURM_ERROR;
 	int rc = SLURM_SUCCESS;
 	uint16_t i;
 
@@ -626,7 +622,7 @@ static int _thread_init(void)
 
 	if (_init_ipmi_config() != SLURM_SUCCESS) {
 		//TODO verbose error?
-		rc = SLURM_FAILURE;
+		rc = SLURM_ERROR;
 	} else {
 		if ((sensors_len == 0 && _find_power_sensor() != SLURM_SUCCESS)
 		    || _check_power_sensor() != SLURM_SUCCESS) {
@@ -646,7 +642,6 @@ static int _thread_init(void)
 			sensor_reading_flags ^=
 				IPMI_MONITORING_SENSOR_READING_FLAGS_REREAD_SDR_CACHE;
 	}
-	slurm_mutex_unlock(&ipmi_mutex);
 
 	if (rc != SLURM_SUCCESS)
 		if (ipmi_ctx)
@@ -704,10 +699,8 @@ static int _ipmi_send_profile(void)
 
 	if (debug_flags & DEBUG_FLAG_PROFILE) {
 		for (i = 0; i < descriptions_len; i++) {
-			id = descriptions[i].sensor_idxs[j];
-			info("PROFILE-Energy: %sPower=%d",
-			     descriptions[i].label,
-			     sensors[id].energy.current_watts);
+			info("PROFILE-Energy: %sPower=%"PRIu64"",
+			     descriptions[i].label, data[i]);
 		}
 	}
 	return acct_gather_profile_g_add_sample_data(dataset_id, (void *)data,
@@ -721,35 +714,53 @@ static int _ipmi_send_profile(void)
 static void *_thread_ipmi_run(void *no_data)
 {
 // need input (attr)
-	int time_lost;
-
-	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+	struct timeval tvnow;
+	struct timespec abs;
 
 	flag_energy_accounting_shutdown = false;
 	if (debug_flags & DEBUG_FLAG_ENERGY)
 		info("ipmi-thread: launched");
+
+	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	slurm_mutex_lock(&ipmi_mutex);
 	if (_thread_init() != SLURM_SUCCESS) {
 		if (debug_flags & DEBUG_FLAG_ENERGY)
 			info("ipmi-thread: aborted");
 		slurm_mutex_unlock(&ipmi_mutex);
+
+		slurm_mutex_lock(&launch_mutex);
+		slurm_cond_signal(&launch_cond);
+		slurm_mutex_unlock(&launch_mutex);
+
 		return NULL;
 	}
-	slurm_mutex_unlock(&ipmi_mutex);
 
+	(void) pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
+
+	slurm_mutex_unlock(&ipmi_mutex);
 	flag_thread_started = true;
+
+	slurm_mutex_lock(&launch_mutex);
+	slurm_cond_signal(&launch_cond);
+	slurm_mutex_unlock(&launch_mutex);
+
+	/* setup timer */
+	gettimeofday(&tvnow, NULL);
+	abs.tv_sec = tvnow.tv_sec;
+	abs.tv_nsec = tvnow.tv_usec * 1000;
 
 	//loop until slurm stop
 	while (!flag_energy_accounting_shutdown) {
-		time_lost = (int)(time(NULL) - last_update_time);
-		if (time_lost <= slurm_ipmi_conf.freq)
-			_task_sleep(slurm_ipmi_conf.freq - time_lost);
-		else
-			_task_sleep(1);
 		slurm_mutex_lock(&ipmi_mutex);
+
 		_thread_update_node_energy();
+
+		/* Sleep until the next time. */
+		abs.tv_sec += slurm_ipmi_conf.freq;
+		slurm_cond_timedwait(&ipmi_cond, &ipmi_mutex, &abs);
+
 		slurm_mutex_unlock(&ipmi_mutex);
 	}
 
@@ -759,66 +770,40 @@ static void *_thread_ipmi_run(void *no_data)
 	return NULL;
 }
 
-static void *_cleanup_thread(void *no_data)
-{
-	if (thread_ipmi_id_run)
-		pthread_join(thread_ipmi_id_run, NULL);
-
-	if (ipmi_ctx)
-		ipmi_monitoring_ctx_destroy(ipmi_ctx);
-	reset_slurm_ipmi_conf(&slurm_ipmi_conf);
-
-	return NULL;
-}
-
 static void *_thread_launcher(void *no_data)
 {
 	//what arg would countain? frequency, socket?
-	pthread_attr_t attr_run;
-	time_t begin_time;
-	int rc = SLURM_SUCCESS;
+	struct timeval tvnow;
+	struct timespec abs;
 
-	slurm_attr_init(&attr_run);
-	if (pthread_create(&thread_ipmi_id_run, &attr_run,
-			   &_thread_ipmi_run, NULL)) {
-		//if (pthread_create(... (void *)arg)) {
-		debug("energy accounting failed to create _thread_ipmi_run "
-		      "thread: %m");
-	}
-	slurm_attr_destroy(&attr_run);
+	slurm_thread_create(&thread_ipmi_id_run, _thread_ipmi_run, NULL);
 
-	begin_time = time(NULL);
-	while (rc == SLURM_SUCCESS) {
-		if (time(NULL) - begin_time > slurm_ipmi_conf.timeout) {
-			error("ipmi thread init timeout");
-			rc = SLURM_ERROR;
-			break;
-		}
-		if (flag_thread_started)
-			break;
-		_task_sleep(1);
-	}
+	/* setup timer */
+	gettimeofday(&tvnow, NULL);
+	abs.tv_sec = tvnow.tv_sec + slurm_ipmi_conf.timeout;
+	abs.tv_nsec = tvnow.tv_usec * 1000;
 
-	if (rc != SLURM_SUCCESS) {
+	slurm_mutex_lock(&launch_mutex);
+	slurm_cond_timedwait(&launch_cond, &launch_mutex, &abs);
+	slurm_mutex_unlock(&launch_mutex);
+
+	if (!flag_thread_started) {
 		error("%s threads failed to start in a timely manner",
 		     plugin_name);
 
-		if (thread_ipmi_id_run) {
-			pthread_cancel(thread_ipmi_id_run);
-			pthread_join(thread_ipmi_id_run, NULL);
-		}
-
 		flag_energy_accounting_shutdown = true;
-	} else {
-		/* This is here to join the decay thread so we don't core
-		 * dump if in the sleep, since there is no other place to join
-		 * we have to create another thread to do it. */
-		slurm_attr_init(&attr_run);
-		if (pthread_create(&cleanup_handler_thread, &attr_run,
-				   _cleanup_thread, NULL))
-			fatal("pthread_create error %m");
 
-		slurm_attr_destroy(&attr_run);
+		/*
+		 * It is a known thing we can hang up on IPMI calls cancel if
+		 * we must.
+		 */
+		pthread_cancel(thread_ipmi_id_run);
+
+		/*
+		 * Unlock just to make sure since we could have canceled the
+		 * thread while in the lock.
+		 */
+		slurm_mutex_unlock(&ipmi_mutex);
 	}
 
 	return NULL;
@@ -951,12 +936,26 @@ extern int fini(void)
 
 	flag_energy_accounting_shutdown = true;
 
+	slurm_mutex_lock(&launch_mutex);
+	/* clean up the launch thread */
+	slurm_cond_signal(&launch_cond);
+	slurm_mutex_unlock(&launch_mutex);
+
+	if (thread_ipmi_id_launcher)
+		pthread_join(thread_ipmi_id_launcher, NULL);
+
 	slurm_mutex_lock(&ipmi_mutex);
-	if (thread_ipmi_id_run)
-		pthread_cancel(thread_ipmi_id_run);
-	if (cleanup_handler_thread)
-		pthread_join(cleanup_handler_thread, NULL);
+	/* clean up the run thread */
+	slurm_cond_signal(&ipmi_cond);
+
+	if (ipmi_ctx)
+		ipmi_monitoring_ctx_destroy(ipmi_ctx);
+	reset_slurm_ipmi_conf(&slurm_ipmi_conf);
+
 	slurm_mutex_unlock(&ipmi_mutex);
+
+	if (thread_ipmi_id_run)
+		pthread_join(thread_ipmi_id_run, NULL);
 
 	xfree(sensors);
 	xfree(start_current_energies);
@@ -1335,15 +1334,8 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 
 		flag_init = true;
 		if (_is_thread_launcher()) {
-			pthread_attr_t attr;
-			slurm_attr_init(&attr);
-			if (pthread_create(&thread_ipmi_id_launcher, &attr,
-					   &_thread_launcher, NULL)) {
-				//if (pthread_create(... (void *)arg)) {
-				debug("energy accounting failed to create "
-				      "_thread_launcher thread: %m");
-			}
-			slurm_attr_destroy(&attr);
+			slurm_thread_create(&thread_ipmi_id_launcher,
+					    _thread_launcher, NULL);
 			if (debug_flags & DEBUG_FLAG_ENERGY)
 				info("%s thread launched", plugin_name);
 		} else

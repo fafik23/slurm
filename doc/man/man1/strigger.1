@@ -30,7 +30,7 @@ that interval.
 The record of those events (e.g. nodes which went DOWN in the previous
 15 seconds) will then be cleared.
 The trigger program must set a new trigger before the end of the next
-interval to insure that no trigger events are missed OR the trigger must be
+interval to ensure that no trigger events are missed OR the trigger must be
 created with an argument of "\-\-flags=PERM".
 If desired, multiple trigger programs can be set for the same event.
 
@@ -56,10 +56,6 @@ Trigger an event when the primary slurmctld resuming operation after failure.
 .TP
 \fB\-b\fR, \fB\-\-primary_slurmctld_resumed_control\fR
 Trigger an event when primary slurmctld resumes control.
-
-.TP
-\fB\-\-block_err\fP
-Trigger an event when a BlueGene block enters an ERROR state.
 
 .TP
 \fB\-B\fR, \fB\-\-backup_slurmctld_failure\fR
@@ -119,7 +115,7 @@ Make the trigger permanent. Do not purge it after the event occurs.
 .TP
 \fB\-\-front_end\fR
 Trigger events based upon changes in state of front end nodes rather than
-compute nodes. Applies to BlueGene and Cray architectures only, where the
+compute nodes. Applies to Cray ALPS architectures only, where the
 slurmd daemon executes on front end nodes rather than the compute nodes.
 Use this option with either the \fB\-\-up\fR or \fB\-\-down\fR option.
 

@@ -5,11 +5,11 @@
  *  Copyright (C) 2016 SchedMD LLC
  *  Written by Danny Auble da@schedmd.com, et. al.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -25,13 +25,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -50,6 +50,7 @@
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_pack.h"
 #include "src/common/slurmdbd_defs.h"
+#include "src/common/slurmdbd_pack.h"
 #include "src/common/xsignal.h"
 #include "slurm_persist_conn.h"
 
@@ -257,7 +258,9 @@ static int _process_service_connection(
 					arg, &msg, &buffer, &uid);
 				_persist_free_msg_members(persist_conn, &msg);
 				if (rc != SLURM_SUCCESS &&
-				    rc != ACCOUNTING_FIRST_REG) {
+				    rc != ACCOUNTING_FIRST_REG &&
+				    rc != ACCOUNTING_TRES_CHANGE_DB &&
+				    rc != ACCOUNTING_NODES_CHANGE_DB) {
 					error("Processing last message from "
 					      "connection %d(%s) uid(%d)",
 					      persist_conn->fd,
@@ -403,17 +406,15 @@ extern void slurm_persist_conn_recv_server_fini(void)
 	slurm_mutex_unlock(&thread_count_lock);
 }
 
-extern int slurm_persist_conn_recv_thread_init(
-	slurm_persist_conn_t *persist_conn, int thread_loc, void *arg)
+extern void slurm_persist_conn_recv_thread_init(slurm_persist_conn_t *persist_conn,
+						int thread_loc, void *arg)
 {
-	int retry_cnt, rc = SLURM_SUCCESS;
 	persist_service_conn_t *service_conn;
-	pthread_attr_t attr;
 
 	if (thread_loc < 0)
 		thread_loc = slurm_persist_conn_wait_for_thread_loc();
 	if (thread_loc < 0)
-		return rc;
+		return;
 
 	service_conn = xmalloc(sizeof(persist_service_conn_t));
 
@@ -428,27 +429,10 @@ extern int slurm_persist_conn_recv_thread_init(
 	persist_conn->timeout = 0; /* If this isn't zero we won't wait forever
 				      like we want to.
 				   */
-	retry_cnt = 0;
-
-	slurm_attr_init(&attr);
 
 	//_service_connection(service_conn);
-	while (pthread_create(&persist_service_conn[thread_loc]->thread_id,
-			      &attr,
-			      _service_connection,
-			      (void *)service_conn)) {
-		if (retry_cnt > 0) {
-			error("%s: pthread_create failure, aborting RPC: %m",
-			      __func__);
-			rc = SLURM_ERROR;
-			break;
-		}
-		error("%s: pthread_create failure: %m", __func__);
-		retry_cnt++;
-		usleep(1000);	/* retry in 1 msec */
-	}
-	slurm_attr_destroy(&attr);
-	return rc;
+	slurm_thread_create(&persist_service_conn[thread_loc]->thread_id,
+			    _service_connection, service_conn);
 }
 
 /* Increment thread_count and don't return until its value is no larger
@@ -595,6 +579,7 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 
 	memset(&req, 0, sizeof(persist_init_req_msg_t));
 	req.cluster_name = persist_conn->cluster_name;
+	req.persist_type = persist_conn->persist_type;
 	req.port = persist_conn->my_port;
 	req.version = SLURM_PROTOCOL_VERSION;
 
@@ -630,6 +615,7 @@ extern int slurm_persist_conn_open(slurm_persist_conn_t *persist_conn)
 		if (resp && (rc == SLURM_SUCCESS)) {
 			rc = resp->rc;
 			persist_conn->version = resp->ret_info;
+			persist_conn->flags |= resp->flags;
 		}
 
 		if (rc != SLURM_SUCCESS) {
@@ -1025,12 +1011,17 @@ unpack_error:
 extern void slurm_persist_pack_init_req_msg(
 	persist_init_req_msg_t *msg, Buf buffer)
 {
+	/* always send version field first for backwards compatibility */
 	pack16(msg->version, buffer);
 
-	/* Adding anything to this needs to happen after the version
-	   since this is where the receiver gets the version from. */
-	packstr(msg->cluster_name, buffer);
-	pack16(msg->port, buffer);
+	if (msg->version >= SLURM_MIN_PROTOCOL_VERSION) {
+		packstr(msg->cluster_name, buffer);
+		pack16(msg->persist_type, buffer);
+		pack16(msg->port, buffer);
+	} else {
+		error("%s: invalid protocol version %u",
+		      __func__, msg->version);
+	}
 }
 
 extern int slurm_persist_unpack_init_req_msg(
@@ -1044,8 +1035,16 @@ extern int slurm_persist_unpack_init_req_msg(
 	*msg = msg_ptr;
 
 	safe_unpack16(&msg_ptr->version, buffer);
-	safe_unpackstr_xmalloc(&msg_ptr->cluster_name, &tmp32, buffer);
-	safe_unpack16(&msg_ptr->port, buffer);
+
+	if (msg_ptr->version >= SLURM_MIN_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->cluster_name, &tmp32, buffer);
+		safe_unpack16(&msg_ptr->persist_type, buffer);
+		safe_unpack16(&msg_ptr->port, buffer);
+	} else {
+		error("%s: invalid protocol_version %u",
+		      __func__, msg_ptr->version);
+		goto unpack_error;
+	}
 
 	return SLURM_SUCCESS;
 
@@ -1066,9 +1065,19 @@ extern void slurm_persist_free_init_req_msg(persist_init_req_msg_t *msg)
 extern void slurm_persist_pack_rc_msg(
 	persist_rc_msg_t *msg, Buf buffer, uint16_t protocol_version)
 {
-	packstr(msg->comment, buffer);
-	pack32(msg->rc, buffer);
-	pack16(msg->ret_info, buffer);
+	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		packstr(msg->comment, buffer);
+		pack16(msg->flags, buffer);
+		pack32(msg->rc, buffer);
+		pack16(msg->ret_info, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		packstr(msg->comment, buffer);
+		pack32(msg->rc, buffer);
+		pack16(msg->ret_info, buffer);
+	} else {
+		error("%s: invalid protocol version %u",
+		      __func__, protocol_version);
+	}
 }
 
 extern int slurm_persist_unpack_rc_msg(
@@ -1080,9 +1089,20 @@ extern int slurm_persist_unpack_rc_msg(
 
 	*msg = msg_ptr;
 
-	safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
-	safe_unpack32(&msg_ptr->rc, buffer);
-	safe_unpack16(&msg_ptr->ret_info, buffer);
+	if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
+		safe_unpack16(&msg_ptr->flags, buffer);
+		safe_unpack32(&msg_ptr->rc, buffer);
+		safe_unpack16(&msg_ptr->ret_info, buffer);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		safe_unpackstr_xmalloc(&msg_ptr->comment, &uint32_tmp, buffer);
+		safe_unpack32(&msg_ptr->rc, buffer);
+		safe_unpack16(&msg_ptr->ret_info, buffer);
+	} else {
+		error("%s: invalid protocol_version %u",
+		      __func__, protocol_version);
+		goto unpack_error;
+	}
 
 	return SLURM_SUCCESS;
 
@@ -1111,6 +1131,28 @@ extern Buf slurm_persist_make_rc_msg(slurm_persist_conn_t *persist_conn,
 	memset(&resp, 0, sizeof(persist_msg_t));
 
 	msg.rc = rc;
+	msg.comment = comment;
+	msg.ret_info = ret_info;
+
+	resp.msg_type = PERSIST_RC;
+	resp.data = &msg;
+
+	return slurm_persist_msg_pack(persist_conn, &resp);
+}
+
+extern Buf slurm_persist_make_rc_msg_flags(slurm_persist_conn_t *persist_conn,
+					   uint32_t rc, char *comment,
+					   uint16_t flags,
+					   uint16_t ret_info)
+{
+	persist_rc_msg_t msg;
+	persist_msg_t resp;
+
+	memset(&msg, 0, sizeof(persist_rc_msg_t));
+	memset(&resp, 0, sizeof(persist_msg_t));
+
+	msg.rc = rc;
+	msg.flags = flags;
 	msg.comment = comment;
 	msg.ret_info = ret_info;
 

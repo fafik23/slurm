@@ -6,11 +6,11 @@
  *  Written by Martin Perry (martin.perry@bull.com) based on code from
  *  Matthieu Hautreux
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -62,8 +62,7 @@
 /* xcgroup_t task_blkio_cg; */
 
 
-/* extern int jobacct_gather_cgroup_blkio_init( */
-/* 	slurm_cgroup_conf_t *slurm_cgroup_conf) */
+/* extern int jobacct_gather_cgroup_blkio_init(void) */
 /* { */
 /* 	/\* initialize user/job/jobstep cgroup relative paths *\/ */
 /* 	user_cgroup_path[0]='\0'; */
@@ -71,7 +70,7 @@
 /* 	jobstep_cgroup_path[0]='\0'; */
 
 /* 	/\* initialize blkio cgroup namespace *\/ */
-/* 	if (xcgroup_ns_create(slurm_cgroup_conf, &blkio_ns, "", "blkio") */
+/* 	if (xcgroup_ns_create(&blkio_ns, "", "blkio") */
 /* 	    != XCGROUP_SUCCESS) { */
 /* 		error("jobacct_gather/cgroup: unable to create blkio " */
 /* 		      "namespace"); */
@@ -80,8 +79,7 @@
 /* 	return SLURM_SUCCESS; */
 /* } */
 
-/* extern int jobacct_gather_cgroup_blkio_fini( */
-/* 	slurm_cgroup_conf_t *slurm_cgroup_conf) */
+/* extern int jobacct_gather_cgroup_blkio_fini(void) */
 /* { */
 /* 	if (user_cgroup_path[0] == '\0' || */
 /* 	    job_cgroup_path[0] == '\0' || */
@@ -189,7 +187,7 @@
 /* 	 * setting it up. As soon as the step cgroup is created, we can release */
 /* 	 * the lock. */
 /* 	 * Indeed, consecutive slurm steps could result in cg being removed */
-/* 	 * between the next EEXIST instanciation and the first addition of */
+/* 	 * between the next EEXIST instantiation and the first addition of */
 /* 	 * a task. The release_agent will have to lock the root blkio cgroup */
 /* 	 * to avoid this scenario. */
 /* 	 *\/ */
@@ -220,7 +218,7 @@
 
 /* 	if (xcgroup_instantiate(&user_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
-/* 		error("jobacct_gather/cgroup: unable to instanciate user %u " */
+/* 		error("jobacct_gather/cgroup: unable to instantiate user %u " */
 /* 		      "blkio cgroup", uid); */
 /* 		fstatus = SLURM_ERROR; */
 /* 		goto error; */
@@ -242,7 +240,7 @@
 /* 	if (xcgroup_instantiate(&job_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
 /* 		xcgroup_destroy(&job_blkio_cg); */
-/* 		error("jobacct_gather/cgroup: unable to instanciate job %u " */
+/* 		error("jobacct_gather/cgroup: unable to instantiate job %u " */
 /* 		      "blkio cgroup", jobid); */
 /* 		fstatus = SLURM_ERROR; */
 /* 		goto error; */

@@ -1,6 +1,6 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
-# Purpose: Test of SLURM functionality
+# Purpose: Test of Slurm functionality
 #          sacctmgr federation functionality
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
@@ -10,22 +10,22 @@
 # Copyright (C) 2016 SchedMD LLC.
 # Written by Brian Christiansen <brian@schedmd.com>
 #
-# This file is part of SLURM, a resource management program.
+# This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
-# SLURM is free software; you can redistribute it and/or modify it under
+# Slurm is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
 # Software Foundation; either version 2 of the License, or (at your option)
 # any later version.
 #
-# SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+# Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 # details.
 #
 # You should have received a copy of the GNU General Public License along
-# with SLURM; if not, write to the Free Software Foundation, Inc.,
+# with Slurm; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 
@@ -77,22 +77,27 @@ proc delete_object { object names } {
 		-re "privilege to perform this action" {
 			send_user "FAILURE: don't have privileges."
 			incr rc
+			exp_continue
 		}
 		-re "(There was a problem|Unknown condition|Bad format on|Bad MaxWall|Unknown option)" {
 			send_user "FAILURE: there was a problem with the sacctmgr command\n"
 			incr rc
+			exp_continue
 		}
 		-re "Problem getting" {
 			send_user "FAILURE: there was a problem getting information from the database\n"
 			incr rc
+			exp_continue
 		}
 		-re "Problem adding" {
 			send_user "FAILURE: there was an unknown problem\n"
 			incr rc
+			exp_continue
 		}
 		-re "No associations" {
 			send_user "FAILURE: your command didn't return anything\n"
 			incr rc
+			exp_continue
 		}
 		-re "Deleting $object" {
 			incr matches
@@ -219,6 +224,7 @@ set my_pid [spawn $sacctmgr -i add cluster $tc1 federation=$fed1]
 expect {
 	-re "The federation $fed1 doesn't exist." {
 		incr matches
+		exp_continue
 	}
 	timeout {
 		send_user "\nFAILURE: sacctmgr add not responding\n"
@@ -617,6 +623,76 @@ expect {
 	}
 }
 if {$exit_code || $matches != 6} {
+	send_user "$matches FAILURE: unexpected error.\n"
+	end_it 1
+}
+
+
+#####################################
+# TEST: attempt to set clusters to multiple federations
+#####################################
+set matches 0
+set my_pid [spawn $sacctmgr -i modify federation $fed1 $fed2 set clusters=$tc1]
+expect {
+	-re "Can't assign clusters to multiple federations." {
+		incr matches
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+if {$exit_code || $matches != 1} {
+	send_user "$matches FAILURE: unexpected error.\n"
+	end_it 1
+}
+
+#####################################
+# TEST: attempt to set clusters with no where clause
+#####################################
+set matches 0
+set my_pid [spawn $sacctmgr -i modify federation set clusters=$tc1]
+expect {
+	-re "Can't assign clusters to multiple federations." {
+		incr matches
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+if {$exit_code || $matches != 1} {
+	send_user "$matches FAILURE: unexpected error.\n"
+	end_it 1
+}
+
+set matches 0
+set my_pid [spawn $sacctmgr -i modify federation set clusters=$tc1 where cluster=$tc1]
+expect {
+	-re "Can't assign clusters to multiple federations." {
+		incr matches
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+if {$exit_code || $matches != 1} {
 	send_user "$matches FAILURE: unexpected error.\n"
 	end_it 1
 }
@@ -1227,8 +1303,17 @@ expect {
 	"(N/y):" {
 		incr matches
 		send "y"
-		expect eof
 	}
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+expect {
 	timeout {
 		send_user "\nFAILURE: sacctmgr add not responding\n"
 		slow_kill $my_pid
@@ -1494,8 +1579,16 @@ set matches 0
 # set state to something other than ACTIVE, it should stay the same.
 set my_pid [spawn $sacctmgr -i modify cluster $tc4 set fedstate=DRAIN]
 expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
-expect -re $
+
 set my_pid [spawn $sacctmgr -i modify cluster $tc4 set federation=$fed3]
 expect {
 	-re "The cluster $tc4 is already assigned to federation $fed3" {
@@ -1663,8 +1756,16 @@ if {$exit_code || $matches != 2} {
 # same thing for modifying federation - state should go to active
 set my_pid [spawn $sacctmgr -i modify cluster $tc4 set fedstate=DRAIN]
 expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
-expect -re $
+
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation $fed3 set clusters+=$tc4]
 expect {
@@ -1808,8 +1909,6 @@ if {$exit_code || $matches != 1} {
 	end_it 1
 }
 
-
-
 #####################################
 # TEST: modify federation change clusters - must remove others
 #####################################
@@ -1820,8 +1919,15 @@ if {$exit_code || $matches != 1} {
 # unset clusters
 set my_pid [spawn $sacctmgr -i modify cluster $tc1 $tc2 $tc3 set federation=]
 expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
-expect -re $
 
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation $fed1 set clusters=$tc1,$tc2]
@@ -2087,7 +2193,6 @@ if {$exit_code || $matches != 2} {
 	end_it 1
 }
 
-
 set matches 0
 set my_pid [spawn $sacctmgr -i modify federation $fed1 set clusters-=$tc1,$tc3]
 expect {
@@ -2339,8 +2444,15 @@ if {$exit_code || $matches != 4} {
 #####################################
 set my_pid [spawn $sacctmgr -i delete federation $fed2 $fed3]
 expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
-expect -re $
 
 set matches 0
 set my_pid [spawn $sacctmgr -i add federation $fed2 clusters=$tc1,$tc2]
@@ -2529,8 +2641,15 @@ if {$exit_code || $matches != 5} {
 # unset federations
 set my_pid [spawn $sacctmgr -i modify federation $fed1 set clusters=]
 expect {
+	timeout {
+		send_user "\nFAILURE: sacctmgr add not responding\n"
+		slow_kill $my_pid
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
 }
-expect -re $
 
 set matches 0
 set tmp_clusters ""
@@ -2651,7 +2770,7 @@ expect {
 		incr matches
 		exp_continue
 	}
-	-re "sacctmgr: error: Too many clusters in federation$eol" {
+	-re "sacctmgr: error: slurmdbd: Too many clusters in federation$eol" {
 		incr matches
 		exp_continue
 	}

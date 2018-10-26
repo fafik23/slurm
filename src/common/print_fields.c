@@ -7,11 +7,11 @@
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 #include "src/common/print_fields.h"
@@ -161,8 +161,8 @@ extern void print_fields_uint16(print_field_t *field, uint32_t value, int last)
 {
 	int abs_len = abs(field->len);
 	/* (value == unset)  || (value == cleared) */
-	if (((uint16_t)value == (uint16_t)NO_VAL)
-	    || ((uint16_t)value == (uint16_t)INFINITE)) {
+	if (((uint16_t)value == NO_VAL16)
+	    || ((uint16_t)value == INFINITE16)) {
 		if (print_fields_parsable_print
 		   == PRINT_FIELDS_PARSABLE_NO_ENDING
 		   && last)
@@ -278,10 +278,28 @@ extern void print_fields_double(print_field_t *field, double value, int last)
 			printf("%f|", value);
 		else if (print_fields_parsable_print && fields_delimiter)
 			printf("%f%s", value, fields_delimiter);
-		else if (field->len == abs_len)
-			printf("%*f ", abs_len, value);
-		else
-			printf("%-*f ", abs_len, value);
+		else {
+			int length, width = abs_len;
+			char *tmp = xmalloc(width + 10);
+			sprintf(tmp, "%*f", abs_len, value);
+			length = strlen(tmp);
+			if (length > width) {
+				sprintf(tmp, "%*.*e", width, width, value);
+				length = strlen(tmp);
+				if (length > width)
+					width -= length - width;
+				if (field->len == abs_len)
+					printf("%*.*e ", width, width, value);
+				else
+					printf("%-*.*e ", width, width, value);
+			} else {
+				if (field->len == abs_len)
+					printf("%*f ", width, value);
+				else
+					printf("%-*f ", width, value);
+			}
+			xfree(tmp);
+		}
 	}
 }
 

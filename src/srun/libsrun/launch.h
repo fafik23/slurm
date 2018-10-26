@@ -4,11 +4,11 @@
  *  Copyright (C) 2012 SchedMD LLC
  *  Written by Danny Auble <da@schedmd.com>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -24,13 +24,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -70,7 +70,7 @@ extern slurm_step_layout_t *launch_common_get_slurm_step_layout(
 extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 					 void (*signal_function)(int),
 					 sig_atomic_t *destroy_job,
-					 opt_t *opt_local);
+					 slurm_opt_t *opt_local);
 
 /*
  * launch_common_set_stdio_fds() sets the stdio_fds to given info.
@@ -80,7 +80,7 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
  */
 extern void launch_common_set_stdio_fds(srun_job_t *job,
 					slurm_step_io_fds_t *cio_fds,
-					opt_t *opt_local);
+					slurm_opt_t *opt_local);
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -101,7 +101,7 @@ extern int launch_fini(void);
  * IN rest - extra parameters on the command line not processed by srun
  * IN opt_local - options used for step creation
  */
-extern int launch_g_setup_srun_opt(char **rest, opt_t *opt_local);
+extern int launch_g_setup_srun_opt(char **rest, slurm_opt_t *opt_local);
 
 /*
  * launch_g_handle_multi_prog_verify() is called to verify a
@@ -113,7 +113,7 @@ extern int launch_g_setup_srun_opt(char **rest, opt_t *opt_local);
  *
  * RET 0 if not handled, 1 if handled
  */
-extern int launch_g_handle_multi_prog_verify(int command_pos, opt_t *opt_local);
+extern int launch_g_handle_multi_prog_verify(int command_pos, slurm_opt_t *opt_local);
 
 /*
  * launch_g_create_job_step() creates the job step.
@@ -124,14 +124,13 @@ extern int launch_g_handle_multi_prog_verify(int command_pos, opt_t *opt_local);
  * IN destroy_job - pointer to a global flag signifying if the job was
  *                  canceled while allocating.
  * IN opt_local - options used for step creation
- * IN pack_offset - offset within a pack job, -1 if not part of pack job
  *
  * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
  */
 extern int launch_g_create_job_step(srun_job_t *job, bool use_all_cpus,
 				    void (*signal_function)(int),
-				    sig_atomic_t *destroy_job, opt_t *opt_local,
-				    int pack_offset);
+				    sig_atomic_t *destroy_job,
+				    slurm_opt_t *opt_local);
 
 /*
  * launch_g_step_launch() is called to launch the job step that
@@ -147,7 +146,7 @@ extern int launch_g_create_job_step(srun_job_t *job, bool use_all_cpus,
 extern int launch_g_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
 				uint32_t *global_rc,
 				slurm_step_launch_callbacks_t *step_callbacks,
-				opt_t *opt_local);
+				slurm_opt_t *opt_local);
 
 /*
  * launch_g_step_wait() is called to wait for the job step to be finished.
@@ -155,12 +154,11 @@ extern int launch_g_step_launch(srun_job_t *job, slurm_step_io_fds_t *cio_fds,
  * IN/OUT job - the job waiting to finish.
  * IN got_alloc - if the resource allocation was created inside srun
  * IN opt_local - options used for step creation
- * IN pack_offset - offset within a pack job, -1 if not part of pack job
  *
  * RETURN SLURM_SUCCESS on success || SLURM_ERROR else wise
  */
-extern int launch_g_step_wait(srun_job_t *job, bool got_alloc, opt_t *opt_local,
-			      int pack_offset);
+extern int launch_g_step_wait(srun_job_t *job, bool got_alloc,
+			      slurm_opt_t *opt_local);
 
 /*
  * launch_g_step_terminate() is called to end the job step.

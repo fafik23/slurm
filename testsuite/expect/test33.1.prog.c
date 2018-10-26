@@ -6,11 +6,11 @@
  *
  *  Written by Rod Schultz <rod.schultz@bull.com>
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -233,7 +233,7 @@ int _run_test(char** testcase, int lines)
 	if (route_g_split_hostlist(hl, &hll, &hl_count, 0)) {
 		info("Unable to split forward hostlist");
 		_print_test(testcase,lines);
-		rc = SLURM_FAILURE;
+		rc = SLURM_ERROR;
 		goto clean;
 	}
 	if (hl_count != (lines-1)) {
@@ -241,7 +241,7 @@ int _run_test(char** testcase, int lines)
 			hl_count);
 		_print_test(testcase,lines);
 		_print_results(hll, hl_count);
-		rc = SLURM_FAILURE;
+		rc = SLURM_ERROR;
 		goto clean;
 	}
 	for (i = 0; i < hl_count; i++) {
@@ -251,7 +251,7 @@ int _run_test(char** testcase, int lines)
 				testcase[i+1]);
 			_print_test(testcase,lines);
 			xfree(list);
-			rc = SLURM_FAILURE;
+			rc = SLURM_ERROR;
 			goto clean;
 		}
 		xfree(list);
@@ -313,7 +313,7 @@ int main(int argc, char *argv[])
 					et = _measure_api(measure_case);
 				} else {
 					rc = _run_test(testcase, tl);
-					if (rc == SLURM_FAILURE)
+					if (rc == SLURM_ERROR)
 						nfail++;
 				}
 				tl = -1;
@@ -329,7 +329,7 @@ int main(int argc, char *argv[])
 			et = _measure_api(measure_case);
 		} else {
 			rc = _run_test(testcase, tl);
-			if (rc == SLURM_FAILURE)
+			if (rc == SLURM_ERROR)
 				nfail++;
 		}
 	}

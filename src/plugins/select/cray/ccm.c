@@ -6,11 +6,11 @@
  *  Copyright 2016 Cray Inc. All Rights Reserved.
  *  Written by Marlys Kohnke
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -26,13 +26,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -164,8 +164,7 @@ static int _parse_ccm_config(char *entry, char **ccm_partition)
 			token[token_sz - 1] = '\0';
 		}
 		if (strlen(token) > 0) {
-			ccm_partition[i] =
-				xmalloc((token_sz + 1) * sizeof(char));
+			ccm_partition[i] = xmalloc(token_sz + 1);
 			strcpy(ccm_partition[i], token);
 			i++;
 		}
@@ -501,47 +500,6 @@ extern void ccm_get_config(void)
 }
 
 /*
- * Create a detached pthread to handle CCM prolog and epilog
- * activities.  This is only called if CCM is enabled and the batch job has
- * been identified as coming from a CCM partition.
- */
-extern void spawn_ccm_thread(
-	void *obj_ptr, void *(*start_routine) (void *))
-{
-	pthread_attr_t attr_agent;
-	pthread_t thread_agent;
-	int retries;
-	struct job_record *job_ptr = (struct job_record *)obj_ptr;
-
-	/* spawn a pthread to start CCM prolog or epilog activities */
-	slurm_attr_init(&attr_agent);
-	if (pthread_attr_setdetachstate(&attr_agent, PTHREAD_CREATE_DETACHED)) {
-		CRAY_ERR("CCM job %u pthread_attr_setdetachstate error %m",
-			 job_ptr->job_id);
-	}
-	retries = 0;
-	while (pthread_create(&thread_agent, &attr_agent,
-			      start_routine, obj_ptr)) {
-		CRAY_ERR("CCM job_id %u pthread_create error %m",
-			 job_ptr->job_id);
-		if (++retries > CCM_MAX_PTHREAD_RETRIES) {
-			if (!xstrcasecmp((char *)start_routine, "ccm_begin")) {
-				/* Decrement so job launch can continue */
-				debug("CCM job %u prolog_running_decr, cur %d",
-				      job_ptr->job_id,
-				      job_ptr->details->prolog_running);
-				prolog_running_decr(job_ptr);
-			}
-			fatal("CCM job %u _spawn_ccm_thread can't create "
-			      "pthread", job_ptr->job_id);
-		}
-		usleep(100000);	/* sleep 1/10th second and retry */
-	}
-	slurm_attr_destroy(&attr_agent);
-	return;
-}
-
-/*
  * Check if this batch job is being started from a CCM partition.
  * Returns 1 if so, otherwise 0.
  */
@@ -571,18 +529,32 @@ extern int ccm_check_partitions(struct job_record *job_ptr)
 extern void *ccm_begin(void *args)
 {
 	int i, j, num_ents, kill = 1;
+	uint32_t job_id;
 	size_t copysz;
 	ccm_info_t ccm_info;
 	char err_str_buf[128], srun_msg_buf[256];
 	struct job_record *job_ptr = (struct job_record *)args;
 	slurmctld_lock_t job_read_lock =
-		{NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		{ NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+	slurmctld_lock_t job_write_lock =
+		{ NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, READ_LOCK };
+
+	lock_slurmctld(job_read_lock);
+	if (job_ptr->magic != JOB_MAGIC) {
+		unlock_slurmctld(job_read_lock);
+		error("ccm job has disappeared");
+		return NULL;
+	} else if (IS_JOB_COMPLETING(job_ptr)) {
+		unlock_slurmctld(job_read_lock);
+		debug("ccm %u job has already completed", job_ptr->job_id);
+		return NULL;
+	}
+
+	job_id = job_ptr->job_id;
 
 	debug2("CCM job %u_ccm_begin partition %s", job_ptr->job_id,
 	       job_ptr->partition);
 	memset(&ccm_info, 0, sizeof(ccm_info_t));
-
-	lock_slurmctld(job_read_lock);
 
 	ccm_info.job_id = job_ptr->job_id;
 	ccm_info.user_id = job_ptr->user_id;
@@ -626,7 +598,6 @@ extern void *ccm_begin(void *args)
 		ccm_info.task_dist = job_ptr->details->task_dist;
 	}
 	ccm_info.plane_size = job_ptr->details->plane_size;
-	unlock_slurmctld(job_read_lock);
 
 	debug("CCM job %u, user_id %u, nodelist %s, node_cnt %d, "
 	      "num_tasks %d", ccm_info.job_id, ccm_info.user_id,
@@ -642,10 +613,12 @@ extern void *ccm_begin(void *args)
 			num_ents++;
 		}
 	}
+	unlock_slurmctld(job_read_lock);
+
 	if (ccm_info.node_cnt != num_ents) {
 		CRAY_ERR("CCM job %u ccm_info.node_cnt %d doesn't match the "
 			 "number of cpu_count_reps entries %d",
-			 job_ptr->job_id, ccm_info.node_cnt, num_ents);
+			 job_id, ccm_info.node_cnt, num_ents);
 		snprintf(err_str_buf, sizeof(err_str_buf),
 			 "node_cnt %d != cpu_count_reps %d, prolog not run",
 			 ccm_info.node_cnt, num_ents);
@@ -654,6 +627,14 @@ extern void *ccm_begin(void *args)
 					      ccm_prolog_path);
 		snprintf(err_str_buf, sizeof(err_str_buf),
 			 "prolog failed");
+	}
+
+	lock_slurmctld(job_write_lock);
+	if ((job_ptr->magic  != JOB_MAGIC) ||
+	    (job_ptr->job_id != job_id)) {
+		unlock_slurmctld(job_write_lock);
+		error("ccm job %u has disappeared after running ccm", job_id);
+		return NULL;
 	}
 	debug("CCM ccm_begin job %u prolog_running_decr, cur %d",
 	      ccm_info.job_id, job_ptr->details->prolog_running);
@@ -664,8 +645,9 @@ extern void *ccm_begin(void *args)
 		snprintf(srun_msg_buf, sizeof(srun_msg_buf),
 			 "CCM %s, job %u killed", err_str_buf, ccm_info.job_id);
 		srun_user_message(job_ptr, srun_msg_buf);
-		(void) job_signal(job_ptr->job_id, SIGKILL, 0, 0, false);
+		(void) job_signal(job_ptr, SIGKILL, 0, 0, false);
 	}
+	unlock_slurmctld(job_write_lock);
 	/* Free the malloc'd fields within this structure */
 	_free_ccm_info(&ccm_info);
 	return NULL;

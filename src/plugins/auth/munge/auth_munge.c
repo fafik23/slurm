@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  auth_munge.c - SLURM auth implementation via Chris Dunlap's Munge
+ *  auth_munge.c - Slurm auth implementation via Chris Dunlap's Munge
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -7,11 +7,11 @@
  *  Written by Mark Grondona <mgrondona@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
- *  This file is part of SLURM, a resource management program.
+ *  This file is part of Slurm, a resource management program.
  *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
- *  SLURM is free software; you can redistribute it and/or modify it under
+ *  Slurm is free software; you can redistribute it and/or modify it under
  *  the terms of the GNU General Public License as published by the Free
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
@@ -27,13 +27,13 @@
  *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
- *  SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+ *  Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
  *  WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  *  FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  *  details.
  *
  *  You should have received a copy of the GNU General Public License along
- *  with SLURM; if not, write to the Free Software Foundation, Inc.,
+ *  with Slurm; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
@@ -51,6 +51,7 @@
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/slurm_time.h"
+#include "src/common/util-net.h"
 
 #define MUNGE_ERRNO_OFFSET	1000
 #define RETRY_COUNT		20
@@ -67,14 +68,14 @@
  * plugin_type - a string suggesting the type of the plugin or its
  * applicability to a particular form of data or method of data handling.
  * If the low-level plugin API is used, the contents of this string are
- * unimportant and may be anything.  SLURM uses the higher-level plugin
+ * unimportant and may be anything.  Slurm uses the higher-level plugin
  * interface which requires this string to be of the form
  *
  *	<application>/<method>
  *
  * where <application> is a description of the intended application of
- * the plugin (e.g., "auth" for SLURM authentication) and <method> is a
- * description of how this plugin satisfies that application.  SLURM will
+ * the plugin (e.g., "auth" for Slurm authentication) and <method> is a
+ * description of how this plugin satisfies that application.  Slurm will
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
@@ -102,6 +103,7 @@ typedef struct _slurm_auth_credential {
 	int  magic;        /* magical munge validity magic                   */
 #endif
 	char   *m_str;     /* munged string                                  */
+	struct in_addr addr; /* IP addr where cred was encoded               */
 	void   *buf;       /* Application specific data                      */
 	bool    verified;  /* true if this cred has been verified            */
 	int     len;       /* amount of App data                             */
@@ -168,18 +170,6 @@ slurm_auth_credential_t *slurm_auth_create(char *opts)
 		return NULL;
 	}
 
-#if 0
-	/* This logic can be used to determine what socket is used by default.
-	 * A typical name is "/var/run/munge/munge.socket.2" */
-{
-	char *old_socket;
-	if (munge_ctx_get(ctx, MUNGE_OPT_SOCKET, &old_socket) != EMUNGE_SUCCESS)
-		error("munge_ctx_get failure");
-	else
-		info("Default Munge socket is %s", old_socket);
-}
-#endif
-
 	if (opts) {
 		socket = _auth_opts_to_socket(opts);
 		rc = munge_ctx_set(ctx, MUNGE_OPT_SOCKET, socket);
@@ -202,7 +192,7 @@ slurm_auth_credential_t *slurm_auth_create(char *opts)
 	cred->len      = 0;
 	cred->cr_errno = SLURM_SUCCESS;
 
-	xassert(cred->magic = MUNGE_MAGIC);
+	xassert((cred->magic = MUNGE_MAGIC));
 
 	/*
 	 *  Temporarily block SIGALARM to avoid misleading
@@ -351,12 +341,53 @@ slurm_auth_get_gid( slurm_auth_credential_t *cred, char *opts )
 	return cred->gid;
 }
 
+
+/*
+ * Obtain the Host addr from where the credential originated.
+ */
+char *slurm_auth_get_host(slurm_auth_credential_t *cred, char *opts)
+{
+	char *hostname = NULL;
+	struct hostent *he;
+	char   h_buf[4096];
+	int    h_err  = 0;
+
+	if (cred == NULL) {
+		plugin_errno = SLURM_AUTH_BADARG;
+		return NULL;
+	}
+
+	if (!cred->verified) {
+		int rc;
+		char *socket = _auth_opts_to_socket(opts);
+		rc = _decode_cred(cred, socket);
+		xfree(socket);
+		if (rc < 0) {
+			cred->cr_errno = SLURM_AUTH_INVALID;
+			return NULL;
+		}
+	}
+
+	xassert(cred->magic == MUNGE_MAGIC);
+
+	he = get_host_by_addr((char *)&cred->addr.s_addr,
+			      sizeof(cred->addr.s_addr),
+			      AF_INET, (void *)&h_buf, sizeof(h_buf), &h_err);
+	if (he)
+		hostname = xstrdup(he->h_name);
+	else
+		error("%s: Lookup failed: %s", __func__, host_strerror(h_err));
+
+	return hostname;
+}
+
 /*
  * Marshall a credential for transmission over the network, according to
- * SLURM's marshalling protocol.
+ * Slurm's marshalling protocol.
  */
 int
-slurm_auth_pack( slurm_auth_credential_t *cred, Buf buf )
+slurm_auth_pack( slurm_auth_credential_t *cred, Buf buf,
+		 uint16_t protocol_version )
 {
 	if (cred == NULL) {
 		plugin_errno = SLURM_AUTH_BADARG;
@@ -369,26 +400,43 @@ slurm_auth_pack( slurm_auth_credential_t *cred, Buf buf )
 
 	xassert(cred->magic == MUNGE_MAGIC);
 
-	/*
-	 * Prefix the credential with a description of the credential
-	 * type so that it can be sanity-checked at the receiving end.
-	 */
-	packstr( (char *) plugin_type, buf );
-	pack32( plugin_version, buf );
-	/*
-	 * Pack the data.
-	 */
-	packstr(cred->m_str, buf);
+	if (protocol_version >= SLURM_19_05_PROTOCOL_VERSION) {
+		/*
+		 * Prefix the credential with a description of the credential
+		 * type so that it can be sanity-checked at the receiving end.
+		 */
+		packstr((char *) plugin_type, buf);
+		pack32(plugin_version, buf);
+		/*
+		 * Pack the data.
+		 */
+		packstr(cred->m_str, buf);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		/*
+		 * Prefix the credential with a description of the credential
+		 * type so that it can be sanity-checked at the receiving end.
+		 */
+		packstr((char *) plugin_type, buf);
+		pack32(plugin_version, buf);
+		/*
+		 * Pack the data.
+		 */
+		packstr(cred->m_str, buf);
+	} else {
+		error("%s: Unknown protocol version %d",
+		      __func__, protocol_version);
+		return SLURM_ERROR;
+	}
 
 	return SLURM_SUCCESS;
 }
 
 /*
  * Unmarshall a credential after transmission over the network according
- * to SLURM's marshalling protocol.
+ * to Slurm's marshalling protocol.
  */
 slurm_auth_credential_t *
-slurm_auth_unpack( Buf buf )
+slurm_auth_unpack( Buf buf, uint16_t protocol_version )
 {
 	slurm_auth_credential_t *cred = NULL;
 	char    *type;
@@ -400,36 +448,68 @@ slurm_auth_unpack( Buf buf )
 		return NULL;
 	}
 
-	/*
-	 * Get the authentication type.
-	 */
-	safe_unpackmem_ptr( &type, &size, buf );
 
-	if (( type == NULL ) ||
-	    ( xstrcmp( type, plugin_type ) != 0 )) {
-		debug("slurm_auth_unpack error: packed by %s unpack by %s",
-		      type, plugin_type);
-		plugin_errno = SLURM_AUTH_MISMATCH;
-		return NULL;
+	if (protocol_version >= SLURM_19_05_PROTOCOL_VERSION) {
+		/*
+		 * Get the authentication type.
+		 */
+		safe_unpackmem_ptr(&type, &size, buf);
+
+		if (xstrcmp(type, plugin_type)) {
+			debug("slurm_auth_unpack error: packed by %s unpack by %s",
+			      type, plugin_type);
+			plugin_errno = SLURM_AUTH_MISMATCH;
+			return NULL;
+		}
+		safe_unpack32(&version, buf);
+
+		/* Allocate and initialize credential. */
+		cred = xmalloc(sizeof(*cred));
+		cred->verified = false;
+		cred->m_str    = NULL;
+		cred->buf      = NULL;
+		cred->len      = 0;
+		cred->cr_errno = SLURM_SUCCESS;
+
+		xassert((cred->magic = MUNGE_MAGIC));
+
+		safe_unpackstr_malloc(&cred->m_str, &size, buf);
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+		/*
+		 * Get the authentication type.
+		 */
+		safe_unpackmem_ptr(&type, &size, buf);
+
+		if (xstrcmp(type, plugin_type)) {
+			debug("slurm_auth_unpack error: packed by %s unpack by %s",
+			      type, plugin_type);
+			plugin_errno = SLURM_AUTH_MISMATCH;
+			return NULL;
+		}
+		safe_unpack32(&version, buf);
+
+		/* Allocate and initialize credential. */
+		cred = xmalloc(sizeof(*cred));
+		cred->verified = false;
+		cred->m_str    = NULL;
+		cred->buf      = NULL;
+		cred->len      = 0;
+		cred->cr_errno = SLURM_SUCCESS;
+
+		xassert((cred->magic = MUNGE_MAGIC));
+
+		safe_unpackstr_malloc(&cred->m_str, &size, buf);
+	} else {
+		error("%s: unknown protocol version %u",
+		      __func__, protocol_version);
+		goto unpack_error;
 	}
-	safe_unpack32( &version, buf );
 
-	/* Allocate and initialize credential. */
-	cred = xmalloc(sizeof(*cred));
-	cred->verified = false;
-	cred->m_str    = NULL;
-	cred->buf      = NULL;
-	cred->len      = 0;
-	cred->cr_errno = SLURM_SUCCESS;
-
-	xassert(cred->magic = MUNGE_MAGIC);
-
-	safe_unpackstr_malloc(&cred->m_str, &size, buf);
 	return cred;
 
  unpack_error:
 	plugin_errno = SLURM_AUTH_UNPACK;
-	xfree( cred );
+	slurm_auth_destroy(cred);
 	return NULL;
 }
 
@@ -490,7 +570,6 @@ slurm_auth_errstr( int slurm_errno )
 	}
 }
 
-
 /*
  * Decode the munge encoded credential `m_str' placing results, if validated,
  * into slurm credential `c'
@@ -538,9 +617,11 @@ _decode_cred(slurm_auth_credential_t *c, char *socket)
 		if (err == EMUNGE_SOCKET)
 			error("If munged is up, restart with --num-threads=10");
 #ifdef MULTIPLE_SLURMD
-		/* In multple slurmd mode this will happen all the
-		 * time since we are authenticating with the same
-		 * munged.
+		/*
+		 * In multiple slurmd mode this will happen all the time since
+		 * we are authenticating with the same munged. It can also
+		 * happen if slurmctld and slurmd are on the same node and
+		 * message aggregation is configured (error is recoverable).
 		 */
 		if (err != EMUNGE_CRED_REPLAYED) {
 #endif
@@ -564,14 +645,20 @@ _decode_cred(slurm_auth_credential_t *c, char *socket)
 		goto done;
 	}
 
+	/*
+	 * Store the addr so we can use it to verify where we came from later if
+	 * needed.
+	 */
+	if (munge_ctx_get(ctx, MUNGE_OPT_ADDR4, &c->addr) != EMUNGE_SUCCESS)
+		error ("auth_munge: Unable to retrieve addr: %s",
+		       munge_ctx_strerror(ctx));
+
 	c->verified = true;
 
      done:
 	munge_ctx_destroy(ctx);
 	return err ? SLURM_ERROR : SLURM_SUCCESS;
 }
-
-
 
 /*
  *  Allocate space for Munge credential info structure

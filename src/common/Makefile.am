@@ -10,7 +10,7 @@
 
 AUTOMAKE_OPTIONS = foreign
 
-AM_CPPFLAGS     = -I$(top_srcdir) $(BG_INCLUDES) $(lua_CFLAGS)
+AM_CPPFLAGS     = -I$(top_srcdir) $(lua_CFLAGS)
 
 noinst_PROGRAMS = libcommon.o libeio.o libspank.o
 # This is needed if compiling on windows
@@ -40,7 +40,6 @@ libcommon_la_SOURCES = 			\
 	net.c net.h                     \
 	log.c log.h			\
 	cbuf.c cbuf.h			\
-	safeopen.c safeopen.h		\
 	bitstring.c bitstring.h 	\
 	mpi.c slurm_mpi.h               \
 	pack.c pack.h			\
@@ -79,6 +78,7 @@ libcommon_la_SOURCES = 			\
 	slurmdb_defs.c slurmdb_defs.h   \
 	slurmdb_pack.c slurmdb_pack.h   \
 	slurmdbd_defs.c slurmdbd_defs.h	\
+	slurmdbd_pack.c slurmdbd_pack.h	\
 	working_cluster.c working_cluster.h   \
 	uid.c uid.h			\
 	util-net.c util-net.h		\
@@ -91,6 +91,7 @@ libcommon_la_SOURCES = 			\
 	slurm_acct_gather_interconnect.c slurm_acct_gather_interconnect.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
+	slurm_opt.h			\
 	slurm_route.c slurm_route.h	\
 	slurm_time.c slurm_time.h	\
 	slurm_topology.c slurm_topology.h \
@@ -122,8 +123,13 @@ libcommon_la_SOURCES = 			\
 	xcgroup_read_config.c xcgroup_read_config.h \
 	xlua.c xlua.h                   \
 	callerid.c callerid.h		\
-	slurm_persist_conn.c slurm_persist_conn.h
-
+	group_cache.c group_cache.h	\
+	slurm_persist_conn.c slurm_persist_conn.h \
+	run_command.c run_command.h	\
+	x11_util.c x11_util.h		\
+	state_control.c state_control.h	\
+	tres_bind.c tres_bind.h		\
+	tres_frequency.c tres_frequency.h
 
 EXTRA_libcommon_la_SOURCES = 		\
 	uthash/LICENSE			\
