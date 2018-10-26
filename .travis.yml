@@ -44,6 +44,7 @@ before_script:
   - export PATH=/usr/lib/ccache:$PATH
 script:
   - export PATH=/usr/lib/ccache:$PATH
+  - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
   - make -j > /dev/null
   - make -j install > /dev/null
