@@ -26,7 +26,11 @@ addons:
     - freeipmi-tools
     - rrdtool
     - libjson-c-dev
-    #- liblz4-dev
+    - libpmi-pmix-dev
+    - libfreeipmi-dev
+    - rrdtool
+    - libssh2-1-dev
+    - libopenmpi-dev
 compiler:
   - clang
   - gcc
