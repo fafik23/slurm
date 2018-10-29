@@ -1,6 +1,8 @@
 sudo: required
 language: c
 dist: trusty
+git:
+  depth: 3
 before_install:
   - sudo apt-get update
 addons:
@@ -26,7 +28,6 @@ addons:
     - freeipmi-tools
     - rrdtool
     - libjson-c-dev
-    - libpmi-pmix-dev
     - libfreeipmi-dev
     - rrdtool
     - libssh2-1-dev
