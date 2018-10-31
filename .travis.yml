@@ -8,7 +8,10 @@ before_install:
 addons:
   mariadb: '10.3'
   apt:
+    sources:
+    - ubuntu-toolchain-r-test
     packages:
+    - gcc-5
     - cmake
     - wget
     - libmunge-dev
@@ -49,7 +52,7 @@ before_script:
 script:
   - export PATH=/usr/lib/ccache:$PATH
   - export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
-  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
+  - ./configure --enable-multiple-slurmd --enable-developer --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
   - make -j install > /dev/null
   - testsuite/travis/build-travis.sh
