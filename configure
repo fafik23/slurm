@@ -19289,6 +19289,7 @@ fi
 
 
 
+
 for ac_header in stdlib.h
 do :
   ac_fn_c_check_header_mongrel "$LINENO" "stdlib.h" "ac_cv_header_stdlib_h" "$ac_includes_default"
@@ -20696,8 +20697,8 @@ fi
 
   ac_ext=c
 ac_cpp='$CPP $CPPFLAGS'
-ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext'
-ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS'
+ac_compile='$CC -c $CFLAGS $CPPFLAGS conftest.$ac_ext >&5'
+ac_link='$CC -o conftest$ac_exeext $CFLAGS $CPPFLAGS $LDFLAGS conftest.$ac_ext $LIBS >&5'
 ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
@@ -23911,11 +23912,44 @@ fi
 
 
 
-# Workaround with gcc 7.2 printing a warning about printing NULL's
-# This should be fixed in a future version so we properly protect against
-# *printf handling NULLs
+
+
 old_CFLAGS=$CFLAGS
-CFLAGS="$CFLAGS -Wno-format-truncation"
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether C compiler accepts -Wformat-truncation" >&5
+$as_echo_n "checking whether C compiler accepts -Wformat-truncation... " >&6; }
+if ${ax_cv_check_cflags__Werror__Wformat_truncation+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+
+  ax_check_save_flags=$CFLAGS
+  CFLAGS="$CFLAGS -Werror -Wformat-truncation"
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+int
+main ()
+{
+
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_compile "$LINENO"; then :
+  ax_cv_check_cflags__Werror__Wformat_truncation=yes
+else
+  ax_cv_check_cflags__Werror__Wformat_truncation=no
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+  CFLAGS=$ax_check_save_flags
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ax_cv_check_cflags__Werror__Wformat_truncation" >&5
+$as_echo "$ax_cv_check_cflags__Werror__Wformat_truncation" >&6; }
+if test "x$ax_cv_check_cflags__Werror__Wformat_truncation" = xyes; then :
+  CFLAGS=$CFLAGS" -Wno-format-truncation"
+else
+  :
+fi
+
 
   { $as_echo "$as_me:${as_lineno-$LINENO}: checking for support of printf(\"%s\", NULL)" >&5
 $as_echo_n "checking for support of printf(\"%s\", NULL)... " >&6; }
@@ -23927,10 +23961,17 @@ else
 
 	#include <stdio.h>
 	#include <stdlib.h>
+	#include <string.h>
 int
 main ()
 {
- char tmp[8]; char *n=NULL; snprintf(tmp,8,"%s",n); exit(0);
+
+	char tmp[16]; char *n=NULL;
+	char *expected = "test (null)";
+	snprintf(tmp,sizeof(tmp),"test %s",n);
+	if (strncmp(tmp, expected, sizeof(tmp)))
+		exit(1);
+	exit(0);
   ;
   return 0;
 }
