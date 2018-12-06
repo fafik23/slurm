@@ -5,7 +5,7 @@ addons:
   apt:
     packages:
     - cmake
-    - libmunge-dev 
+    - libmunge-dev
     - liblua5.2-dev
     - munge
     - expect
@@ -19,22 +19,24 @@ addons:
     - libfreeipmi-dev
     - man2html
 compiler:
-  - clang
-  - gcc
+- clang
+- gcc
 env:
-  - TEST_SET="1.*"
-  - TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*"
-  - TEST_SET="9.*,12.*,14.*,15.*,16.*"
-  - TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
-  - TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
-
+- TEST_SET="1.*"
+- TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*"
+- TEST_SET="9.*,12.*,14.*,15.*,16.*"
+- TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
+- TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
 cache: ccache
 before_script:
-  - export PATH=/usr/lib/ccache:$PATH
-  - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
+- export PATH=/usr/lib/ccache:$PATH
+- sudo mount -t tmpfs -o size=1024m tmpfs /tmp
 script:
-  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
-  - make -j > /dev/null
-  - make -j install > /dev/null
-  - testsuite/build-travis.sh
-  - sudo testsuite/test-reg.sh
+- "./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null"
+- make -j > /dev/null
+- make -j install > /dev/null
+- testsuite/build-travis.sh
+- sudo testsuite/test-reg.sh
+notifications:
+  slack:
+    secure: sIuvkK/RLQvNP3o1kpnYo4rdfV+a0irnyr0CMi/PAmGt5adW68nixSQFeCcotXveN7RnzN3+gALQClfDQ0sTKEMxnL/nxTWuhe3a/M8EYKdMSqcJyFYbMiLAZnfwP+E9c0SUKGfUXa0xfDLqL0XbYavpfY7CgOfLT0LDLQfTq+bXtOe/+epTQmyreRyi/oXajaFPc4wAOXKT19RCC+I+C2klSOG/03xSfPRIRPJOb4GoqE85LlLsBK3LMmOhbGI6Bjcq1uUMt7paSKtoCRy//S1OE1DV0WMOkHyt+7E3KOr5GK+VsSvbcZdPrSQbaBzUTkeZEUEeXbwtbKt2cKoyZ/IRTsPR6FMVHorkyRufOyDhJBFiSeMgQzpBLYrd1v8PZ+KH1JmDJ/O9YI1Gp1J3PT1XwlWePAy2Ep9txLm0kJCJrGz9y0NrSH7HXb1Bh/ak5UF+UA16kyKflHpFyQI+xm/evyi2acUrKRGTXisYDH0FBMNg6dJcoVJITRMT44xxLj3R7ICwX7uaWR7eKcUpkwOwpNmkuIk1Ocabu3oibIMM0ipxcufzSim/EvXwJMwU8UxlYDKV5YmcU9UgHaZdqHMsKpeKQBJQ8zcnlQZBX7DpOLdPc2q+87W4ooysQbdS/+p3G2jUoa6BwEWHNHGjXc9TNdrw5arDMgiZhiWsm+c=
