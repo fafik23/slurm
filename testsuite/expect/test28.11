@@ -58,15 +58,13 @@ if {[test_front_end]} {
 set array1_job_id 0
 set array2_job_id 0
 set matches 0
-set index 0
-set sid 0
 set timeout $max_job_delay
 
-spawn $sbatch -N1 --array=0-5 --wrap="exit 0"
+spawn $sbatch -N1 --array=0-5 --wrap=exit
 expect {
 	-re "Submitted batch job ($number)" {
 		set array1_job_id $expect_out(1,string)
-		send_user "\njob $job_id was submitted\n"
+		send_user "\njob $array1_job_id was submitted\n"
 	}
 	-re "error" {
 		send_user "\nFAILURE: sbatch did not submit jobs\n"
@@ -81,11 +79,11 @@ expect {
 	}
 }
 
-spawn $sbatch -N1 --array=0-5 --wrap="exit 0"
+eval spawn $sbatch -N1 --array=0-5 --wrap=exit
 expect {
 	-re "Submitted batch job ($number)" {
 		set array2_job_id $expect_out(1,string)
-		send_user "\njob $job_id was submitted\n"
+		send_user "\njob $array2_job_id was submitted\n"
 	}
 	-re "error" {
 		send_user "\nFAILURE: sbatch did not submit jobs\n"
@@ -116,7 +114,7 @@ expect {
 	}
 	timeout {
 		log_error "scontrol show config not responding\n"
-		end_it 1
+		exit 1
 	}
 	eof {
 		wait
@@ -136,7 +134,7 @@ expect {
 	}
 	timeout {
 		log_error "sacct not responding\n"
-		end_it 1
+		exit 1
 	}
 	eof {
 		wait
@@ -144,8 +142,8 @@ expect {
 }
 if {$matches != $expected_matches} {
 	log_error "sacct failure ($matches != $expected_matches)\n"
-	end_it 1
+	exit 1
 }
 
 send_user "\nSUCCESS\n"
-end_it 0
+exit 0
