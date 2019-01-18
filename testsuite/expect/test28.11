@@ -98,7 +98,7 @@ expect {
 	}
 }
 # Wait for accounting records to reach slurmdbd
-sleep 5
+sleep 10
 set timeout 3
 set matches 0
 set expected_matches 4
