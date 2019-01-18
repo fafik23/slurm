@@ -273,9 +273,8 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 					xstrcat(array_job_ids, " ,");
 				if (array_task_ids)
 					xstrcat(array_task_ids, " ,");
-				xstrfmtcat(array_job_ids, "%u",
-					   selected_step->jobid);
-				xstrfmtcat(array_task_ids, "%u",
+				xstrfmtcat(array_task_ids, "(%u ,%u)",
+					   selected_step->jobid,
 					   selected_step->array_task_id);
 			} else if (selected_step->pack_job_offset != NO_VAL) {
 				if (pack_job_ids)
@@ -328,16 +327,16 @@ static void _setup_job_cond_selected_steps(slurmdb_job_cond_t *job_cond,
 			sep = " || ";
 		}
 		if (array_job_ids) {
-			xstrfmtcat(*extra, "%s(t1.id_array_job in (%s)",
+			xstrfmtcat(*extra, "%s(t1.id_array_job in (%s))",
 				   sep, array_job_ids);
-			if (array_task_ids) {
-				xstrfmtcat(*extra,
-					   " && t1.id_array_task in (%s)",
-					   array_task_ids);
-			}
-			xstrcat(*extra, ")");
+			sep = " || ";
 		}
 
+		if (array_task_ids) {
+			xstrfmtcat(*extra,
+				   "%s((t1.id_array_job ,t1.id_array_task) in (%s))",
+				   sep, array_task_ids);
+		}
 		xstrcat(*extra, ")");
 		xfree(job_ids);
 		xfree(array_job_ids);
