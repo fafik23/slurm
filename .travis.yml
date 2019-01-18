@@ -1,32 +1,66 @@
 sudo: required
 language: c
 dist: trusty
+git:
+  depth: 3
+before_install:
+- sudo apt-get update
 addons:
-  mariadb: '10.1'
+  mariadb: '10.3'
   apt:
+    sources:
+    - ubuntu-toolchain-r-test
     packages:
+    - gcc-7
     - cmake
+    - wget
     - libmunge-dev
     - liblua5.2-dev
     - munge
     - expect
     - libhwloc-dev
+    - hwloc
     - libnuma1
     - libnuma-dev
     - libpam-dev
-    - libhwloc-dev
     - gdb
     - valgrind
-    - libfreeipmi-dev
     - man2html
+    - libmariadbd-dev
+    - rrdtool
+    - librrd-dev
+    - libjson-c-dev
+    - libfreeipmi-dev
+    - freeipmi-tools
+    - libssh2-1-dev
+    - libopenmpi-dev
 compiler:
-  - clang
-  - gcc
+- clang
+- gcc
+env:
+- TEST_SET="1.*"
+- TEST_SET="2.*,3.*,4.*,5.*,6.*,7.*,8.*"
+- TEST_SET="9.*,12.*,14.*,15.*,16.*"
+- TEST_SET="17.*,18.*,19.*,20.*,21.*,22.*,23.*,24.*,25.*"
+- TEST_SET="27.*,28.*,30.*,31.*,32.*,33.*,34.*,36.*"
 cache: ccache
 before_script:
-  - export PATH=/usr/lib/ccache:$PATH
-  - sudo mount -t tmpfs -o size=1024m tmpfs /tmp
+- sudo mount -t tmpfs -o size=1024m tmpfs /tmp
+- wget https://github.com/lz4/lz4/archive/v1.8.3.tar.gz
+- export PATH=/usr/lib/ccache:$PATH
+- tar -xvzf v1.8.3.tar.gz > /dev/null && cd lz4-1.8.3 && make && sudo make install
+  && cd .. && rm -rf  lz4-1.8.3  v1.8.3.tar.gz > /dev/null
 script:
-  - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
-  - make -j > /dev/null
-  - make -j install > /dev/null
+- export PATH=/usr/lib/ccache:$PATH
+- export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
+- "./configure --enable-multiple-slurmd --enable-developer --prefix=/tmp/slurm/ >
+  /dev/null"
+- make -j > /dev/null
+- make -j install > /dev/null
+- testsuite/travis/build-travis.sh
+- sudo testsuite/travis/test-reg.sh
+after_script:
+- sudo umount /tmp
+notifications:
+  slack:
+    secure: lMvCVrMSVAAjqLu8Q8QJyBejNY3Y7bWJ2HrOHf8qdatJP9UPzy95FO3WIfj9w3WYZ+744Upf7xPjYtu0JFXj52346p6scvWaR8kXbP/Hegg16YeruKR12QKEXjmuUt1txBfVcSP+mselxJtIxgpNUwkZmDsFLhVP5457ChPjVyp633+9Gb0lI3hyNk8fG+nrdNME2+Xu7OnAe5aC3XoyxE67RLZh8S3fbLd+6IhcO5RXhCqpBkDIOrvN2hQrAgWZkNvKImVuakIiuM2W2LN8VvpkJH/79zxdVioJ3T9/n/0JXLuhXCWLdmqEjiTvKnM+aLPONmrpbMtTAz1RsWcixT7xIBEct0AzTau0o1FAKbylyNTjhAxpweD6lYwGErBbgb4QGH/Mr5y3FyggI+TZk0FjCbJVjPQ0GLqqr0BSpNU0LGGWftBYcY+4QQc4v7s7e+D4d9ozq62IjOJY37H0ROdFpbCEMbI5SCGGq58NOVehUek+lFZW+cJSFCJqShBQlzXv/8oOgdHtBhVM4B2RG+7le+WUJgnXaoCkAqm3MGlbvQ9+ezgHRM7R+ta5TH77bIldcQoyBR07HKFsiMItSlFl8sPIBgBnkReMkribTXzFx130LR30naG6At8M6LNSqOqi6wqUGnBd9cOGr2cjCFSC8Fth6gbtYtoKR59gYKA=
