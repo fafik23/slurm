@@ -1685,7 +1685,7 @@ proc reset_qos_usage { cluster qos } {
 
 ###############################################################
 #
-# Proc: check_wckey_tracking
+# Proc: check_wckey_tracking_slurmdbd
 #
 # Purpose: Check to see that wcky tracking is enabled in the
 # SlurmDBD
@@ -1694,15 +1694,22 @@ proc reset_qos_usage { cluster qos } {
 #
 #
 ###############################################################
-proc check_wckey_tracking { } {
+proc check_wckey_tracking_slurmdbd { } {
 	global sacctmgr
 
 	log_user 0
 	set wckey 0
+	set slurmdbd_config 0
 	set my_pid [eval spawn $sacctmgr show config]
 	expect {
+		-re "SlurmDBD configuration" {
+			set slurmdbd_config 1
+			exp_continue
+		}
 		-re "TrackWCKey *= Yes" {
-			set wckey 1
+			if { $slurmdbd_config == 1 } {
+				set wckey 1
+			}
 			exp_continue
 		}
 		timeout {

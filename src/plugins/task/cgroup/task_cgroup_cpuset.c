@@ -526,6 +526,7 @@ static int _task_cgroup_cpuset_dist_cyclic(
 {
 #if HWLOC_API_VERSION >= 0x00020000
 	hwloc_bitmap_t allowed_cpuset;
+	bool allowed_cpuset_alloc = false;
 #endif
 	hwloc_obj_t obj;
 	uint32_t  s_ix;		/* socket index */
@@ -648,6 +649,7 @@ static int _task_cgroup_cpuset_dist_cyclic(
 #if HWLOC_API_VERSION >= 0x00020000
 			if (obj) {
 				allowed_cpuset = hwloc_bitmap_alloc();
+				allowed_cpuset_alloc = true;
 				hwloc_bitmap_and(allowed_cpuset,
 						 global_allowed_cpuset,
 						 obj->cpuset);
@@ -714,8 +716,10 @@ static int _task_cgroup_cpuset_dist_cyclic(
 			} else
 				s_ix++;
 #if HWLOC_API_VERSION >= 0x00020000
-			if (obj)
+			if (allowed_cpuset_alloc) {
 				hwloc_bitmap_free(allowed_cpuset);
+				allowed_cpuset_alloc = false;
+			}
 #endif
 		}
 		/* if it succeeds, switch to the next task, starting
@@ -1046,7 +1050,7 @@ extern int task_cgroup_cpuset_create(stepd_step_rec_t *job)
 	int rc;
 	int fstatus = SLURM_ERROR;
 	xcgroup_t cpuset_cg;
-	uint32_t jobid = job->jobid;
+	uint32_t jobid;
 	uint32_t stepid = job->stepid;
 	uid_t uid = job->uid;
 	uid_t gid = job->gid;
@@ -1108,6 +1112,10 @@ again:
 	xfree(slurm_cgpath);
 
 	/* build job cgroup relative path if no set (should not be) */
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
 	if (*job_cgroup_path == '\0') {
 		if (snprintf(job_cgroup_path,PATH_MAX,"%s/job_%u",
 			     user_cgroup_path, jobid) >= PATH_MAX) {

@@ -49,7 +49,6 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/parse_time.h"
-#include "src/common/slurm_time.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -81,14 +80,6 @@ static char *_str_tolower(char *upper_str);
 /*****************************************************************************
  * Global Print Functions
  *****************************************************************************/
-void print_date(void)
-{
-	time_t now;
-
-	now = time(NULL);
-	printf("%s", slurm_ctime(&now));
-}
-
 int print_sinfo_list(List sinfo_list)
 {
 	ListIterator i = list_iterator_create(sinfo_list);
@@ -102,7 +93,7 @@ int print_sinfo_list(List sinfo_list)
 	if (!params.no_header)
 		print_sinfo_entry(NULL);
 
-	while ((current = list_next(i)) != NULL)
+	while ((current = list_next(i)))
 		 print_sinfo_entry(current);
 
 	list_iterator_destroy(i);
@@ -114,7 +105,7 @@ int print_sinfo_entry(sinfo_data_t *sinfo_data)
 	ListIterator i = list_iterator_create(params.format_list);
 	sinfo_format_t *current;
 
-	while ((current = (sinfo_format_t *) list_next(i)) != NULL) {
+	while ((current = list_next(i))) {
 		if (current->function(sinfo_data, current->width,
 				      current->right_justify, current->suffix)
 		    != SLURM_SUCCESS)
@@ -361,11 +352,23 @@ format_add_function(List list, int width, bool right, char *suffix,
 	tmp->width = width;
 	tmp->right_justify = right;
 	tmp->suffix = suffix;
+	list_append(list, tmp);
 
-	if (list_append(list, tmp) == NULL) {
-		fprintf(stderr, "Memory exhausted\n");
-		exit(1);
-	}
+	return SLURM_SUCCESS;
+}
+
+int
+format_prepend_function(List list, int width, bool right, char *suffix,
+			int (*function) (sinfo_data_t *, int, bool, char*))
+{
+	sinfo_format_t *tmp =
+		(sinfo_format_t *) xmalloc(sizeof(sinfo_format_t));
+	tmp->function = function;
+	tmp->width = width;
+	tmp->right_justify = right;
+	tmp->suffix = suffix;
+	list_prepend(list, tmp);
+
 	return SLURM_SUCCESS;
 }
 
@@ -376,7 +379,7 @@ static void _set_node_field_size(List sinfo_list)
 	sinfo_data_t *current;
 	int max_width = MIN_NODE_FIELD_SIZE, this_width = 0;
 
-	while ((current = (sinfo_data_t *) list_next(i)) != NULL) {
+	while ((current = list_next(i))) {
 		tmp = hostlist_ranged_string_xmalloc(current->nodes);
 		this_width = strlen(tmp);
 		xfree(tmp);
@@ -392,7 +395,7 @@ static void _set_part_field_size(List sinfo_list)
 	sinfo_data_t *current;
 	int max_width = MIN_PART_FIELD_SIZE, this_width = 0;
 
-	while ((current = (sinfo_data_t *) list_next(i)) != NULL) {
+	while ((current = list_next(i))) {
 		if (!current->part_info || !current->part_info->name)
 			continue;
 		this_width = strlen(current->part_info->name);
@@ -621,6 +624,19 @@ int _print_gres(sinfo_data_t * sinfo_data, int width,
 		_print_str(sinfo_data->gres, width, right_justify, true);
 	else
 		_print_str("GRES", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_gres_used(sinfo_data_t * sinfo_data, int width,
+		     bool right_justify, char *suffix)
+{
+	if (sinfo_data)
+		_print_str(sinfo_data->gres_used, width, right_justify, true);
+	else
+		_print_str("GRES_USED", width, right_justify, true);
 
 	if (suffix)
 		printf("%s", suffix);

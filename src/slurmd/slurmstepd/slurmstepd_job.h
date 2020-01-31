@@ -133,15 +133,18 @@ typedef struct {
 	uint32_t       nnodes; /* number of nodes in current job            */
 	uint32_t       ntasks; /* total number of tasks in current job      */
 	uint32_t       nodeid; /* relative position of this node in job     */
-	uint32_t       node_offset;	/* pack job node offset or NO_VAL   */
 	uint32_t       node_tasks;	/* number of tasks on *this* node   */
-	uint32_t       pack_jobid;	/* pack job ID or NO_VAL */
-	uint32_t       pack_nnodes;	/* total node count for entire pack job */
-	char          *pack_node_list;	/* pack step node list */
-	uint32_t       pack_ntasks;	/* total task count for entire pack job */
-	uint32_t       pack_offset; 	/* pack job offset or NO_VAL        */
-	uint32_t       pack_task_offset;/* pack job task offset or NO_VAL   */
-	uint16_t      *pack_task_cnts;	/* Number of tasks on each node in pack job */
+	uint32_t       het_job_id;	/* Hetjob ID or NO_VAL */
+	uint32_t       het_job_nnodes;	/* total node count for entire hetjob */
+	char          *het_job_node_list; /* Hetjob step node list */
+	uint32_t       het_job_node_offset;/* Hetjob node offset or NO_VAL   */
+	uint32_t       het_job_ntasks;	/* total task count for entire hetjob */
+	uint32_t       het_job_offset;	/* Hetjob offset or NO_VAL        */
+	uint32_t       het_job_step_cnt;  /* number of steps for entire hetjob */
+	uint32_t       het_job_task_offset;/* Hetjob task offset or NO_VAL   */
+	uint16_t      *het_job_task_cnts; /* Number of tasks on each node in hetjob */
+	uint32_t     **het_job_tids;       /* Task IDs on each node of hetjob */
+	uint32_t      *het_job_tid_offsets;/* map of tasks (by id) to originating hetjob*/
 	uint16_t      *task_cnts;  /* Number of tasks on each node in job   */
 	uint32_t       cpus_per_task;	/* number of cpus desired per task  */
 	uint32_t       debug;  /* debug level for job slurmd                */
@@ -166,8 +169,13 @@ typedef struct {
 	dynamic_plugin_data_t *switch_job; /* switch-specific job information     */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
+	/* fields from the launch cred used to support nss_slurm	    */
+	char *pw_gecos;
+	char *pw_dir;
+	char *pw_shell;
 	gid_t         gid;     /* group ID for job                          */
 	int           ngids;   /* length of the following gids array        */
+	char **gr_names;
 	gid_t        *gids;    /* array of gids for user specified in uid   */
 	bool           aborted;    /* true if already aborted               */
 	bool           batch;      /* true if this is a batch job           */
@@ -218,9 +226,6 @@ typedef struct {
 	jobacctinfo_t *jobacct;
 	uint8_t        open_mode;	/* stdout/err append or truncate */
 	job_options_t  options;
-	char          *ckpt_dir;
-	time_t         ckpt_timestamp;
-	char          *restart_dir;	/* restart from context */
 	uint32_t       resv_id;		/* Cray/BASIL reservation ID	*/
 	uint16_t       restart_cnt;	/* batch job restart count	*/
 	char	      *job_alloc_cores;	/* needed by the SPANK cpuset plugin */
@@ -242,8 +247,10 @@ typedef struct {
 
 	uint16_t x11;			/* only set for extern step */
 	int x11_display;		/* display number if x11 forwarding setup */
+	char *x11_alloc_host;		/* remote host to proxy through */
+	uint16_t x11_alloc_port;	/* remote port to proxy through */
 	char *x11_magic_cookie;		/* xauth magic cookie value */
-	char *x11_target_host;		/* remote machine to connect back to */
+	char *x11_target;		/* remote target. unix socket if port == 0 */
 	uint16_t x11_target_port;	/* remote x11 port to connect back to */
 	char *x11_xauthority;		/* temporary XAUTHORITY location, or NULL */
 } stepd_step_rec_t;

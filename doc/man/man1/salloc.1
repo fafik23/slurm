@@ -1,11 +1,11 @@
-.TH salloc "1" "Slurm Commands" "July 2018" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "January 2020" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
 and then release the allocation when the command is finished.
 
 .SH "SYNOPSIS"
-\fBsalloc\fR [\fIOPTIONS(0)\fR...] \fR[ : \fR[\fIOPTIONS(n)\fR...]\fR] \fIscript(0) \fR[\fIargs(0)\fR...]
+\fBsalloc\fR [\fIOPTIONS(0)\fR...] \fR[ : \fR[\fIOPTIONS(N)\fR...]\fR] \fIcommand(0) \fR[\fIargs(0)\fR...]
 
 Option(s) define multiple jobs in a co-scheduled heterogeneous job.
 For more details about heterogeneous jobs see the document
@@ -35,6 +35,29 @@ NOTE: The salloc logic includes support to save and restore the terminal line
 settings and is designed to be executed in the foreground. If you need to
 execute salloc in the background, set its standard input to some file, for
 example: "salloc \-n16 a.out </dev/null &"
+
+.SH "RETURN VALUE"
+If salloc is unable to execute the user command, it will
+return 1 and print errors to stderr. Else if success or if killed by signals
+HUP, INT, KILL, or QUIT: it will return 0.
+
+.SH "COMMAND PATH RESOLUTION"
+
+If provided, the command is resolved in the following order:
+.br
+.IP 1. 3
+If command starts with ".", then path is constructed as:
+current working directory / command
+.IP 2.
+If command starts with a "/", then path is considered absolute.
+.IP 3.
+If command can be resolved through PATH. See \fBpath_resolution\fR(7).
+.IP 4.
+If command is in current working directory.
+.P
+Current working directory is the calling process working directory unless the
+\fB\-\-chdir\fR argument is passed, which will override the current working
+directory.
 
 .SH "OPTIONS"
 .LP
@@ -77,7 +100,7 @@ for energy profiling using the acct_gather_energy plugin
 .TP
 \fBnetwork=\fI<interval>\fR
 where \fI<interval>\fR is the sampling interval in seconds
-for infiniband profiling using the acct_gather_infiniband
+for infiniband profiling using the acct_gather_interconnect
 plugin.
 .TP
 \fBfilesystem=\fI<interval>\fR
@@ -146,8 +169,7 @@ information about how to spawn a remote shell.
 
 .TP
 \fB\-\-begin\fR=<\fItime\fR>
-Submit the batch script to the Slurm controller immediately, like normal, but
-tell the controller to defer the allocation of the job until the specified time.
+Defer eligibility of this job allocation until the specified time.
 
 Time may be of the form \fIHH:MM:SS\fR to run a job at
 a specific time of day (seconds are optional).
@@ -254,6 +276,12 @@ For example: "\fB\-\-constraint=[rack1*2&rack2*4]"\fR might
 be used to specify that two nodes must be allocated from nodes with the feature
 of "rack1" and four nodes must be allocated from nodes with the feature
 "rack2".
+
+\fBNOTE:\fR This construct does not support multiple Intel KNL NUMA or MCDRAM
+modes. For example, while "\fB\-\-constraint=[(knl&quad)*2&(knl&hemi)*4]"\fR is
+not supported, "\fB\-\-constraint=[haswell*2&(knl&hemi)*4]"\fR is supported.
+Specification of multiple KNL modes requires the use of a heterogeneous job.
+
 .TP
 \fBParenthesis\fR
 Parenthesis can be used to group like node features together. For example
@@ -379,7 +407,6 @@ accounting information will be present.
 \fB\-\-cpus\-per\-gpu\fR=<\fIncpus\fR>
 Advise Slurm that ensuing job steps will require \fIncpus\fR processors per
 allocated GPU.
-Requires the \fB\-\-gpus\fR option.
 Not compatible with the \fB\-\-cpus\-per\-task\fR option.
 
 .TP
@@ -429,18 +456,21 @@ satisfied completed.
 <\fItype:job_id[:job_id][?type:job_id[:job_id]]\fR>.
 All dependencies must be satisfied if the "," separator is used.
 Any dependency may be satisfied if the "?" separator is used.
+Only one separator may be used.
 Many jobs can share the same dependency and these jobs may even belong to
 different  users. The  value may be changed after job submission using the
 scontrol command.
+Dependencies on remote jobs are allowed in a federation.
 Once a job dependency fails due to the termination state of a preceding job,
 the dependent job will never be run, even if the preceding job is requeued and
 has a different termination state in a subsequent execution.
 .PD
 .RS
 .TP
-\fBafter:job_id[:jobid...]\fR
-This job can begin execution after the specified jobs have begun
-execution.
+\fBafter:job_id[[+time][:jobid[+time]...]]\fR
+After the specified jobs start and 'time' in minutes from job start happens this
+job can begin execution. If no 'time' is given then then there is no delay after
+start.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
@@ -466,10 +496,16 @@ executed (ran to completion with an exit code of zero).
 Resources allocated to this job should be used to expand the specified job.
 The job to expand must share the same QOS (Quality of Service) and partition.
 Gang scheduling of resources in the partition is also not supported.
+"expand" is not allowed for jobs that didn't originate on the same cluster
+as the submitted job.
 .TP
 \fBsingleton\fR
 This job can begin execution after any previously launched jobs
 sharing the same job name and user have terminated.
+In other words, only one job by that name and owned by that user can be running
+or suspended at any point in time.
+In a federation, a singleton dependency must be fulfilled on all clusters
+unless DependencyParameters=disable_remote_singleton is used in slurm.conf.
 .RE
 
 .TP
@@ -513,7 +549,6 @@ Example of use include "\-\-get\-user\-env", "\-\-get\-user\-env=10"
 "\-\-get\-user\-env=10L", and "\-\-get\-user\-env=S".
 NOTE: This option only works if the caller has an
 effective uid of "root".
-This option was originally created for use by Moab.
 
 .TP
 \fB\-\-gid\fR=<\fIgroup\fR>
@@ -553,7 +588,7 @@ hexadecimal values. If the number of tasks (or ranks) exceeds the number of
 elements in this list, elements in the list will be reused as needed starting
 from the beginning of the list. To simplify support for large task counts,
 the lists may follow a map with an asterisk and repetition count.
-For example "map_cpu:0*4,1*4".
+For example "map_gpu:0*4,1*4".
 Not supported unless the entire node is allocated to the job.
 .TP
 \fBmask_gpu:<list>\fR
@@ -571,35 +606,37 @@ Not supported unless the entire node is allocated to the job.
 
 .TP
 \fB\-\-gpu\-freq\fR=[<\fItype\fR]=\fIvalue\fR>[,<\fItype\fR=\fIvalue\fR>][,verbose]
-Request that GPUs allocated to the job are configured with specific voltage
-and/or frequency values.
+Request that GPUs allocated to the job are configured with specific frequency
+values.
 This option can be used to independently configure the GPU and its memory
 frequencies.
+After the job is completed, the frequencies of all affected GPUs will be reset
+to the highest possible values.
 In some cases, system power caps may override the requested values.
-The field \fItype\fR can be "memory" or "voltage".
-If \fItype\fR is not specified. the GPU frequency is implied.
+The field \fItype\fR can be "memory".
+If \fItype\fR is not specified, the GPU frequency is implied.
 The \fIvalue\fR field can either be "low", "medium", "high", "highm1" or
-a numeric value (megahertz or volts).
+a numeric value in megahertz (MHz).
 If the specified numeric value is not possible, a value as close as
 possible will be used. See below for definition of the values.
 The \fIverbose\fR option causes current GPU frequency information to be logged.
-Examples of use include "\-\-gpu\-freq\fR=medium,memory=high,voltage=high" and
-\-\-gpu\-freq\fR=450".
+Examples of use include "\-\-gpu\-freq=medium,memory=high" and
+"\-\-gpu\-freq=450".
 
 Supported \fIvalue\fR definitions:
 .RS
 .TP 10
 \fBlow\fR
-the lowest available frequency or voltage
+the lowest available frequency.
 .TP
 \fBmedium\fR
-attempts to set a frequency  or voltage in the middle of the available range
+attempts to set a frequency in the middle of the available range.
 .TP
 \fBhigh\fR
-the highest available frequency or voltage
+the highest available frequency.
 .TP
 \fBhighm1\fR
-(high minus one) will select the next highest available frequency or voltage
+(high minus one) will select the next highest available frequency.
 .RE
 
 .TP
@@ -637,6 +674,9 @@ Multiple options can be requested in a comma separated list, for example:
 Requires job to specify a task count (\-\-nodes).
 See also the \fB\-\-gpus\fR, \fB\-\-gpus\-per\-socket\fR and
 \fB\-\-gpus\-per\-node\fR options.
+.br
+NOTE: This option will not have any impact on GPU binding, specifically
+it won't limit the number of devices set for CUDA_VISIBLE_DEVICES.
 
 .TP
 \fB\-\-gres\fR=<\fIlist\fR>
@@ -644,12 +684,18 @@ Specifies a comma delimited list of generic consumable resources.
 The format of each entry on the list is "name[[:type]:count]".
 The name is that of the consumable resource.
 The count is the number of those resources with a default value of 1.
+The count can have a suffix of
+"k" or "K" (multiple of 1024),
+"m" or "M" (multiple of 1024 x 1024),
+"g" or "G" (multiple of 1024 x 1024 x 1024),
+"t" or "T" (multiple of 1024 x 1024 x 1024 x 1024),
+"p" or "P" (multiple of 1024 x 1024 x 1024 x 1024 x 1024).
 The specified resources will be allocated to the job on each node.
 The available generic consumable resources is configurable by the system
 administrator.
 A list of available generic consumable resources will be printed and the
 command will exit if the option argument is "help".
-Examples of use include "\-\-gres=gpu:2,mic=1", "\-\-gres=gpu:kepler:2", and
+Examples of use include "\-\-gres=gpu:2,mic:1", "\-\-gres=gpu:kepler:2", and
 "\-\-gres=help".
 
 .TP
@@ -713,8 +759,10 @@ show this help message
 \fB\-I\fR, \fB\-\-immediate\fR[=<\fIseconds\fR>]
 exit if resources are not available within the
 time period specified.
-If no argument is given, resources must be available immediately
-for the request to succeed.
+If no argument is given (seconds defaults to 1), resources must be available
+immediately for the request to succeed. If \fBdefer\fR is configured in
+\fBSchedulerParameters\fR and seconds=1 the allocation request will fail
+immediately; \fBdefer\fR conflicts and takes precedence over this option.
 By default, \fB\-\-immediate\fR is off, and the command
 will block until resources become available. Since this option's
 argument is optional, for proper parsing the single letter option must
@@ -726,11 +774,6 @@ them. For example "\-I60" and not "\-I 60".
 Specify a name for the job allocation. The specified name will appear along with
 the job id number when querying running jobs on the system.  The default job
 name is the name of the "command" specified on the command line.
-
-.TP
-\fB\-\-jobid\fR=<\fIjobid\fR>
-Allocate resources as the specified job id.
-NOTE: Only valid for users root and SlurmUser.
 
 .TP
 \fB\-K\fR, \fB\-\-kill\-command\fR[=\fIsignal\fR]
@@ -749,13 +792,16 @@ immediately with the value and not include a space between them. For
 example "\-K1" and not "\-K 1".
 
 .TP
-\fB\-k\fR, \fB\-\-no\-kill\fR
+\fB\-k\fR, \fB\-\-no\-kill\fR [=off]
 Do not automatically terminate a job if one of the nodes it has been
 allocated fails.  The user will assume the responsibilities for fault\-tolerance
 should a node fail.  When there is a node failure, any active job steps (usually
 MPI jobs) on that node will almost certainly suffer a fatal error, but with
 \-\-no\-kill, the job allocation will not be revoked so the user may launch
 new job steps on the remaining nodes in their allocation.
+
+Specify an optional argument of "off" disable the effect of the
+\fBSALLOC_NO_KILL\fR environment variable.
 
 By default Slurm terminates the entire job allocation if any node fails in its
 range of allocated nodes.
@@ -774,9 +820,7 @@ Multiple license names should be comma separated (e.g.
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
 The job will be submitted to the one cluster providing the earliest expected
 job initiation time. The default value is the current cluster. A value of
-\(aq\fIall\fR' will query to run on all clusters.  Note the
-\fB\-\-export\fR option to control environment variables exported
-between clusters.
+\(aq\fIall\fR' will query to run on all clusters.
 Note that the SlurmDBD must be up for this option to work properly.
 
 .TP
@@ -910,9 +954,11 @@ Default value is \fBDefMemPerNode\fR and the maximum value is
 seen using the \fBscontrol show config\fR command.
 This parameter would generally be used if whole nodes
 are allocated to jobs (\fBSelectType=select/linear\fR).
-Also see fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR.
-The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
-options are mutually exclusive.
+Also see \fB\-\-mem\-per\-cpu\fR and \fB\-\-mem\-per\-gpu\fR.
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and \fB\-\-mem\-per\-gpu\fR
+options are mutually exclusive. If \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR or
+\fB\-\-mem\-per\-gpu\fR are specified as command line arguments, then they will
+take precedence over the environment.
 
 NOTE: A memory size specification of zero is treated as a special case and
 grants the job access to all of the memory on each node.
@@ -947,9 +993,14 @@ are allocated to jobs (\fBSelectType=select/cons_res\fR).
 If resources are allocated by the core, socket or whole nodes; the number
 of CPUs allocated to a job may be higher than the task count and the value
 of \fB\-\-mem\-per\-cpu\fR should be adjusted accordingly.
-Also see \fB\-\-mem\fR and fB\-\-mem\-per\-gpu\fR.
-The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
+Also see \fB\-\-mem\fR and \fB\-\-mem\-per\-gpu\fR.
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and \fB\-\-mem\-per\-gpu\fR
 options are mutually exclusive.
+
+NOTE:If the final amount of memory requested by job
+(eg.: when \-\-mem\-per\-cpu use with \-\-exclusive option)
+can't be satisfied by any of nodes configured in the
+partition, the job will be rejected.
 
 .TP
 \fB\-\-mem\-per\-gpu\fR=<\fIsize[units]\fR>
@@ -962,7 +1013,7 @@ per partition basis.
 If configured, the parameters can be seen using the \fBscontrol show config\fR
 and \fBscontrol show partition\fR commands.
 Also see \fB\-\-mem\fR.
-The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and fB\-\-mem\-per\-gpu\fR
+The \fB\-\-mem\fR, \fB\-\-mem\-per\-cpu\fR and \fB\-\-mem\-per\-gpu\fR
 options are mutually exclusive.
 
 .TP
@@ -1402,10 +1453,6 @@ silently ignored.
 \fB\-\-reservation\fR=<\fIname\fR>
 Allocate resources for the job from the named reservation.
 
-\fB\-\-share\fR
-The \fB\-\-share\fR option has been replaced by the \fB\-\-oversubscribe\fR
-option described below.
-
 .TP
 \fB\-s\fR, \fB\-\-oversubscribe\fR
 The job allocation can over\-subscribe resources with other running jobs.
@@ -1430,7 +1477,7 @@ CoreSpecCount and use the specialized resources on nodes it is allocated.
 This option can not be used with the \fB\-\-thread\-spec\fR option.
 
 .TP
-\fB\-\-signal\fR=<\fIsig_num\fR>[@<\fIsig_time\fR>]
+\fB\-\-signal\fR=[R:]<\fIsig_num\fR>[@<\fIsig_time\fR>]
 When a job is within \fIsig_time\fR seconds of its end time,
 send it the signal \fIsig_num\fR.
 Due to the resolution of event handling by Slurm, the signal may
@@ -1440,6 +1487,10 @@ be sent up to 60 seconds earlier than specified.
 By default, no signal is sent before the job's end time.
 If a \fIsig_num\fR is specified without any \fIsig_time\fR,
 the default time will be 60 seconds.
+Use the "R:" option to allow this job to overlap with a reservation with
+MaxStartDelay set.
+To have the signal sent at preemption time see the
+\fBpreempt_send_user_signal\fR \fBSlurmctldParameter\fR.
 
 .TP
 \fB\-\-sockets\-per\-node\fR=<\fIsockets\fR>
@@ -1524,7 +1575,7 @@ parameter includes the "default_gbytes" option for gigabytes.
 Different units can be specified using the suffix [K|M|G|T].
 
 .TP
-\fB\-u\fR, \fB\-\-usage\fR
+\fB\-\-usage\fR
 Display brief help message and exit.
 
 .TP
@@ -1593,6 +1644,25 @@ slurm.conf this value is ignored.
 \fB\-x\fR, \fB\-\-exclude\fR=<\fInode name list\fR>
 Explicitly exclude certain nodes from the resources granted to the job.
 
+.TP
+\fB\-\-x11\fR[=<\fIall\fR|\fIfirst\fR|\fIlast\fR>]
+Sets up X11 forwarding on all, first or last node(s) of the allocation. This
+option is only enabled if Slurm was compiled with X11 support and
+PrologFlags=x11 is defined in the slurm.conf. Default is \fIall\fR.
+
+.SH "PERFORMANCE"
+.PP
+Executing \fBsalloc\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBsalloc\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBsalloc\fR or other Slurm client commands that send remote
+procedure calls to \fBslurmctld\fR from loops in shell scripts or other
+programs. Ensure that programs limit calls to \fBsalloc\fR to the minimum
+necessary for the information you are trying to gather.
+
 .SH "INPUT ENVIRONMENT VARIABLES"
 .PP
 Upon startup, salloc will read and handle the options set in the following
@@ -1647,6 +1717,8 @@ Same as \fB\-\-gpus\-per\-node\fR
 .TP
 \fBSALLOC_GPUS_PER_TASK\fR
 Same as \fB\-\-gpus\-per\-task\fR
+\fBSALLOC_GRES\fR
+Same as \-\-gres\fR
 .TP
 \fBSALLOC_GRES_FLAGS\fR
 Same as \-\-gres\-flags\fR
@@ -1657,23 +1729,29 @@ Same as \fB\-\-hint\fR
 \fBSALLOC_IMMEDIATE\fR
 Same as \fB\-I, \-\-immediate\fR
 .TP
-\fBSALLOC_JOBID\fR
-Same as \fB\-\-jobid\fR
-.TP
 \fBSALLOC_KILL_CMD\fR
 Same as \fB\-K\fR, \fB\-\-kill\-command\fR
 .TP
 \fBSALLOC_MEM_BIND\fR
 Same as \fB\-\-mem\-bind\fR
 .TP
+\fBSALLOC_MEM_PER_CPU\fR
+Same as \fB\-\-mem\-per\-cpu\fR
+.TP
 \fBSALLOC_MEM_PER_GPU\fR
 Same as \fB\-\-mem\-per\-gpu\fR
+.TP
+\fBSALLOC_MEM_PER_NODE\fR
+Same as \fB\-\-mem\fR
 .TP
 \fBSALLOC_NETWORK\fR
 Same as \fB\-\-network\fR
 .TP
 \fBSALLOC_NO_BELL\fR
 Same as \fB\-\-no\-bell\fR
+.TP
+\fBSALLOC_NO_KILL\fR
+Same as \fB\-k\fR, \fB\-\-no\-kill\fR
 .TP
 \fBSALLOC_OVERCOMMIT\fR
 Same as \fB\-O, \-\-overcommit\fR
@@ -1744,8 +1822,8 @@ Also see \fBSLURM_EXIT_ERROR\fR.
 salloc will set the following environment variables in the environment of
 the executed program:
 .TP
-\fBSLURM_*_PACK_GROUP_#\fR
-For a heterogenous job allocation, the environment variables are set separately
+\fBSLURM_*_HET_GROUP_#\fR
+For a heterogeneous job allocation, the environment variables are set separately
 for each component.
 .TP
 \fBSLURM_CLUSTER_NAME\fR
@@ -1771,7 +1849,7 @@ Requested binding of tasks to GPU.
 Only set if the \fB\-\-gpu\-bind\fR option is specified.
 .TP
 \fBSLURM_GPU_FREQ\fR
-Requested GPU frequency and voltage.
+Requested GPU frequency.
 Only set if the \fB\-\-gpu\-freq\fR option is specified.
 .TP
 \fBSLURM_GPUS_PER_NODE\fR
@@ -1845,11 +1923,12 @@ Only set if the \fB\-\-mem\-per\-gpu\fR option is specified.
 \fBSLURM_MEM_PER_NODE\fR
 Same as \fB\-\-mem\fR
 .TP
-\fBSLURM_PACK_SIZE\fR
+\fBSLURM_HET_SIZE\fR
 Set to count of components in heterogeneous job.
 .TP
 \fBSLURM_SUBMIT_DIR\fR
-The directory from which \fBsalloc\fR was invoked.
+The directory from which \fBsalloc\fR was invoked or, if applicable, the
+directory specified by the \fB\-D, \-\-chdir\fR option.
 .TP
 \fBSLURM_SUBMIT_HOST\fR
 The hostname of the computer from which \fBsalloc\fR was invoked.
@@ -1863,8 +1942,14 @@ SLURM_NODE_ALIASES=ec0:1.2.3.4:foo,ec1:1.2.3.5:bar
 \fBSLURM_NTASKS\fR
 Same as \fB\-n, \-\-ntasks\fR
 .TP
+\fBSLURM_NTASKS_PER_CORE\fR
+Set to value of the \-\-ntasks\-per\-core\fR option, if specified.
+.TP
 \fBSLURM_NTASKS_PER_NODE\fR
 Set to value of the \-\-ntasks\-per\-node\fR option, if specified.
+.TP
+\fBSLURM_NTASKS_PER_SOCKET\fR
+Set to value of the \-\-ntasks\-per\-socket\fR option, if specified.
 .TP
 \fBSLURM_PROFILE\fR
 Same as \fB\-\-profile\fR
@@ -1875,7 +1960,7 @@ comma separated and in the same order as SLURM_JOB_NODELIST.
 If two or more consecutive nodes are to have the same task
 count, that count is followed by "(x#)" where "#" is the
 repetition count. For example, "SLURM_TASKS_PER_NODE=2(x3),1"
-indicates that the first three nodes will each execute three
+indicates that the first three nodes will each execute two
 tasks and the fourth node will execute one task.
 
 .SH "SIGNALS"

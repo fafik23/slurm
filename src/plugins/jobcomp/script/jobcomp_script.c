@@ -142,35 +142,6 @@ static pthread_cond_t comp_list_cond = PTHREAD_COND_INITIALIZER;
 static int agent_exit = 0;
 
 /*
- *  Local plugin errno
- */
-static int plugin_errno = SLURM_SUCCESS;
-
-static struct jobcomp_errno {
-	int n;
-	const char *descr;
-} errno_table [] = {
-	{ 0,      "No Error"              },
-	{ EACCES, "Script access denied"  },
-	{ EEXIST, "Script does not exist" },
-	{ EINVAL, "JocCompLoc invalid"    },
-	{ -1,     "Unknown Error"         }
-};
-
-/*
- *  Return string representation of plugin errno
- */
-static const char * _jobcomp_script_strerror (int errnum)
-{
-	struct jobcomp_errno *ep = errno_table;
-
-	while ((ep->n != errnum) && (ep->n != -1))
-		ep++;
-
-	return (ep->descr);
-}
-
-/*
  *  Structure for holding job completion information for later
  *   use by script;
  */
@@ -181,10 +152,10 @@ struct jobcomp_info {
 	uint32_t exit_code;
 	uint32_t db_flags;
 	uint32_t derived_ec;
-	uint32_t pack_job_id;
-	uint32_t pack_job_offset;
 	uint32_t uid;
 	uint32_t gid;
+	uint32_t het_job_id;
+	uint32_t het_job_offset;
 	uint32_t limit;
 	uint32_t nprocs;
 	uint32_t nnodes;
@@ -211,7 +182,7 @@ struct jobcomp_info {
 	char *std_err;
 };
 
-static struct jobcomp_info * _jobcomp_info_create (struct job_record *job)
+static struct jobcomp_info *_jobcomp_info_create(job_record_t *job)
 {
 	enum job_states state;
 	struct jobcomp_info *j = xmalloc(sizeof(struct jobcomp_info));
@@ -244,8 +215,8 @@ static struct jobcomp_info * _jobcomp_info_create (struct job_record *job)
 		j->qos = NULL;
 	j->array_job_id = job->array_job_id;
 	j->array_task_id = job->array_task_id;
-	j->pack_job_id = job->pack_job_id;
-	j->pack_job_offset = job->pack_job_offset;
+	j->het_job_id = job->het_job_id;
+	j->het_job_offset = job->het_job_offset;
 
 	if (IS_JOB_RESIZING(job)) {
 		state = JOB_RESIZING;
@@ -336,17 +307,14 @@ _check_script_permissions(char * path)
 	struct stat st;
 
 	if (stat(path, &st) < 0) {
-		plugin_errno = errno;
 		return error("jobcomp/script: failed to stat %s: %m", path);
 	}
 
 	if (!(st.st_mode & S_IFREG)) {
-		plugin_errno = EACCES;
 		return error("jobcomp/script: %s isn't a regular file", path);
 	}
 
 	if (access(path, X_OK) < 0) {
-		plugin_errno = EACCES;
 		return error("jobcomp/script: %s is not executable", path);
 	}
 
@@ -435,9 +403,12 @@ static char ** _create_environment (struct jobcomp_info *job)
 	_env_append_fmt (&env, "DERIVED_EC", "%d:%d", tmp_int, tmp_int2);
 	_env_append_fmt (&env, "ARRAYJOBID", "%u", job->array_job_id);
 	_env_append_fmt (&env, "ARRAYTASKID", "%u", job->array_task_id);
-	if (job->pack_job_id) {
-		_env_append_fmt (&env, "PACKJOBID", "%u", job->pack_job_id);
-		_env_append_fmt (&env, "PACKJOBOFFSET", "%u", job->pack_job_offset);
+	if (job->het_job_id) {
+		/* Continue supporting the old terms. */
+		_env_append_fmt (&env, "PACKJOBID", "%u", job->het_job_id);
+		_env_append_fmt (&env, "PACKJOBOFFSET", "%u", job->het_job_offset);
+		_env_append_fmt (&env, "HETJOBID", "%u", job->het_job_id);
+		_env_append_fmt (&env, "HETJOBOFFSET", "%u", job->het_job_offset);
 	}
 	_env_append_fmt (&env, "UID",   "%u",  job->uid);
 	_env_append_fmt (&env, "GID",   "%u",  job->gid);
@@ -634,7 +605,6 @@ extern int init(void)
 extern int slurm_jobcomp_set_location (char * location)
 {
 	if (location == NULL) {
-		plugin_errno = EACCES;
 		return error("jobcomp/script JobCompLoc needs to be set");
 	}
 
@@ -647,7 +617,7 @@ extern int slurm_jobcomp_set_location (char * location)
 	return SLURM_SUCCESS;
 }
 
-int slurm_jobcomp_log_record (struct job_record *record)
+int slurm_jobcomp_log_record(job_record_t *record)
 {
 	struct jobcomp_info * job;
 
@@ -662,18 +632,6 @@ int slurm_jobcomp_log_record (struct job_record *record)
 	slurm_mutex_unlock(&comp_list_mutex);
 
 	return SLURM_SUCCESS;
-}
-
-/* Return the error code of the plugin*/
-extern int slurm_jobcomp_get_errno(void)
-{
-	return plugin_errno;
-}
-
-/* Return a string representation of the error */
-extern const char * slurm_jobcomp_strerror(int errnum)
-{
-	return _jobcomp_script_strerror (errnum);
 }
 
 /* Called when script unloads */

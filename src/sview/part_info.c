@@ -417,8 +417,6 @@ static void _set_active_combo_part(GtkComboBox *combo,
 	case SORTID_PREEMPT_MODE:
 		if (!xstrcasecmp(temp_char, "cancel"))
 			action = 0;
-		else if (!xstrcasecmp(temp_char, "checkpoint"))
-			action = 1;
 		else if (!xstrcasecmp(temp_char, "off"))
 			action = 2;
 		else if (!xstrcasecmp(temp_char, "requeue"))
@@ -559,8 +557,6 @@ static const char *_set_part_msg(update_part_msg_t *part_msg,
 	case SORTID_PREEMPT_MODE:
 		if (!xstrcasecmp(new_text, "cancel"))
 			part_msg->preempt_mode = PREEMPT_MODE_CANCEL;
-		else if (!xstrcasecmp(new_text, "checkpoint"))
-			part_msg->preempt_mode = PREEMPT_MODE_CHECKPOINT;
 		else if (!xstrcasecmp(new_text, "off"))
 			part_msg->preempt_mode = PREEMPT_MODE_OFF;
 		else if (!xstrcasecmp(new_text, "requeue"))
@@ -1546,7 +1542,7 @@ static void _update_info_part(List info_list,
 	set_for_update(model, SORTID_UPDATED);
 
 	itr = list_iterator_create(info_list);
-	while ((sview_part_info = (sview_part_info_t*) list_next(itr))) {
+	while ((sview_part_info = list_next(itr))) {
 		/* This means the tree_store changed (added new column
 		   or something). */
 		if (last_model != model)
@@ -1926,14 +1922,14 @@ need_refresh:
 		treeview = create_treeview_2cols_attach_to_table(
 			popup_win->table);
 		spec_info->display_widget =
-			gtk_widget_ref(GTK_WIDGET(treeview));
+			g_object_ref(GTK_WIDGET(treeview));
 	} else {
 		treeview = GTK_TREE_VIEW(spec_info->display_widget);
 		update = 1;
 	}
 
 	itr = list_iterator_create(info_list);
-	while ((sview_part_info = (sview_part_info_t*) list_next(itr))) {
+	while ((sview_part_info = list_next(itr))) {
 		part_ptr = sview_part_info->part_ptr;
 
 		if (cluster_name &&
@@ -2232,9 +2228,6 @@ static GtkListStore *_create_model_part2(int type)
 				   0, "cancel", 1, SORTID_PREEMPT_MODE, -1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
-				   0, "checkpoint", 1, SORTID_PREEMPT_MODE,-1);
-		gtk_list_store_append(model, &iter);
-		gtk_list_store_set(model, &iter,
 				   0, "off", 1, SORTID_PREEMPT_MODE, -1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
@@ -2274,9 +2267,6 @@ extern GtkListStore *create_model_part(int type)
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
 				   0, "cancel", 1, SORTID_PREEMPT_MODE, -1);
-		gtk_list_store_append(model, &iter);
-		gtk_list_store_set(model, &iter,
-				   0, "checkpoint", 1, SORTID_PREEMPT_MODE,-1);
 		gtk_list_store_append(model, &iter);
 		gtk_list_store_set(model, &iter,
 				   0, "off", 1, SORTID_PREEMPT_MODE, -1);
@@ -2508,7 +2498,7 @@ extern void get_info_part(GtkTable *table, display_data_t *display_data)
 		snprintf(error_char, 100, "slurm_load_partitions: %s",
 			 slurm_strerror(slurm_get_errno()));
 		label = gtk_label_new(error_char);
-		display_widget = gtk_widget_ref(GTK_WIDGET(label));
+		display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(table, label, 0, 1, 0, 1);
 		gtk_widget_show(label);
 		goto end_it;
@@ -2528,7 +2518,7 @@ extern void get_info_part(GtkTable *table, display_data_t *display_data)
 		snprintf(error_char, 100, "slurm_load_node: %s",
 			 slurm_strerror(slurm_get_errno()));
 		label = gtk_label_new(error_char);
-		display_widget = gtk_widget_ref(GTK_WIDGET(label));
+		display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(table, label, 0, 1, 0, 1);
 		gtk_widget_show(label);
 		goto end_it;
@@ -2594,7 +2584,7 @@ display_it:
 		gtk_tree_selection_set_mode(
 			gtk_tree_view_get_selection(tree_view),
 			GTK_SELECTION_MULTIPLE);
-		display_widget = gtk_widget_ref(GTK_WIDGET(tree_view));
+		display_widget = g_object_ref(GTK_WIDGET(tree_view));
 		gtk_table_attach_defaults(table,
 					  GTK_WIDGET(tree_view),
 					  0, 1, 0, 1);
@@ -2660,7 +2650,7 @@ extern void specific_info_part(popup_info_t *popup_win)
 		snprintf(error_char, 100, "slurm_load_partitions: %s",
 			 slurm_strerror(slurm_get_errno()));
 		label = gtk_label_new(error_char);
-		spec_info->display_widget = gtk_widget_ref(GTK_WIDGET(label));
+		spec_info->display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(popup_win->table, label, 0, 1, 0, 1);
 		gtk_widget_show(label);
 		goto end_it;
@@ -2682,7 +2672,7 @@ extern void specific_info_part(popup_info_t *popup_win)
 		snprintf(error_char, 100, "slurm_load_node: %s",
 			 slurm_strerror(slurm_get_errno()));
 		label = gtk_label_new(error_char);
-		spec_info->display_widget = gtk_widget_ref(GTK_WIDGET(label));
+		spec_info->display_widget = g_object_ref(GTK_WIDGET(label));
 		gtk_table_attach_defaults(popup_win->table, label, 0, 1, 0, 1);
 		gtk_widget_show(label);
 		goto end_it;
@@ -2709,7 +2699,7 @@ display_it:
 			GTK_SELECTION_MULTIPLE);
 
 		spec_info->display_widget =
-			gtk_widget_ref(GTK_WIDGET(tree_view));
+			g_object_ref(GTK_WIDGET(tree_view));
 		gtk_table_attach_defaults(popup_win->table,
 					  GTK_WIDGET(tree_view),
 					  0, 1, 0, 1);

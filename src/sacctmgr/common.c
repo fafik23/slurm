@@ -654,6 +654,12 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Preempt");
 		field->len = 10;
 		field->print_routine = sacctmgr_print_qos_bitstr;
+	} else if (!xstrncasecmp("PreemptExemptTime", object,
+				 MAX(command_len, 8))) {
+		field->type = PRINT_PRXMPT;
+		field->name = xstrdup("PreemptExemptTime");
+		field->len = 19;
+		field->print_routine = print_fields_time_from_secs;
 	} else if (!xstrncasecmp("Priority", object, MAX(command_len, 3))) {
 		field->type = PRINT_PRIO;
 		field->name = xstrdup("Priority");
@@ -717,16 +723,28 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Time");
 		field->len = 19;
 		field->print_routine = print_fields_date;
+	} else if (!xstrncasecmp("TimeEligible", object, MAX(command_len, 6)) ||
+		   !xstrncasecmp("Eligible", object, MAX(command_len, 2))) {
+		field->type = PRINT_TIMEELIGIBLE;
+		field->name = xstrdup("TimeEligible");
+		field->len = 19;
+		field->print_routine = print_fields_date;
+	} else if (!xstrncasecmp("TimeEnd", object, MAX(command_len, 6)) ||
+		   !xstrncasecmp("End", object, MAX(command_len, 2))) {
+		field->type = PRINT_TIMEEND;
+		field->name = xstrdup("TimeEnd");
+		field->len = 19;
+		field->print_routine = print_fields_date;
 	} else if (!xstrncasecmp("TimeStart", object, MAX(command_len, 7)) ||
 		   !xstrncasecmp("Start", object, MAX(command_len, 3))) {
 		field->type = PRINT_TIMESTART;
 		field->name = xstrdup("TimeStart");
 		field->len = 19;
 		field->print_routine = print_fields_date;
-	} else if (!xstrncasecmp("TimeEnd", object, MAX(command_len, 5)) ||
-		   !xstrncasecmp("End", object, MAX(command_len, 2))) {
-		field->type = PRINT_TIMEEND;
-		field->name = xstrdup("TimeEnd");
+	} else if (!xstrncasecmp("TimeSubmit", object, MAX(command_len, 6)) ||
+		   !xstrncasecmp("Submit", object, MAX(command_len, 2))) {
+		field->type = PRINT_TIMESUBMIT;
+		field->name = xstrdup("TimeSubmit");
 		field->len = 19;
 		field->print_routine = print_fields_date;
 	} else if (!xstrncasecmp("TRES", object,
@@ -863,7 +881,7 @@ extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond)
 	}
 
 	if (!assoc_cond->cluster_list)
-		assoc_cond->cluster_list = list_create(slurm_destroy_char);
+		assoc_cond->cluster_list = list_create(xfree_ptr);
 
 	if (!list_count(assoc_cond->cluster_list)) {
 		char *temp = slurm_get_cluster_name();
@@ -995,7 +1013,7 @@ extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond)
 	qos_cond->description_list = NULL;
 
 	if (!cluster_list)
-		cluster_list = list_create(slurm_destroy_char);
+		cluster_list = list_create(xfree_ptr);
 
 	if (!list_count(cluster_list)) {
 		char *temp = slurm_get_cluster_name();
@@ -1739,6 +1757,12 @@ extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc)
 	else if (assoc->grp_jobs != NO_VAL)
 		printf("  GrpJobs       = %u\n", assoc->grp_jobs);
 
+	if (assoc->grp_jobs_accrue == INFINITE)
+		printf("  GrpJobsAccrue            = None\n");
+	else if (assoc->grp_jobs_accrue != NO_VAL)
+		printf("  GrpJobsAccrue            = %u\n",
+		       assoc->grp_jobs_accrue);
+
 	if (assoc->grp_submit_jobs == INFINITE)
 		printf("  GrpSubmitJobs = NONE\n");
 	else if (assoc->grp_submit_jobs != NO_VAL)
@@ -1789,11 +1813,6 @@ extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc)
 	else if (assoc->max_jobs_accrue != NO_VAL)
 		printf("  MaxJobsPrioAcc= %u\n", assoc->max_jobs_accrue);
 
-	if (assoc->min_prio_thresh == INFINITE)
-		printf("  MinPrioThresh = NONE\n");
-	else if (assoc->min_prio_thresh != NO_VAL)
-		printf("  MinPrioThresh = %u\n", assoc->min_prio_thresh);
-
 	if (assoc->max_submit_jobs == INFINITE)
 		printf("  MaxSubmitJobs = NONE\n");
 	else if (assoc->max_submit_jobs != NO_VAL)
@@ -1842,8 +1861,18 @@ extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc)
 		printf("  MaxWall       = %s\n", time_buf);
 	}
 
+	if (assoc->min_prio_thresh == INFINITE)
+		printf("  MinPrioThresh = NONE\n");
+	else if (assoc->min_prio_thresh != NO_VAL)
+		printf("  MinPrioThresh = %u\n", assoc->min_prio_thresh);
+
 	if (assoc->parent_acct)
 		printf("  Parent        = %s\n", assoc->parent_acct);
+
+	if (assoc->priority == INFINITE)
+		printf("  Priority      = NONE\n");
+	else if (assoc->priority != NO_VAL)
+		printf("  Priority      = %d\n", assoc->priority);
 
 	if (assoc->qos_list) {
 		if (!g_qos_list)
@@ -1969,6 +1998,12 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 	else if (qos->grp_jobs != NO_VAL)
 		printf("  GrpJobs                  = %u\n", qos->grp_jobs);
 
+	if (qos->grp_jobs_accrue == INFINITE)
+		printf("  GrpJobsAccrue            = None\n");
+	else if (qos->grp_jobs_accrue != NO_VAL)
+		printf("  GrpJobsAccrue            = %u\n",
+		       qos->grp_jobs_accrue);
+
 	if (qos->grp_submit_jobs == INFINITE)
 		printf("  GrpSubmitJobs            = NONE\n");
 	else if (qos->grp_submit_jobs != NO_VAL)
@@ -2008,6 +2043,18 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 			      time_buf, sizeof(time_buf));
 		printf("  GrpWall                  = %s\n", time_buf);
 	}
+
+	if (qos->max_jobs_accrue_pa == INFINITE)
+		printf("  MaxJobsAccruePerAccount  = NONE\n");
+	else if(qos->max_jobs_accrue_pa != NO_VAL)
+		printf("  MaxJobsAccruePerAccount  = %u\n",
+		       qos->max_jobs_accrue_pa);
+
+	if (qos->max_jobs_accrue_pu == INFINITE)
+		printf("  MaxJobsAccruePerUser     = NONE\n");
+	else if(qos->max_jobs_accrue_pu != NO_VAL)
+		printf("  MaxJobsAccruePerUser     = %u\n",
+		       qos->max_jobs_accrue_pu);
 
 	if (qos->max_jobs_pa == INFINITE)
 		printf("  MaxJobsPerAccount        = NONE\n");
@@ -2064,6 +2111,21 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 		printf("  MaxTRESPerUser           = %s\n", tmp_char);
 		xfree(tmp_char);
 	}
+
+	if (qos->min_prio_thresh == INFINITE)
+		printf("  MinPrioThresh            = NONE\n");
+	else if (qos->min_prio_thresh != NO_VAL)
+		printf("  MinPrioThresh            = %u\n",
+		       qos->min_prio_thresh);
+
+	if (qos->min_tres_pj) {
+		sacctmgr_initialize_g_tres_list();
+		tmp_char = slurmdb_make_tres_string_from_simple(
+			qos->min_tres_pj, g_tres_list, NO_VAL,
+			CONVERT_NUM_UNIT_EXACT, 0, NULL);
+		printf("  MinTRESPerJob            = %s\n", tmp_char);
+		xfree(tmp_char);
+	}
 	if (qos->max_tres_mins_pj) {
 		sacctmgr_initialize_g_tres_list();
 		tmp_char = slurmdb_make_tres_string_from_simple(
@@ -2102,7 +2164,7 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 		char *temp_char = get_qos_complete_str(g_qos_list,
 						       qos->preempt_list);
 		if (temp_char) {
-			printf("  Preempt          = %s\n", temp_char);
+			printf("  Preempt                  = %s\n", temp_char);
 			xfree(temp_char);
 		}
 	}
@@ -2112,10 +2174,30 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
 		       preempt_mode_string(qos->preempt_mode));
 	}
 
+	if (qos->preempt_exempt_time == INFINITE) {
+		printf("  PreemptExemptTime        = NONE\n");
+	} else if (qos->preempt_exempt_time != NO_VAL) {
+		char time_buf[32];
+		secs2time_str((time_t) qos->preempt_exempt_time, time_buf,
+			      sizeof(time_buf));
+		printf("  PreemptExemptTime        = %s\n",
+	       		time_buf);
+	}
+
 	if (qos->priority == INFINITE)
 		printf("  Priority                 = NONE\n");
 	else if (qos->priority != NO_VAL)
 		printf("  Priority                 = %d\n", qos->priority);
+
+	if (qos->usage_factor == INFINITE)
+		printf("  UsageFactor              = NONE\n");
+	else if(qos->usage_factor != NO_VAL)
+		printf("  UsageFactor              = %.4lf\n", qos->usage_factor);
+
+	if (qos->usage_thres == INFINITE)
+		printf("  UsageThreshold           = NONE\n");
+	else if (qos->usage_thres != NO_VAL)
+		printf("  UsageThreshold           = %.4lf\n", qos->usage_thres);
 
 }
 
@@ -2160,15 +2242,13 @@ extern int sacctmgr_validate_cluster_list(List cluster_list)
 	int rc = SLURM_SUCCESS;
 	ListIterator itr = NULL, itr_c = NULL;
 
-	if (cluster_list) {
-		slurmdb_cluster_cond_t cluster_cond;
-		slurmdb_init_cluster_cond(&cluster_cond, 0);
-		cluster_cond.cluster_list = cluster_list;
+	xassert(cluster_list);
 
-		temp_list = slurmdb_clusters_get(db_conn, &cluster_cond);
-	} else
-		temp_list = slurmdb_clusters_get(db_conn, NULL);
+	slurmdb_cluster_cond_t cluster_cond;
+	slurmdb_init_cluster_cond(&cluster_cond, 0);
+	cluster_cond.cluster_list = cluster_list;
 
+	temp_list = slurmdb_clusters_get(db_conn, &cluster_cond);
 
 	itr_c = list_iterator_create(cluster_list);
 	itr = list_iterator_create(temp_list);
@@ -2177,8 +2257,14 @@ extern int sacctmgr_validate_cluster_list(List cluster_list)
 
 		list_iterator_reset(itr);
 		while ((cluster_rec = list_next(itr))) {
-			if (!xstrcasecmp(cluster_rec->name, cluster))
+			if (!xstrcasecmp(cluster_rec->name, cluster)) {
+				if (cluster_rec->flags & CLUSTER_FLAG_EXT) {
+					fprintf(stderr, " The cluster '%s' is an external cluster. Can't work with it.\n",
+						cluster);
+					list_delete_item(itr_c);
+				}
 				break;
+			}
 		}
 		if (!cluster_rec) {
 			exit_code=1;

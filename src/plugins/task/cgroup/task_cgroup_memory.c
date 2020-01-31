@@ -51,7 +51,7 @@
 
 #include "task_cgroup.h"
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
 #define POLLRDHUP POLLHUP
 #else
 #include <sys/eventfd.h>
@@ -343,8 +343,7 @@ static uint64_t swap_limit_in_bytes (uint64_t mem)
 static uint64_t kmem_limit_in_bytes (uint64_t mlb)
 {
 	uint64_t totalKmem = percent_in_bytes(mlb, max_kmem_percent);
-	if ( ! constrain_kmem_space )
-		return totalKmem;
+
 	if ( allowed_kmem_space < 0 ) {	/* Initial value */
 		if ( mlb > totalKmem )
 			return totalKmem;
@@ -366,6 +365,16 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 	uint64_t mlb = mem_limit_in_bytes (mem_limit, true);
 	uint64_t mlb_soft = mem_limit_in_bytes(mem_limit, false);
 	uint64_t mls = swap_limit_in_bytes  (mem_limit);
+
+	if (mlb_soft > mlb) {
+		/*
+		 * NOTE: It is recommended to set the soft limit always below
+		 * the hard limit, otherwise the hard one will take precedence.
+		 */
+		debug2("%s: Setting memory.soft_limit_in_bytes (%"PRIu64" bytes) to the same value as memory.limit_in_bytes (%"PRIu64" bytes) for cgroup: %s",
+		       __func__, mlb_soft, mlb, path);
+		mlb_soft = mlb;
+	}
 
 	if (xcgroup_create (ns, cg, path, uid, gid) != XCGROUP_SUCCESS)
 		return -1;
@@ -414,11 +423,11 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 	return 0;
 }
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
 
 static int _register_oom_notifications(char *ignored)
 {
-	error("OOM notification does not work on FreeBSD or NetBSD");
+	error("OOM notification does not work on FreeBSD, NetBSD, or macOS");
 
 	return SLURM_ERROR;
 }
@@ -560,7 +569,6 @@ static int _register_oom_notifications(char * cgpath)
 {
 	char *control_file = NULL, *event_file = NULL, *line = NULL;
 	int rc = SLURM_SUCCESS, event_fd = -1, cfd = -1, efd = -1;
-	size_t ret;
 	oom_event_args_t *event_args;
 
 	if ((cgpath == NULL) || (cgpath[0] == '\0')) {
@@ -569,13 +577,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(control_file, "%s/%s", cgpath, OOM_CONTROL);
-
-	if (ret >= PATH_MAX) {
-		error("%s: path to %s is too long.", __func__, OOM_CONTROL);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(control_file, "%s/%s", cgpath, OOM_CONTROL);
 
 	if ((cfd = open(control_file, O_RDONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, control_file);
@@ -583,13 +585,7 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(event_file, "%s/%s", cgpath, EVENT_CONTROL);
-
-	if (ret >= PATH_MAX) {
-		error("%s: path to %s is too long.", __func__, EVENT_CONTROL);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(event_file, "%s/%s", cgpath, EVENT_CONTROL);
 
 	if ((efd = open(event_file, O_WRONLY | O_CLOEXEC)) == -1) {
 		error("%s: Cannot open %s: %m", __func__, event_file);
@@ -603,17 +599,11 @@ static int _register_oom_notifications(char * cgpath)
 		goto fini;
 	}
 
-	ret = xstrfmtcat(line, "%d %d", event_fd, cfd);
-
-	if (ret >= LINE_MAX) {
-		error("%s: line is too long: %s", __func__, line);
-		rc = SLURM_ERROR;
-		goto fini;
-	}
+	xstrfmtcat(line, "%d %d", event_fd, cfd);
 
 	oom_kill_count = 0;
 
-	if (write(efd, line, ret + 1) == -1) {
+	if (write(efd, line, strlen(line) + 1) == -1) {
 		error("%s: Cannot write to %s", __func__, event_file);
 		rc = SLURM_ERROR;
 		goto fini;
@@ -663,7 +653,7 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 {
 	int fstatus = SLURM_ERROR;
 	xcgroup_t memory_cg;
-	uint32_t jobid = job->jobid;
+	uint32_t jobid;
 	uint32_t stepid = job->stepid;
 	uid_t uid = job->uid;
 	gid_t gid = job->gid;
@@ -688,6 +678,10 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	xfree(slurm_cgpath);
 
 	/* build job cgroup relative path if no set (should not be) */
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
 	if (*job_cgroup_path == '\0') {
 		if (snprintf(job_cgroup_path,PATH_MAX,"%s/job_%u",
 			      user_cgroup_path, jobid) >= PATH_MAX) {
@@ -838,6 +832,7 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 	char step_str[20];
 	uint64_t stop_msg;
 	ssize_t ret;
+	uint32_t jobid;
 
 	if (xcgroup_create(&memory_ns, &memory_cg, "", 0, 0)
 	    != XCGROUP_SUCCESS) {
@@ -850,15 +845,17 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 		goto fail_xcgroup_lock;
 	}
 
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
 	if (job->stepid == SLURM_BATCH_SCRIPT)
-		snprintf(step_str, sizeof(step_str), "%u.batch",
-			 job->jobid);
+		snprintf(step_str, sizeof(step_str), "%u.batch", jobid);
 	else if (job->stepid == SLURM_EXTERN_CONT)
-		snprintf(step_str, sizeof(step_str), "%u.extern",
-			 job->jobid);
+		snprintf(step_str, sizeof(step_str), "%u.extern", jobid);
 	else
 		snprintf(step_str, sizeof(step_str), "%u.%u",
-			 job->jobid, job->stepid);
+			 jobid, job->stepid);
 
 	if (failcnt_non_zero(&step_memory_cg, "memory.memsw.failcnt")) {
 		/*
@@ -878,10 +875,10 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 
 	if (failcnt_non_zero(&job_memory_cg, "memory.memsw.failcnt")) {
 		info("Job %u hit memory+swap limit at least once during execution. This may or may not result in some failure.",
-		     job->jobid);
+		     jobid);
 	} else if (failcnt_non_zero(&job_memory_cg, "memory.failcnt")) {
 		info("Job %u hit memory limit at least once during execution. This may or may not result in some failure.",
-		     job->jobid);
+		     jobid);
 	}
 
 	if (!oom_thread_created) {

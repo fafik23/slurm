@@ -121,11 +121,17 @@ Use this option with either the \fB\-\-up\fR or \fB\-\-down\fR option.
 
 .TP
 \fB\-g\fR, \fB\-\-primary_slurmdbd_failure\fR
-Trigger an event when the primary slurmdbd fails.
+Trigger an event when the primary slurmdbd fails. The trigger is launched by
+slurmctld in the occasions it tries to connect to slurmdbd, but receives no
+response on the socket.
 
 .TP
 \fB\-G\fR, \fB\-\-primary_slurmdbd_resumed_operation\fR
 Trigger an event when the primary slurmdbd resumes operation after failure.
+This event is triggered when opening the connection from slurmctld to slurmdbd
+results in a response. It can happen also in different situations, periodically
+every 15 seconds when checking the connection status, when saving state,
+when agent queue is filling, and so on.
 
 .TP
 \fB\-\-get\fP
@@ -134,11 +140,14 @@ Options can be used for filtering purposes.
 
 .TP
 \fB\-h\fR, \fB\-\-primary_database_failure\fR
-Trigger an event when the primary database fails.
+Trigger an event when the primary database fails. This event is triggered when
+the accounting plugin tries to open a connection with mysql and it fails and
+the slurmctld needs the database for some operations.
 
 .TP
 \fB\-H\fR, \fB\-\-primary_database_resumed_operation\fR
 Trigger an event when the primary database resumes operation after failure.
+It happens when the connection to mysql from the accounting plugin is restored.
 
 .TP
 \fB\-i\fR, \fB\-\-id\fR=\fIid\fR
@@ -279,6 +288,19 @@ Name of the user requesting the action
 .TP
 \fBPROGRAM\fP
 Pathname of the program to execute when the event occurs
+
+.SH "PERFORMANCE"
+.PP
+Executing \fBstrigger\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBstrigger\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBstrigger\fR or other Slurm client commands that send remote
+procedure calls to \fBslurmctld\fR from loops in shell scripts or other
+programs. Ensure that programs limit calls to \fBstrigger\fR to the minimum
+necessary for the information you are trying to gather.
 
 .SH "ENVIRONMENT VARIABLES"
 .PP

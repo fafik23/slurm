@@ -661,7 +661,7 @@ static void _add_delay(void)
 		target_resp_time = slurm_get_msg_timeout() / 4;
 		target_resp_time = MAX(target_resp_time, 3);
 		target_resp_time = MIN(target_resp_time, 5);
-		target_resp_time *= 1000000;
+		target_resp_time *= USEC_IN_SEC;
 		debug("%s: target response time = %d", __func__,
 		      target_resp_time);
 	}
@@ -672,7 +672,7 @@ static void _add_delay(void)
 	}
 
 	/* Maximum delay of 1 second. Start at 10 msec with Fibonacci backoff */
-	my_delay = MIN((delay_time + previous_delay), 1000000);
+	my_delay = MIN((delay_time + previous_delay), USEC_IN_SEC);
 	previous_delay = delay_time;
 	delay_time = my_delay;
 	slurm_mutex_unlock(&max_delay_lock);
@@ -756,7 +756,7 @@ _cancel_job_id (void *ci)
 		if ((error_code == 0) ||
 		    (errno != ESLURM_TRANSITION_STATE_NO_UPDATE))
 			break;
-		verbose("Job is in transistional state, retrying");
+		verbose("Job is in transitional state, retrying");
 		sleep(5 + i);
 	}
 	if (error_code) {
@@ -764,7 +764,7 @@ _cancel_job_id (void *ci)
 		if ((opt.verbose > 0) ||
 		    ((error_code != ESLURM_ALREADY_DONE) &&
 		     (error_code != ESLURM_INVALID_JOB_ID) &&
-		     ((error_code != ESLURM_NOT_PACK_WHOLE) ||
+		     ((error_code != ESLURM_NOT_WHOLE_HET_JOB) ||
 		      (opt.job_cnt != 0)))) {
 			error("Kill job error on job id %s: %s",
 			      cancel_info->job_id_str,
@@ -850,7 +850,7 @@ _cancel_step_id (void *ci)
 		    ((errno != ESLURM_TRANSITION_STATE_NO_UPDATE) &&
 		     (errno != ESLURM_JOB_PENDING)))
 			break;
-		verbose("Job is in transistional state, retrying");
+		verbose("Job is in transitional state, retrying");
 		sleep(5 + i);
 	}
 	if (error_code) {

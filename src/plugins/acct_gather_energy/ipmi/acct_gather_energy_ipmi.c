@@ -75,7 +75,7 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-slurmd_conf_t *conf __attribute__((weak_import)) = NULL;
+extern slurmd_conf_t *conf __attribute__((weak_import));
 #else
 slurmd_conf_t *conf = NULL;
 #endif
@@ -166,32 +166,6 @@ static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
 pthread_t thread_ipmi_id_launcher = 0;
 pthread_t thread_ipmi_id_run = 0;
-
-static bool _is_thread_launcher(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmd");
-	}
-
-	return run;
-}
-
-static bool _run_in_daemon(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmd,slurmstepd");
-	}
-
-	return run;
-}
 
 static int _running_profile(void)
 {
@@ -545,10 +519,15 @@ static int _read_ipmi_values(void)
 }
 
 /* updates the given energy according to the last watt reading of the sensor */
-static void _update_energy(acct_gather_energy_t *e, uint32_t last_update_watt)
+static void _update_energy(acct_gather_energy_t *e, uint32_t last_update_watt,
+			   uint32_t readings)
 {
+	uint32_t prev_watts;
+
 	if (e->current_watts) {
-		e->base_watts = e->current_watts;
+		prev_watts = e->current_watts;
+		e->ave_watts = ((e->ave_watts * readings) +
+				 e->current_watts) / (readings + 1);
 		e->current_watts = last_update_watt;
 		if (previous_update_time == 0)
 			e->base_consumed_energy = 0;
@@ -557,13 +536,13 @@ static void _update_energy(acct_gather_energy_t *e, uint32_t last_update_watt)
 				_get_additional_consumption(
 					previous_update_time,
 					last_update_time,
-					e->base_watts,
+					prev_watts,
 					e->current_watts);
 		e->previous_consumed_energy = e->consumed_energy;
 		e->consumed_energy += e->base_consumed_energy;
 	} else {
 		e->consumed_energy = 0;
-		e->base_watts = 0;
+		e->ave_watts = 0;
 		e->current_watts = last_update_watt;
 	}
 	e->poll_time = time(NULL);
@@ -577,6 +556,7 @@ static int _thread_update_node_energy(void)
 {
 	int rc = SLURM_SUCCESS;
 	uint16_t i;
+	static uint32_t readings = 0;
 
 	rc = _read_ipmi_values();
 
@@ -586,21 +566,24 @@ static int _thread_update_node_energy(void)
 			if (sensors[i].energy.current_watts == NO_VAL)
 				return rc;
 			_update_energy(&sensors[i].energy,
-				       sensors[i].last_update_watt);
+				       sensors[i].last_update_watt,
+				       readings);
 		}
 
 		if (previous_update_time == 0)
 			previous_update_time = last_update_time;
 	}
 
+	readings++;
+
 	if (debug_flags & DEBUG_FLAG_ENERGY) {
 		for (i = 0; i < sensors_len; ++i)
-			info("ipmi-thread: sensor %u current_watts: %u, "
-			     "consumed %"PRIu64" Joules %"PRIu64" new",
+			info("ipmi-thread: sensor %u current_watts: %u, consumed %"PRIu64" Joules %"PRIu64" new, ave watts %u",
 			     sensors[i].id,
 			     sensors[i].energy.current_watts,
 			     sensors[i].energy.consumed_energy,
-			     sensors[i].energy.base_consumed_energy);
+			     sensors[i].energy.base_consumed_energy,
+			     sensors[i].energy.ave_watts);
 	}
 
 	return rc;
@@ -902,7 +885,7 @@ static void _get_node_energy(acct_gather_energy_t *energy)
 		id = descriptions[i].sensor_idxs[j];
 		e = &sensors[id].energy;
 		energy->base_consumed_energy += e->base_consumed_energy;
-		energy->base_watts += e->base_watts;
+		energy->ave_watts += e->ave_watts;
 		energy->consumed_energy += e->consumed_energy;
 		energy->current_watts += e->current_watts;
 		energy->previous_consumed_energy += e->previous_consumed_energy;
@@ -931,7 +914,7 @@ extern int fini(void)
 {
 	uint16_t i;
 
-	if (!_run_in_daemon())
+	if (!running_in_slurmdstepd())
 		return SLURM_SUCCESS;
 
 	flag_energy_accounting_shutdown = true;
@@ -972,7 +955,7 @@ extern int fini(void)
 extern int acct_gather_energy_p_update_node_energy(void)
 {
 	int rc = SLURM_SUCCESS;
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	return rc;
 }
@@ -986,12 +969,12 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	time_t *last_poll = (time_t *)data;
 	uint16_t *sensor_cnt = (uint16_t *)data;
 
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	switch (data_type) {
 	case ENERGY_DATA_NODE_ENERGY_UP:
 		slurm_mutex_lock(&ipmi_mutex);
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			if (_thread_init() == SLURM_SUCCESS)
 				_thread_update_node_energy();
 		} else {
@@ -1022,7 +1005,7 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 		break;
 	case ENERGY_DATA_JOULES_TASK:
 		slurm_mutex_lock(&ipmi_mutex);
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			if (_thread_init() == SLURM_SUCCESS)
 				_thread_update_node_energy();
 		} else {
@@ -1048,7 +1031,7 @@ extern int acct_gather_energy_p_set_data(enum acct_energy_type data_type,
 	int rc = SLURM_SUCCESS;
 	int *delta = (int *)data;
 
-	xassert(_run_in_daemon());
+	xassert(running_in_slurmdstepd());
 
 	switch (data_type) {
 	case ENERGY_DATA_RECONFIG:
@@ -1325,7 +1308,7 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 		}
 	}
 
-	if (!_run_in_daemon())
+	if (!running_in_slurmdstepd())
 		return;
 
 	if (!flag_init) {
@@ -1333,7 +1316,7 @@ extern void acct_gather_energy_p_conf_set(s_p_hashtbl_t *tbl)
 		_parse_sensor_descriptions();
 
 		flag_init = true;
-		if (_is_thread_launcher()) {
+		if (running_in_slurmd()) {
 			slurm_thread_create(&thread_ipmi_id_launcher,
 					    _thread_launcher, NULL);
 			if (debug_flags & DEBUG_FLAG_ENERGY)

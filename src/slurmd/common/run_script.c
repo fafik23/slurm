@@ -132,15 +132,15 @@ _run_one_script(const char *name, const char *path, uint32_t job_id,
 	if (cpid == 0) {
 		char *argv[2];
 
-		/* container_g_add_pid needs to be called in the
+		/* container_g_join needs to be called in the
 		   forked process part of the fork to avoid a race
 		   condition where if this process makes a file or
 		   detacts itself from a child before we add the pid
 		   to the container in the parent of the fork.
 		*/
-		if (container_g_add_pid(job_id, getpid(), getuid())
+		if (container_g_join(job_id, getuid())
 		    != SLURM_SUCCESS)
-			error("container_g_add_pid(%u): %m", job_id);
+			error("container_g_join(%u): %m", job_id);
 
 		argv[0] = (char *)xstrdup(path);
 		argv[1] = NULL;
@@ -155,12 +155,6 @@ _run_one_script(const char *name, const char *path, uint32_t job_id,
 		return (-1);
 	return status;
 }
-
-static void _xfree_f (void *x)
-{
-	xfree (x);
-}
-
 
 static int _ef (const char *p, int errnum)
 {
@@ -179,7 +173,7 @@ static List _script_list_create (const char *pattern)
 	int rc = glob (pattern, GLOB_ERR, _ef, &gl);
 	switch (rc) {
 	case 0:
-		l = list_create ((ListDelF) _xfree_f);
+		l = list_create(xfree_ptr);
 		for (i = 0; i < gl.gl_pathc; i++)
 			list_push (l, xstrdup (gl.gl_pathv[i]));
 		break;

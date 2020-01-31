@@ -36,7 +36,7 @@ system-auth or sshd (you may use either the "required" or "sufficient" PAM
 control flag):</p>
 
 <pre>
-account    sufficient    pam_slurm_adopt.so
+account    required      pam_slurm_adopt.so
 </pre>
 
 <p> The order of plugins is very important. pam_slurm_adopt.so should be the
@@ -49,13 +49,20 @@ You might have the following account stack in sshd:</p>
 account    required      pam_nologin.so
 account    include       password-auth
 ...
-account    sufficient    pam_slurm_adopt.so
+-account    required      pam_slurm_adopt.so
 </pre>
 
-<p>pam_slurm_adopt must be used with the task/cgroup plugin.
+<p>Note the "-" before the account entry for pam_slurm_adopt. It allows
+PAM to fail gracefully if the pam_slurm_adopt.so file is not found. If Slurm
+is on a shared filesystem, such as NFS, then this is suggested to avoid being
+locked out of a node while the shared filesystem is mounting or down.</p>
+
+<p>pam_slurm_adopt must be used with the task/cgroup task plugin and either the
+proctrack/cgroup or the proctrack/cray_aries proctrack plugin.
 The pam_systemd module will conflict with pam_slurm_adopt, so you need to
 disable it in all files that are included in sshd or system-auth (e.g.
-password-auth, common-session, etc.). You must also make sure a different PAM
+password-auth, common-session, etc.). You should also stop and mask
+systemd-logind. You must also make sure a different PAM
 module isn't short-circuiting the account stack before it gets to
 pam_slurm_adopt.so. From the example above, the following two lines have been
 commented out in the included password-auth file:</p>
@@ -86,6 +93,16 @@ account    required      pam_access.so
 +:wheel:ALL
 -:ALL:ALL
 </pre>
+
+<p>An alternative to pam_access is to place pam_listfile.so before
+pam_slurm_adopt.so. For example:</p>
+
+<pre>
+account    sufficient    pam_listfile.so item=user sense=allow onerr=fail file=/path/to/allowed_users_file
+account    required      pam_slurm_adopt.so
+</pre>
+
+<p>List the usernames of the allowed users in allowed_users_file.</p>
 
 <p>When access is denied, the user will receive a relevant error message.</p>
 
@@ -143,6 +160,8 @@ can ssh in but may be adopted into a job that exits earlier than the
 job they intended to check on. The ssh connection will at least be
 subject to appropriate limits and the user can be informed of better
 ways to accomplish their objectives if this becomes a problem.
+NOTE: If the module fails to retrieve the cgroup mtime, then the picked
+job may not be the newest one.
 </dd>
 <dt><b>allow</b></dt>
 <dd>Let the connection through without adoption.</dd>
@@ -166,7 +185,9 @@ one job will result in this action being taken. Configurable values are:
 <dd>
 <dl compact>
 <dt><b>allow</b> (default)</dt>
-<dd>Let the connection through without adoption.</dd>
+<dd>Let the connection through without adoption. <b>WARNING: This value is
+insecure and is recommended for testing purposes only. We recommend using
+"deny."</b></dd>
 <dt><b>deny</b></dt>
 <dd>Deny the connection.</dd>
 </dl>
@@ -185,11 +206,33 @@ the correct facilities. Configurable values are:
 <dd>
 <dl compact>
 <dt><b>ignore</b> (default)</dt>
-<dd>Do nothing. Fall through to the next pam module.</dd>
+<dd>Do nothing. Fall through to the next pam module. <b>WARNING: This value is
+insecure and is recommended for testing purposes only. We recommend using
+"deny."</b></dd>
 <dt><b>allow</b></dt>
 <dd>Let the connection through without adoption.</dd>
 <dt><b>deny</b></dt>
 <dd>Deny the connection.</dd>
+</dl>
+</dd>
+</dl>
+
+</dd>
+
+<dt><b>disable_x11</b></dt>
+<dd>Turn off Slurm built-in X11 forwarding support. Configurable values are:
+
+<dl compact>
+<dt></dt>
+<dd>
+<dl compact>
+<dt><b>0</b> (default)</dt>
+<dd>If the job the connection is adopted into has Slurm's X11 forwarding
+enabled, the DISPLAY variable will be overwritten with the X11 tunnel
+endpoint details.</dd>
+<dt><b>1</b></dt>
+<dd>Do not check for Slurm's X11 forwarding support, and do not alter the
+DISPLAY variable.</dd>
 </dl>
 </dd>
 </dl>
@@ -212,6 +255,19 @@ NodeName in <b>slurm.conf</b> that this host operates as.
 </dd>
 </dl>
 
+<dl compact>
+<dt><b>service</b></dt>
+<dd>The pam service name for which this module should run. By default
+it only runs for sshd for which it was designed for. A
+different service name can be specified like "login" or "*" to
+allow the module to in any service context. For local pam logins
+this module could cause unexpected behaviour or even security
+issues. Therefore if the service name does not match then this
+module will not perform the adoption logic and returns
+PAM_IGNORE immediately.
+</dd>
+</dl>
+
 </dl>
 
 <h2><a name="SLURM_CONFIG">Slurm Configuration</a></h2>
@@ -230,13 +286,13 @@ assume that the user has no jobs allocated to the node. Depending on your
 configuration of the PAM module, you might accidentally deny all user ssh
 attempts without <b>PrologFlags=contain.</b></p>
 
+<p>The <b>UsePAM</b> option in slurm.conf is not related to pam_slurm_adopt.</p>
+
+
 <h2><a name="OTHER_CONFIG">Other Configuration</a></h2>
 
 <p>Verify that <b>UsePAM</b> is set to <b>On</b> in /etc/ssh/sshd_config (it
 should be on by default).</p>
-
-<p>The <b>UsePAM</b> option in slurm.conf is not related to this module, and
-usually should not be set on your cluster.</p>
 
 <h3>Firewalls, IP Addresses, etc.</h3>
 
@@ -247,6 +303,14 @@ on the source node, such as on a login node, it is better to have the RPC be
 rejected rather than silently dropped. This will allow better responsiveness to
 the RPC initiator.</p>
 
-<p style="text-align:center;">Last modified 3 October 2018</p>
+<h2><a name="LIMITATIONS">Limitations</a></h2>
+
+<p>Alternate authentication methods such as multi-factor authentication may
+break process adoption with pam_slurm_adopt.</p>
+
+<p>SELinux may conflict with pam_slurm_adopt, so it might need to be
+disabled.</p>
+
+<p style="text-align:center;">Last modified 29 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

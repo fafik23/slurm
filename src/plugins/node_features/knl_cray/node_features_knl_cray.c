@@ -59,7 +59,7 @@
 #  include <json/json.h>
 #endif
 
-#if defined(__FreeBSD__) || defined(__NetBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
 #define POLLRDHUP POLLHUP
 #endif
 
@@ -122,11 +122,13 @@
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-slurmctld_config_t slurmctld_config __attribute__((weak_import));
-bitstr_t *avail_node_bitmap __attribute__((weak_import));
+extern slurmctld_config_t slurmctld_config __attribute__((weak_import));
+extern bitstr_t *avail_node_bitmap __attribute__((weak_import));
+extern active_feature_list __attribute__((weak_import));
 #else
 slurmctld_config_t slurmctld_config;
 bitstr_t *avail_node_bitmap;
+List active_feature_list;
 #endif
 
 /*
@@ -157,16 +159,6 @@ bitstr_t *avail_node_bitmap;
 const char plugin_name[]        = "node_features knl_cray plugin";
 const char plugin_type[]        = "node_features/knl_cray";
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
-
-/* These are defined here so when we link with something other than
- * the slurmctld we will have these symbols defined.  They will get
- * overwritten when linking with the slurmctld.
- */
-#if defined (__APPLE__)
-List active_feature_list __attribute__((weak_import));
-#else
-List active_feature_list;
-#endif
 
 /* Configuration Parameters */
 static uint16_t allow_mcdram = KNL_MCDRAM_FLAG;
@@ -323,13 +315,13 @@ static void _update_all_node_features(
 				numa_cfg_t *numa_cfg, int numa_cfg_cnt);
 static void _update_cpu_bind(void);
 static void _update_mcdram_pct(char *tok, int mcdram_num);
-static void _update_node_features(struct node_record *node_ptr,
+static void _update_node_features(node_record_t *node_ptr,
 				  mcdram_cap_t *mcdram_cap, int mcdram_cap_cnt,
 				  mcdram_cfg_t *mcdram_cfg, int mcdram_cfg_cnt,
 				  numa_cap_t *numa_cap, int numa_cap_cnt,
 				  numa_cfg_t *numa_cfg, int numa_cfg_cnt);
 static int _update_node_state(char *node_list, bool set_locks);
-static void _validate_node_features(struct node_record *node_ptr);
+static void _validate_node_features(node_record_t *node_ptr);
 
 /* Function used both internally and externally */
 extern int node_features_p_node_update(char *active_features,
@@ -909,12 +901,12 @@ static char *_load_mcdram_type(int cache_pct)
 			resp_msg[i-1] = '\0';
 	}
 	_log_script_argv(script_argv, resp_msg);
-	_free_script_argv(script_argv);
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) {
 		error("%s: %s %s %s status:%u response:%s", __func__,
 		      script_argv[0], script_argv[1], script_argv[2],
 		      status, resp_msg);
 	}
+	_free_script_argv(script_argv);
 	return resp_msg;
 }
 
@@ -970,12 +962,12 @@ static char *_load_numa_type(char *type)
 			resp_msg[i-1] = '\0';
 	}
 	_log_script_argv(script_argv, resp_msg);
-	_free_script_argv(script_argv);
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) {
 		error("%s: %s %s %s status:%u response:%s", __func__,
 		      script_argv[0], script_argv[1], script_argv[2],
 		      status, resp_msg);
 	}
+	_free_script_argv(script_argv);
 	return resp_msg;
 }
 
@@ -1387,7 +1379,7 @@ next_tok:	tok1 = strtok_r(NULL, ",", &save_ptr1);
 	xfree(tmp_str1);
 }
 
-static void _make_node_down(struct node_record *node_ptr)
+static void _make_node_down(node_record_t *node_ptr)
 {
 	if (!avail_node_bitmap) {
 		/*
@@ -1408,7 +1400,7 @@ static void _make_node_down(struct node_record *node_ptr)
  * Determine that the actual KNL mode matches the available and current node
  * features, otherwise DRAIN the node
  */
-static void _validate_node_features(struct node_record *node_ptr)
+static void _validate_node_features(node_record_t *node_ptr)
 {
 	char *tmp_str, *tok, *save_ptr = NULL;
 	uint16_t actual_mcdram = 0, actual_numa = 0;
@@ -1493,7 +1485,7 @@ static void _update_all_node_features(
 				numa_cap_t *numa_cap, int numa_cap_cnt,
 				numa_cfg_t *numa_cfg, int numa_cfg_cnt)
 {
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	char node_name[32], *prefix;
 	int i, node_inx, numa_inx, width = 5;
 	uint64_t mcdram_size;
@@ -1611,7 +1603,7 @@ static void _update_all_node_features(
  * Update a specific node's features and features_act fields based upon
  * its current configuration provided by capmc
  */
-static void _update_node_features(struct node_record *node_ptr,
+static void _update_node_features(node_record_t *node_ptr,
 				  mcdram_cap_t *mcdram_cap, int mcdram_cap_cnt,
 				  mcdram_cfg_t *mcdram_cfg, int mcdram_cfg_cnt,
 				  numa_cap_t *numa_cap, int numa_cap_cnt,
@@ -1827,8 +1819,9 @@ static void *_ume_agent(void *args)
 		if (shutdown_time)
 			break;
 		/* Sleep before retry */
-		req.tv_sec  =  ume_check_interval / 1000000;
-		req.tv_nsec = (ume_check_interval % 1000000) * 1000;
+		req.tv_sec  =  ume_check_interval / USEC_IN_SEC;
+		req.tv_nsec = (ume_check_interval % USEC_IN_SEC) *
+			      NSEC_IN_USEC;
 		(void) nanosleep(&req, NULL);
 	}
 
@@ -1973,7 +1966,7 @@ extern int init(void)
 	}
 	gres_plugin_add("hbm");
 
-	if (ume_check_interval && run_in_daemon("slurmd")) {
+	if (ume_check_interval && running_in_slurmd()) {
 		slurm_mutex_lock(&ume_mutex);
 		slurm_thread_create(&ume_thread, _ume_agent, NULL);
 		slurm_mutex_unlock(&ume_mutex);
@@ -2039,7 +2032,7 @@ static void _check_node_status(void)
 	json_object *j_value;
 	char *resp_msg, **script_argv;
 	int i, nid, num_ent, retry, status = 0;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	bitstr_t *capmc_node_bitmap = NULL;
 	DEF_TIMERS;
 
@@ -2233,7 +2226,7 @@ static int _update_node_state(char *node_list, bool set_locks)
 	numa_cfg2_t *numa_cfg2 = NULL;
 	int mcdram_cap_cnt = 0, mcdram_cfg_cnt = 0, mcdram_cfg2_cnt = 0;
 	int numa_cap_cnt = 0, numa_cfg_cnt = 0, numa_cfg2_cnt = 0;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	hostlist_t host_list;
 	char *node_name;
 
@@ -2573,7 +2566,8 @@ static int _update_node_state(char *node_list, bool set_locks)
 		time_t now = time(NULL);
 		for (i = 0, node_ptr = node_record_table_ptr;
 		     i < node_record_count; i++, node_ptr++) {
-			if (node_ptr->last_response > now) {
+			if ((node_ptr->last_response > now) &&
+			    IS_NODE_NO_RESPOND(node_ptr)) {
 				/*
 				 * Reboot likely in progress.
 				 * Preserve active KNL features and merge
@@ -2776,7 +2770,7 @@ extern int node_features_p_node_update(char *active_features,
 	int rc = SLURM_SUCCESS, numa_inx = -1;
 	int mcdram_inx = 0;
 	uint64_t mcdram_size;
-	struct node_record *node_ptr;
+	node_record_t *node_ptr;
 	char *save_ptr = NULL, *tmp, *tok;
 
 	if (mcdram_per_node == NULL)
@@ -2841,13 +2835,13 @@ extern int node_features_p_node_update(char *active_features,
  * Return TRUE if the specified node update request is valid with respect
  * to features changes (i.e. don't permit a non-KNL node to set KNL features).
  *
- * arg IN - Pointer to struct node_record record
+ * arg IN - Pointer to node_record_t record
  * update_node_msg IN - Pointer to update request
  */
 extern bool node_features_p_node_update_valid(void *arg,
 					update_node_msg_t *update_node_msg)
 {
-	struct node_record *node_ptr = (struct node_record *) arg;
+	node_record_t *node_ptr = (node_record_t *) arg;
 	char *tmp, *save_ptr = NULL, *tok;
 	bool is_knl = false, invalid_feature = false;
 

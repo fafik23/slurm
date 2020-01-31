@@ -79,7 +79,6 @@ typedef struct env_options {
 	uint16_t pty_port;	/* used to communicate window size changes */
 	uint16_t ws_col;	/* window size, columns */
 	uint16_t ws_row;	/* window size, row count */
-	char *ckpt_dir;		/* --ckpt-dir=                 */
 	uint16_t restart_cnt;	/* count of job restarts	*/
 	uint16_t batch_flag;	/* 1 if batch: queued job with script */
 	uint32_t uid;		/* user ID */
@@ -94,7 +93,8 @@ typedef struct env_options {
  * if env is NULL, otherwise they operate on the argument array */
 int	envcount (char **env);
 char *	getenvp(char **env, const char *name);
-int	setenvf(char ***envp, const char *name, const char *fmt, ...);
+int	setenvf(char ***envp, const char *name, const char *fmt, ...)
+		__attribute__ ((format (printf, 3, 4)));
 int	setenvfs(const char *fmt, ...);
 void	unsetenvp(char **env, const char *name);
 
@@ -113,7 +113,7 @@ int	setup_env(env_t *env, bool preserve_env);
  * dest OUT - array in which to the set environment variables
  * alloc IN - resource allocation response
  * desc IN - job allocation request
- * pack_offset IN - component offset into pack job, -1 if not pack job
+ * het_job_offset IN - component offset into hetjob, -1 if not hetjob
  *
  * Sets the variables:
  *	SLURM_JOB_ID
@@ -127,7 +127,7 @@ int	setup_env(env_t *env, bool preserve_env);
  */
 extern int env_array_for_job(char ***dest,
 			     const resource_allocation_response_msg_t *alloc,
-			     const job_desc_msg_t *desc, int pack_offset);
+			     const job_desc_msg_t *desc, int het_job_offset);
 
 /*
  * Set in "dest" the environment variables relevant to a Slurm batch
@@ -285,8 +285,9 @@ int env_array_overwrite_fmt(char ***array_ptr, const char *name,
  *
  * Return 1 on success, and 0 on error.
  */
-int env_array_overwrite_pack_fmt(char ***array_ptr, const char *name,
-				 int pack_offset, const char *value_fmt, ...)
+int env_array_overwrite_het_fmt(char ***array_ptr, const char *name,
+				int het_job_offset,
+				const char *value_fmt, ...)
   __attribute__ ((format (printf, 4, 5)));
 
 /*
@@ -357,8 +358,18 @@ char *uint32_compressed_to_str(uint32_t array_len,
  *
  * opt IN - options set by command parsing
  * dest IN/OUT - location to write environment variables
- * pack_offset IN - component offset into pack job, -1 if not pack job
+ * het_job_offset IN - component offset into hetjob, -1 if not hetjob
  */
-extern void set_env_from_opts(slurm_opt_t *opt, char ***dest, int pack_offset);
+extern void set_env_from_opts(slurm_opt_t *opt, char ***dest,
+			      int het_job_offset);
+
+/*
+ * Parse token's skipping nested commas.
+ *
+ * Similar to strtok_r but handles nested commas.
+ *
+ * e.g. FOO='a,b,c',BAR='d,e,f'
+ */
+extern char *find_quote_token(char *tmp, char *sep, char **last);
 
 #endif

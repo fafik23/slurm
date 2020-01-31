@@ -152,8 +152,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			  || !xstrncasecmp(argv[i], "QOSLevel",
 					   MAX(command_len, 1))) {
 			if (!qos_cond->name_list) {
-				qos_cond->name_list =
-					list_create(slurm_destroy_char);
+				qos_cond->name_list = list_create(xfree_ptr);
 			}
 			if (slurm_addto_char_list(qos_cond->name_list,
 						 argv[i]+end))
@@ -166,7 +165,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			 */
 			if (!qos_cond->description_list) {
 				qos_cond->description_list =
-					list_create(slurm_destroy_char);
+					list_create(xfree_ptr);
 			}
 			if (slurm_addto_char_list(qos_cond->description_list,
 						 argv[i]+end))
@@ -175,7 +174,7 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 1))) {
 			if (!qos_cond->description_list) {
 				qos_cond->description_list =
-					list_create(slurm_destroy_char);
+					list_create(xfree_ptr);
 			}
 			if (slurm_addto_char_list(qos_cond->description_list,
 						 argv[i]+end))
@@ -190,8 +189,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			uint32_t id = 0;
 
 			if (!qos_cond->id_list) {
-				qos_cond->id_list =
-					list_create(slurm_destroy_char);
+				qos_cond->id_list = list_create(xfree_ptr);
 			}
 			if (slurm_addto_char_list(qos_cond->id_list,
 						 argv[i]+end))
@@ -514,11 +512,6 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				xfree(tmp_char);
 			}
-		} else if (!xstrncasecmp(argv[i], "MinPrioThresh",
-					 MAX(command_len, 4))) {
-			if (get_uint(argv[i]+end, &qos->min_prio_thresh,
-				     "MinPrioThresh") == SLURM_SUCCESS)
-				set = 1;
 		} else if (!xstrncasecmp(argv[i], "MaxSubmitJobsPerAccount",
 					 MAX(command_len, 17)) ||
 			   !xstrncasecmp(argv[i], "MaxSubmitJobsPA",
@@ -645,6 +638,11 @@ static int _set_rec(int *start, int argc, char **argv,
 					tres_flags);
 				xfree(tmp_char);
 			}
+		} else if (!xstrncasecmp(argv[i], "MinPrioThresh",
+					 MAX(command_len, 4))) {
+			if (get_uint(argv[i]+end, &qos->min_prio_thresh,
+				     "MinPrioThresh") == SLURM_SUCCESS)
+				set = 1;
 		} else if (!xstrncasecmp(argv[i], "MinTRESPerJob",
 					 MAX(command_len, 7))) {
 			sacctmgr_initialize_g_tres_list();
@@ -671,8 +669,7 @@ static int _set_rec(int *start, int argc, char **argv,
 		} else if (!xstrncasecmp(argv[i], "Preempt",
 					 MAX(command_len, 7))) {
 			if (!qos->preempt_list)
-				qos->preempt_list =
-					list_create(slurm_destroy_char);
+				qos->preempt_list = list_create(xfree_ptr);
 
 			if (!g_qos_list)
 				g_qos_list = slurmdb_qos_get(
@@ -684,6 +681,18 @@ static int _set_rec(int *start, int argc, char **argv,
 				set = 1;
 			else
 				exit_code = 1;
+		} else if (!xstrncasecmp(argv[i], "PreemptExemptTime",
+					 MAX(command_len, 8))) {
+			int seconds = time_str2secs(argv[i]+end);
+			if (seconds != NO_VAL) {
+				qos->preempt_exempt_time = seconds;
+				set = 1;
+			} else {
+				exit_code=1;
+				fprintf(stderr,
+					" Bad PreemptExemptTime format: %s\n",
+					argv[i]);
+			}
 		} else if (!xstrncasecmp(argv[i], "Priority",
 					 MAX(command_len, 3))) {
 			if (get_uint(argv[i]+end, &qos->priority,
@@ -739,7 +748,7 @@ static bool _isdefault(List qos_list)
 
 	memset(&assoc_cond, 0, sizeof(slurmdb_assoc_cond_t));
 	assoc_cond.without_parent_info = 1;
-	assoc_cond.def_qos_id_list = list_create(slurm_destroy_char);
+	assoc_cond.def_qos_id_list = list_create(xfree_ptr);
 
 	itr = list_iterator_create(qos_list);
 	while ((name = list_next(itr))) {
@@ -798,7 +807,7 @@ extern int sacctmgr_add_qos(int argc, char **argv)
 	ListIterator itr = NULL;
 	slurmdb_qos_rec_t *qos = NULL;
 	slurmdb_qos_rec_t *start_qos = xmalloc(sizeof(slurmdb_qos_rec_t));
-	List name_list = list_create(slurm_destroy_char);
+	List name_list = list_create(xfree_ptr);
 	char *description = NULL;
 	char *name = NULL;
 	List qos_list = NULL;
@@ -928,7 +937,7 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 
 	print_field_t *field = NULL;
 
-	List format_list = list_create(slurm_destroy_char);
+	List format_list = list_create(xfree_ptr);
 	List print_fields_list; /* types are of print_field_t */
 
 	for (i=0; i<argc; i++) {
@@ -945,7 +954,8 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 		return SLURM_ERROR;
 	} else if (!list_count(format_list)) {
 		slurm_addto_char_list(format_list,
-				      "Name,Prio,GraceT,Preempt,PreemptM,"
+				      "Name,Prio,GraceT,"
+				      "Preempt,PreemptE,PreemptM,"
 				      "Flags%40,UsageThres,UsageFactor,"
 				      "GrpTRES,GrpTRESMins,GrpTRESRunMins,"
 				      "GrpJ,GrpS,GrpW,"
@@ -1249,6 +1259,15 @@ extern int sacctmgr_list_qos(int argc, char **argv)
 					tmp_char,
 					(curr_inx == field_count));
 				xfree(tmp_char);
+				break;
+			}
+			case PRINT_PRXMPT:
+			{
+				uint64_t tmp64;
+				tmp64 = (uint64_t) qos->preempt_exempt_time;
+				tmp64 = (tmp64 == INFINITE) ? INFINITE64 : tmp64;
+				field->print_routine(field, tmp64,
+						     (curr_inx == field_count));
 				break;
 			}
 			case PRINT_PRIO:

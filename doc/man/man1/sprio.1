@@ -64,10 +64,10 @@ assigned non-zero weights are
 .RS
 .TP 15
 \fIdefault\fR
-"%.15i %9r %.10Y %.10A %.10F %.10J %.10P %.10Q %20T"
+"%.15i %9r %.10Y %.10S %.10A %.10B %.10F %.10J %.10P %.10Q %20T"
 .TP
 \fI\-l, \-\-long\fR
-"%.15i %9r %.8u %.10Y %.10A %.10F %.10J %.10P %.10Q %.6N %20T"
+"%.15i %9r %.8u %.10Y %.10S %.10A %.10B %.10F %.10J %.10P %.10Q %.11N %.20T";
 .RE
 
 .IP
@@ -93,6 +93,12 @@ Normalized age priority
 .TP
 \fB%A\fR
 Weighted age priority
+.TP
+\fB%b\fR
+Normalized association priority
+.TP
+\fB%B\fR
+Weighted association priority
 .TP
 \fB%c\fR
 Cluster name. Only applicable for federated clusters
@@ -121,14 +127,17 @@ Normalized partition priority
 \fB%P\fR
 Weighted partition priority
 .TP
-\fB%r\fR
-Partition name
-.TP
 \fB%q\fR
 Normalized quality of service priority
 .TP
 \fB%Q\fR
 Weighted quality of service priority
+.TP
+\fB%r\fR
+Partition name
+.TP
+\fB%S\fR
+Weighted admin priority.
 .TP
 \fB%t\fR
 Normalized TRES priorities
@@ -192,6 +201,19 @@ Print version information and exit.
 factor.  This is for information purposes only.  Actual job data is
 suppressed.
 
+.SH "PERFORMANCE"
+.PP
+Executing \fBsprio\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBsprio\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBsprio\fR or other Slurm client commands that send remote procedure
+calls to \fBslurmctld\fR from loops in shell scripts or other programs. Ensure
+that programs limit calls to \fBsprio\fR to the minimum necessary for the
+information you are trying to gather.
+
 .SH "ENVIRONMENT VARIABLES"
 .PP
 If no corresponding commandline option is specified, \fBsprio\fR will use the value of
@@ -199,6 +221,7 @@ the following environment variables.
 .TP 20
 \fBSLURM_CLUSTERS\fR
 Same as \fB\-\-clusters\fR
+
 .TP
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.
@@ -206,6 +229,10 @@ The location of the Slurm configuration file.
 .TP
 \fBSPRIO_FEDERATION\fR
 Same as \fB\-\-federation\fR
+
+.TP
+\fBSPRIO_FORMAT\fR
+Same as \fB\-o <output_format>, \-\-format=<output_format>\fR
 
 .TP
 \fBSPRIO_LOCAL\fR

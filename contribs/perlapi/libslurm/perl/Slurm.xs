@@ -249,18 +249,6 @@ slurm_accounting_enforce_string(slurm_t self, uint16_t enforce)
 	OUTPUT:
 		RETVAL
 
-char *
-slurm_node_use_string(slurm_t self, uint16_t node_use)
-	CODE:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-		RETVAL = slurm_node_use_string((enum node_use_type)node_use);
-	OUTPUT:
-		RETVAL
-
 ######################################################################
 # 	RESOURCE ALLOCATION FUNCTIONS
 ######################################################################
@@ -451,14 +439,14 @@ slurm_sbcast_lookup(slurm_t self, uint32_t job_id, uint32_t step_id)
 	PREINIT:
 		job_sbcast_cred_msg_t *info;
 		int rc;
-		uint32_t pack_job_offset = NO_VAL;
+		uint32_t het_job_offset = NO_VAL;
 	CODE:
 		if (self); /* this is needed to avoid a warning about
 			      unused variables.  But if we take slurm_t self
 			      out of the mix Slurm-> doesn't work,
 			      only Slurm::
 			    */
-		rc = slurm_sbcast_lookup(job_id, pack_job_offset, step_id,
+		rc = slurm_sbcast_lookup(job_id, het_job_offset, step_id,
 					 &info);
 		if (rc == SLURM_SUCCESS) {
 			RETVAL = newHV();
@@ -792,7 +780,7 @@ slurm_step_launch(slurm_step_ctx_t *ctx, HV *params, HV *callbacks=NULL)
 				set_slcb(callbacks);
 				cb = &slcb;
 			}
-			RETVAL = slurm_step_launch(ctx, &lp, cb, -1);
+			RETVAL = slurm_step_launch(ctx, &lp, cb);
 			free_slurm_step_launch_params_memory(&lp);
 		}
 	OUTPUT:
@@ -1668,8 +1656,6 @@ int
 slurm_get_select_nodeinfo(slurm_t self, dynamic_plugin_data_t *nodeinfo, uint32_t data_type, uint32_t state, SV *data)
 	PREINIT:
 		uint16_t tmp_16;
-		char *tmp_str;
-		bitstr_t *tmp_bitmap;
 		select_nodeinfo_t *tmp_ptr;
 	CODE:
 		if (self); /* this is needed to avoid a warning about
@@ -1678,30 +1664,10 @@ slurm_get_select_nodeinfo(slurm_t self, dynamic_plugin_data_t *nodeinfo, uint32_
 			      only Slurm::
 			    */
 		switch(data_type) {
-		case SELECT_NODEDATA_BITMAP_SIZE: /* data-> uint16_t */
-		case SELECT_NODEDATA_SUBGRP_SIZE: /* data-> uint16_t */
 		case SELECT_NODEDATA_SUBCNT:      /* data-> uint16_t */
 			RETVAL = slurm_get_select_nodeinfo(nodeinfo, data_type, state, &tmp_16);
 			if (RETVAL == 0) {
 				sv_setuv(data, (UV)tmp_16);
-			}
-			break;
-		case SELECT_NODEDATA_BITMAP:      /* data-> bitstr_t * needs to be
-						   * freed with FREE_NULL_BITMAP */
-			RETVAL = slurm_get_select_nodeinfo(nodeinfo, data_type, state, &tmp_bitmap);
-			if (RETVAL == 0) {
-				sv_setref_pv(data, "Slurm::Bitstr", tmp_bitmap);
-			}
-			break;
-		case SELECT_NODEDATA_STR:         /* data-> char *  needs to be freed with xfree */
-			RETVAL = slurm_get_select_nodeinfo(nodeinfo, data_type, state, &tmp_str);
-			if (RETVAL == 0) {
-				char *str;
-				int len = strlen(tmp_str) + 1;
-				New(0, str, len, char);
-				Copy(tmp_str, str, len, char);
-				xfree(tmp_str);
-				sv_setpvn(data, str, len);
 			}
 			break;
 		case SELECT_NODEDATA_PTR:         /* data-> select_nodeinfo_t *nodeinfo */
@@ -2108,128 +2074,6 @@ slurm_requeue(slurm_t self, uint32_t job_id, uint32_t state)
 			    */
 	C_ARGS:
 		job_id, state
-
-
-######################################################################
-#	SLURM JOB CHECKPOINT FUNCTIONS
-######################################################################
-
-int
-slurm_checkpoint_able(slurm_t self, uint32_t job_id, uint32_t step_id, OUT time_t start_time)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, &start_time
-
-int
-slurm_checkpoint_disable(slurm_t self, uint32_t job_id, uint32_t step_id)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id
-
-int
-slurm_checkpoint_enable(slurm_t self, uint32_t job_id, uint32_t step_id)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id
-
-int
-slurm_checkpoint_create(slurm_t self, uint32_t job_id, uint32_t step_id, uint16_t max_wait, char *image_dir)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, max_wait, image_dir
-
-int
-slurm_checkpoint_requeue(slurm_t self, uint32_t job_id, uint16_t max_wait, char *image_dir)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, max_wait, image_dir
-
-int
-slurm_checkpoint_vacate(slurm_t self, uint32_t job_id, uint32_t step_id, uint16_t max_wait, char *image_dir)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, max_wait, image_dir
-
-int
-slurm_checkpoint_restart(slurm_t self, uint32_t job_id, uint32_t step_id, uint16_t stick, char *image_dir)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, stick, image_dir
-
-int
-slurm_checkpoint_complete(slurm_t self, uint32_t job_id, uint32_t step_id, time_t begin_time, uint32_t error_code, char *error_msg)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, begin_time, error_code, error_msg
-
-int
-slurm_checkpoint_error(slurm_t self, uint32_t job_id, uint32_t step_id, OUT uint32_t error_code, OUT char *error_msg)
-	PREINIT:
-		char* err_msg = NULL;
-	CODE:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-		error_code = SLURM_SUCCESS;
-		RETVAL = slurm_checkpoint_error(job_id, step_id, (uint32_t *)&error_code, &err_msg);
-		Newz(0, error_msg, strlen(err_msg), char);
-		Copy(err_msg, error_msg, strlen(err_msg), char);
-		xfree(err_msg);
-	OUTPUT:
-		RETVAL
-
-int
-slurm_checkpoint_tasks(slurm_t self, uint32_t job_id, uint16_t step_id, time_t begin_time, char *image_dir, uint16_t max_wait, char *nodelist)
-	INIT:
-		if (self); /* this is needed to avoid a warning about
-			      unused variables.  But if we take slurm_t self
-			      out of the mix Slurm-> doesn't work,
-			      only Slurm::
-			    */
-	C_ARGS:
-		job_id, step_id, begin_time, image_dir, max_wait, nodelist
 
 
 ######################################################################

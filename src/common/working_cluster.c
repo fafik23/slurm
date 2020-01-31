@@ -150,12 +150,6 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 {
 	char *cluster_flags = NULL;
 
-	if (flags_in & CLUSTER_FLAG_CRAY_A) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "AlpsCray");
-	}
-
 	if (flags_in & CLUSTER_FLAG_FE) {
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
@@ -172,6 +166,12 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
 		xstrcat(cluster_flags, "Cray");
+	}
+
+	if (flags_in & CLUSTER_FLAG_EXT) {
+		if (cluster_flags)
+			xstrcat(cluster_flags, ",");
+		xstrcat(cluster_flags, "External");
 	}
 
 	if (!cluster_flags)
@@ -198,6 +198,9 @@ slurm_setup_remote_working_cluster(resource_allocation_response_msg_t *msg)
 
 	working_cluster_rec = (slurmdb_cluster_rec_t *)msg->working_cluster_rec;
 	msg->working_cluster_rec = NULL;
+
+	working_cluster_rec->plugin_id_select =
+		select_get_plugin_id_pos(working_cluster_rec->plugin_id_select);
 
 	slurm_set_addr(&working_cluster_rec->control_addr,
 		       working_cluster_rec->control_port,

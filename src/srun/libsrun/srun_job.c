@@ -53,6 +53,7 @@
 #include <unistd.h>
 
 #include "src/common/bitstring.h"
+#include "src/common/cli_filter.h"
 #include "src/common/cbuf.h"
 #include "src/common/fd.h"
 #include "src/common/forward.h"
@@ -63,6 +64,7 @@
 #include "src/common/plugstack.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/slurm_opt.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/uid.h"
@@ -101,17 +103,19 @@ typedef struct allocation_info {
 	uint32_t                stepid;
 } allocation_info_t;
 
-typedef struct pack_resp_struct {
+typedef struct het_job_resp_struct {
 	char **alias_list;
 	uint16_t *cpu_cnt;
 	hostlist_t host_list;
 	uint32_t node_cnt;
-} pack_resp_struct_t;
+} het_job_resp_struct_t;
 
 
 static int shepherd_fd = -1;
 static pthread_t signal_thread = (pthread_t) 0;
 static int pty_sigarray[] = { SIGWINCH, 0 };
+
+extern char **environ;
 
 /*
  * Prototypes:
@@ -132,9 +136,9 @@ static void _run_srun_epilog (srun_job_t *job);
 static void _run_srun_prolog (srun_job_t *job);
 static int  _run_srun_script (srun_job_t *job, char *script);
 static void _set_env_vars(resource_allocation_response_msg_t *resp,
-			  int pack_offset);
+			  int het_job_offset);
 static void _set_env_vars2(resource_allocation_response_msg_t *resp,
-			   int pack_offset);
+			   int het_job_offset);
 static void _set_ntasks(allocation_info_t *ai, slurm_opt_t *opt_local);
 static void _set_prio_process_env(void);
 static int  _set_rlimit_env(void);
@@ -144,6 +148,7 @@ static void _shepherd_notify(int shepherd_fd);
 static int  _shepherd_spawn(srun_job_t *job, List srun_job_list,
 			     bool got_alloc);
 static void *_srun_signal_mgr(void *no_data);
+static void _srun_cli_filter_post_submit(uint32_t jobid, uint32_t stepid);
 static void _step_opt_exclusive(slurm_opt_t *opt_local);
 static int  _validate_relative(resource_allocation_response_msg_t *resp,
 			       slurm_opt_t *opt_local);
@@ -229,8 +234,8 @@ extern srun_job_t *job_step_create_allocation(
 	ai->nnodes = alloc_count;
 	hostlist_destroy(hl);
 
-	if (opt_local->exc_nodes) {
-		hostlist_t exc_hl = hostlist_create(opt_local->exc_nodes);
+	if (opt_local->exclude) {
+		hostlist_t exc_hl = hostlist_create(opt_local->exclude);
 		hostlist_t inc_hl = NULL;
 		char *node_name = NULL;
 
@@ -483,20 +488,20 @@ static void _copy_args(List missing_argc_list, slurm_opt_t *opt_master)
 }
 
 /*
- * Build "pack_group" string. If set on execute line, it may need to be
- * rebuilt for multiple option structures ("--pack-group=1,2" becomes two
- * opt structures). Clear "pack_grp_bits".if determined to not be a pack job.
+ * Build "het_group" string. If set on execute line, it may need to be
+ * rebuilt for multiple option structures ("--het-group=1,2" becomes two
+ * opt structures). Clear "het_grp_bits".if determined to not be a hetjob.
  */
-static void _pack_grp_test(List opt_list)
+static void _het_grp_test(List opt_list)
 {
 	ListIterator iter;
-	slurm_opt_t *opt_local;
-	int pack_offset;
+	int het_job_offset;
 	bitstr_t *master_map = NULL;
 	List missing_argv_list = NULL;
-	bool multi_pack = false, multi_prog = false;
+	bool multi_comp = false, multi_prog = false;
 
 	if (opt_list) {
+		slurm_opt_t *opt_local;
 		missing_argv_list = list_create(NULL);
 		iter = list_iterator_create(opt_list);
 		while ((opt_local = list_next(iter))) {
@@ -506,52 +511,52 @@ static void _pack_grp_test(List opt_list)
 				list_append(missing_argv_list, opt_local);
 			else
 				_copy_args(missing_argv_list, opt_local);
-			xfree(srun_opt->pack_group);
-			if (srun_opt->pack_grp_bits &&
-			    ((pack_offset =
-			      bit_ffs(srun_opt->pack_grp_bits)) >= 0)) {
-				xstrfmtcat(srun_opt->pack_group, "%d",
-					   pack_offset);
+			xfree(srun_opt->het_group);
+			if (srun_opt->het_grp_bits &&
+			    ((het_job_offset =
+			      bit_ffs(srun_opt->het_grp_bits)) >= 0)) {
+				xstrfmtcat(srun_opt->het_group, "%d",
+					   het_job_offset);
 			}
-			if (!srun_opt->pack_grp_bits) {
-				error("%s: pack_grp_bits is NULL", __func__);
+			if (!srun_opt->het_grp_bits) {
+				error("%s: het_grp_bits is NULL", __func__);
 			} else if (!master_map) {
 				master_map
-					= bit_copy(srun_opt->pack_grp_bits);
+					= bit_copy(srun_opt->het_grp_bits);
 			} else {
-				if (bit_overlap(master_map,
-						srun_opt->pack_grp_bits)) {
-					fatal("Duplicate pack groups in single srun not supported");
+				if (bit_overlap_any(master_map,
+						    srun_opt->het_grp_bits)) {
+					fatal("Duplicate het groups in single srun not supported");
 				}
-				bit_or(master_map, srun_opt->pack_grp_bits);
+				bit_or(master_map, srun_opt->het_grp_bits);
 			}
 			if (srun_opt->multi_prog)
 				multi_prog = true;
 		}
 		if (master_map && (bit_set_count(master_map) > 1))
-			multi_pack = true;
+			multi_comp = true;
 		FREE_NULL_BITMAP(master_map);
 		list_iterator_destroy(iter);
 		list_destroy(missing_argv_list);
-	} else if (!sropt.pack_group && !getenv("SLURM_PACK_SIZE")) {
-		FREE_NULL_BITMAP(sropt.pack_grp_bits);
-		/* pack_group is already NULL */
-	} else if (!sropt.pack_group && sropt.pack_grp_bits) {
-		if ((pack_offset = bit_ffs(sropt.pack_grp_bits)) < 0)
-			pack_offset = 0;
-		else if (bit_set_count(sropt.pack_grp_bits) > 1)
-			multi_pack = true;
+	} else if (!sropt.het_group && !getenv("SLURM_HET_SIZE")) {
+		FREE_NULL_BITMAP(sropt.het_grp_bits);
+		/* het_group is already NULL */
+	} else if (!sropt.het_group && sropt.het_grp_bits) {
+		if ((het_job_offset = bit_ffs(sropt.het_grp_bits)) < 0)
+			het_job_offset = 0;
+		else if (bit_set_count(sropt.het_grp_bits) > 1)
+			multi_comp = true;
 		if (sropt.multi_prog)
 			multi_prog = true;
-		xstrfmtcat(sropt.pack_group, "%d", pack_offset);
+		xstrfmtcat(sropt.het_group, "%d", het_job_offset);
 	}
 
-	if (multi_pack && multi_prog)
-		fatal("--multi-prog option not supported with multiple pack groups");
+	if (multi_comp && multi_prog)
+		fatal("--multi-prog option not supported with multiple het groups");
 }
 
 /*
- * Copy job name from last component to all pack job components unless
+ * Copy job name from last component to all hetjob components unless
  * explicitly set.
  */
 static void _match_job_name(List opt_list)
@@ -585,10 +590,10 @@ static int _sort_by_offset(void *x, void *y)
 	slurm_opt_t *opt_local2 = *(slurm_opt_t **) y;
 	int offset1 = -1, offset2 = -1;
 
-	if (opt_local1->srun_opt->pack_grp_bits)
-		offset1 = bit_ffs(opt_local1->srun_opt->pack_grp_bits);
-	if (opt_local2->srun_opt->pack_grp_bits)
-		offset2 = bit_ffs(opt_local2->srun_opt->pack_grp_bits);
+	if (opt_local1->srun_opt->het_grp_bits)
+		offset1 = bit_ffs(opt_local1->srun_opt->het_grp_bits);
+	if (opt_local2->srun_opt->het_grp_bits)
+		offset2 = bit_ffs(opt_local2->srun_opt->het_grp_bits);
 	if (offset1 < offset2)
 		return -1;
 	if (offset1 > offset2)
@@ -598,7 +603,7 @@ static int _sort_by_offset(void *x, void *y)
 
 static void _post_opts(List opt_list)
 {
-	_pack_grp_test(opt_list);
+	_het_grp_test(opt_list);
 	_match_job_name(opt_list);
 	if (opt_list)
 		list_sort(opt_list, _sort_by_offset);
@@ -608,9 +613,9 @@ extern void init_srun(int argc, char **argv,
 		      log_options_t *logopt, int debug_level,
 		      bool handle_signals)
 {
-	bool pack_fini = false;
-	int i, pack_argc, pack_inx, pack_argc_off;
-	char **pack_argv;
+	bool het_job_fini = false;
+	int i, het_job_argc, het_job_inx, het_job_argc_off;
+	char **het_job_argv;
 
 	/*
 	 * This must happen before we spawn any threads
@@ -637,52 +642,53 @@ extern void init_srun(int argc, char **argv,
 	if (atexit(_call_spank_fini) < 0)
 		error("Failed to register atexit handler for plugins: %m");
 
-	pack_argc = argc;
-	pack_argv = argv;
-	for (pack_inx = 0; !pack_fini; pack_inx++) {
-		pack_argc_off = -1;
-		if (initialize_and_process_args(pack_argc, pack_argv,
-						&pack_argc_off) < 0) {
+	het_job_argc = argc;
+	het_job_argv = argv;
+	for (het_job_inx = 0; !het_job_fini; het_job_inx++) {
+		het_job_argc_off = -1;
+		if (initialize_and_process_args(het_job_argc, het_job_argv,
+						&het_job_argc_off) < 0) {
 			error("srun parameter parsing");
 			exit(1);
 		}
-		if ((pack_argc_off >= 0) && (pack_argc_off < pack_argc)) {
-			for (i = pack_argc_off; i < pack_argc; i++) {
-				if (!xstrcmp(pack_argv[i], ":")) {
-					pack_argc_off = i;
+		if ((het_job_argc_off >= 0) &&
+		    (het_job_argc_off < het_job_argc)) {
+			for (i = het_job_argc_off; i < het_job_argc; i++) {
+				if (!xstrcmp(het_job_argv[i], ":")) {
+					het_job_argc_off = i;
 					break;
 				}
 			}
 		}
-		if ((pack_argc_off >= 0) && (pack_argc_off < pack_argc) &&
-		    !xstrcmp(pack_argv[pack_argc_off], ":")) {
+		if ((het_job_argc_off >= 0) &&
+		    (het_job_argc_off < het_job_argc) &&
+		    !xstrcmp(het_job_argv[het_job_argc_off], ":")) {
 			/*
-			 * move pack_argv[0] from "srun" to ":"
+			 * move het_job_argv[0] from "srun" to ":"
 			 */
-			pack_argc -= pack_argc_off;
-			pack_argv += pack_argc_off;
+			het_job_argc -= het_job_argc_off;
+			het_job_argv += het_job_argc_off;
 		} else {
-			pack_fini = true;
+			het_job_fini = true;
 		}
 	}
 	_post_opts(opt_list);
-	record_ppid();
 
 	/*
 	 * reinit log with new verbosity (if changed by command line)
 	 */
-	if (logopt && (_verbose || opt.quiet)) {
+	if (logopt && (opt.verbose || opt.quiet)) {
 		/*
 		 * If log level is already increased, only increment the
-		 * level to the difference of _verbose an LOG_LEVEL_INFO
+		 * level to the difference of opt.verbose an LOG_LEVEL_INFO
 		 */
-		if ((_verbose -= (logopt->stderr_level - LOG_LEVEL_INFO)) > 0)
-			logopt->stderr_level += _verbose;
+		if ((opt.verbose -= (logopt->stderr_level - LOG_LEVEL_INFO)) > 0)
+			logopt->stderr_level += opt.verbose;
 		logopt->stderr_level -= opt.quiet;
 		logopt->prefix_level = 1;
 		log_alter(*logopt, 0, NULL);
 	} else
-		_verbose = debug_level;
+		opt.verbose = debug_level;
 
 	(void) _set_rlimit_env();
 	_set_prio_process_env();
@@ -709,11 +715,7 @@ static void _set_step_opts(slurm_opt_t *opt_local)
 	xassert(srun_opt);
 
 	opt_local->time_limit = NO_VAL;/* not applicable for step, only job */
-	xfree(opt_local->constraints);	/* not applicable for this step */
-	if (!srun_opt->job_name_set_cmd && srun_opt->job_name_set_env) {
-		/* use SLURM_JOB_NAME env var */
-		sropt.job_name_set_cmd = true;
-	}
+	xfree(opt_local->constraint);	/* not applicable for this step */
 	if ((srun_opt->core_spec_set || srun_opt->exclusive)
 	    && opt_local->cpus_set) {
 		/* Step gets specified CPU count, which may only part
@@ -731,13 +733,13 @@ static void _set_step_opts(slurm_opt_t *opt_local)
  * the job allocation request with its requested options.
  */
 static int _create_job_step(srun_job_t *job, bool use_all_cpus,
-			    List srun_job_list, uint32_t pack_jobid,
-			    char *pack_nodelist)
+			    List srun_job_list, uint32_t het_job_id,
+			    char *het_job_nodelist)
 {
 	ListIterator opt_iter = NULL, job_iter;
 	slurm_opt_t *opt_local = &opt;
-	uint32_t node_offset = 0, pack_nnodes = 0, step_id = NO_VAL;
-	uint32_t pack_ntasks = 0, task_offset = 0;
+	uint32_t node_offset = 0, het_job_nnodes = 0, step_id = NO_VAL;
+	uint32_t het_job_ntasks = 0, task_offset = 0;
 
 	job_step_create_response_msg_t *step_resp;
 	char *resv_ports = NULL;
@@ -747,24 +749,24 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 		if (opt_list)
 			opt_iter = list_iterator_create(opt_list);
 		job_iter = list_iterator_create(srun_job_list);
-		while ((job = (srun_job_t *) list_next(job_iter))) {
-			if (pack_jobid)
-				job->pack_jobid = pack_jobid;
+		while ((job = list_next(job_iter))) {
+			if (het_job_id)
+				job->het_job_id = het_job_id;
 			job->stepid = NO_VAL;
-			pack_nnodes += job->nhosts;
-			pack_ntasks += job->ntasks;
+			het_job_nnodes += job->nhosts;
+			het_job_ntasks += job->ntasks;
 		}
 
 		list_iterator_reset(job_iter);
-		while ((job = (srun_job_t *) list_next(job_iter))) {
+		while ((job = list_next(job_iter))) {
 			if (opt_list)
 				opt_local = list_next(opt_iter);
 			if (!opt_local)
 				fatal("%s: opt_list too short", __func__);
-			job->node_offset = node_offset;
-			job->pack_nnodes = pack_nnodes;
-			job->pack_ntasks = pack_ntasks;
-			job->pack_task_offset = task_offset;
+			job->het_job_node_offset = node_offset;
+			job->het_job_nnodes = het_job_nnodes;
+			job->het_job_ntasks = het_job_ntasks;
+			job->het_job_task_offset = task_offset;
 			if (step_id != NO_VAL)
 				job->stepid = step_id;
 			rc = create_job_step(job, use_all_cpus, opt_local);
@@ -805,7 +807,7 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 			hostset_destroy(hs);
 
 			list_iterator_reset(job_iter);
-			while ((job = (srun_job_t *) list_next(job_iter))) {
+			while ((job = list_next(job_iter))) {
 				if (slurm_step_ctx_get(job->step_ctx,
 						SLURM_STEP_CTX_RESP,
 						&step_resp) == SLURM_SUCCESS) {
@@ -821,6 +823,12 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 			list_iterator_destroy(opt_iter);
 		return rc;
 	} else if (job) {
+		if (het_job_id) {
+			job->het_job_id  = het_job_id;
+			job->het_job_nnodes = job->nhosts;
+			job->het_job_ntasks = job->ntasks;
+			job->het_job_task_offset = 0;
+		}
 		return create_job_step(job, use_all_cpus, &opt);
 	} else {
 		return -1;
@@ -845,7 +853,7 @@ static void _cancel_steps(List srun_job_list)
 	msg.step_rc = 0;
 
 	job_iter = list_iterator_create(srun_job_list);
-	while ((job = (srun_job_t *) list_next(job_iter))) {
+	while ((job = list_next(job_iter))) {
 		if (job->stepid == NO_VAL)
 			continue;
 		msg.job_id	= job->jobid;
@@ -858,30 +866,30 @@ static void _cancel_steps(List srun_job_list)
 	list_iterator_destroy(job_iter);
 }
 
-static void _pack_struct_del(void *x)
+static void _het_job_struct_del(void *x)
 {
-	pack_resp_struct_t *pack_resp = (pack_resp_struct_t *) x;
+	het_job_resp_struct_t *het_job_resp = (het_job_resp_struct_t *) x;
 	int i;
 
-	if (pack_resp->alias_list) {
-		for (i = 0; i < pack_resp->node_cnt; i++)
-			xfree(pack_resp->alias_list[i]);
-		xfree(pack_resp->alias_list);
+	if (het_job_resp->alias_list) {
+		for (i = 0; i < het_job_resp->node_cnt; i++)
+			xfree(het_job_resp->alias_list[i]);
+		xfree(het_job_resp->alias_list);
 	}
-	xfree(pack_resp->cpu_cnt);
-	if (pack_resp->host_list)
-		hostlist_destroy(pack_resp->host_list);
-	xfree(pack_resp);
+	xfree(het_job_resp->cpu_cnt);
+	if (het_job_resp->host_list)
+		hostlist_destroy(het_job_resp->host_list);
+	xfree(het_job_resp);
 }
 
-static char *_compress_pack_nodelist(List used_resp_list)
+static char *_compress_het_job_nodelist(List used_resp_list)
 {
 	resource_allocation_response_msg_t *resp;
-	pack_resp_struct_t *pack_resp;
-	List pack_resp_list;
+	het_job_resp_struct_t *het_job_resp;
+	List het_job_resp_list;
 	ListIterator resp_iter;
 	char *aliases = NULL, *save_ptr = NULL, *tok, *tmp;
-	char *pack_nodelist = NULL, *node_name;
+	char *het_job_nodelist = NULL, *node_name;
 	hostset_t hs;
 	int cnt, i, j, k, len = 0;
 	uint16_t *cpus;
@@ -889,28 +897,27 @@ static char *_compress_pack_nodelist(List used_resp_list)
 	bool have_aliases = false;
 
 	if (!used_resp_list)
-		return pack_nodelist;
+		return het_job_nodelist;
 
 	cnt = list_count(used_resp_list);
-	pack_resp_list = list_create(_pack_struct_del);
+	het_job_resp_list = list_create(_het_job_struct_del);
 	hs = hostset_create("");
 	resp_iter = list_iterator_create(used_resp_list);
-	while ((resp = (resource_allocation_response_msg_t *)
-			list_next(resp_iter))) {
+	while ((resp = list_next(resp_iter))) {
 		if (!resp->node_list)
 			continue;
 		len += strlen(resp->node_list);
 		hostset_insert(hs, resp->node_list);
-		pack_resp = xmalloc(sizeof(pack_resp_struct_t));
-		pack_resp->node_cnt = resp->node_cnt;
+		het_job_resp = xmalloc(sizeof(het_job_resp_struct_t));
+		het_job_resp->node_cnt = resp->node_cnt;
 		/*
 		 * alias_list contains <NodeName>:<NodeAddr>:<NodeHostName>
 		 * values in comma separated list
 		 */
 		if (resp->alias_list) {
 			have_aliases = true;
-			pack_resp->alias_list = xmalloc(sizeof(char *) *
-							resp->node_cnt);
+			het_job_resp->alias_list = xmalloc(sizeof(char *) *
+							   resp->node_cnt);
 			tmp = xstrdup(resp->alias_list);
 			i = 0;
 			tok = strtok_r(tmp, ",", &save_ptr);
@@ -919,17 +926,18 @@ static char *_compress_pack_nodelist(List used_resp_list)
 					fatal("%s: Invalid alias_list",
 					      __func__);
 				}
-				pack_resp->alias_list[i++] = xstrdup(tok);
+				het_job_resp->alias_list[i++] = xstrdup(tok);
 				tok = strtok_r(NULL, ",", &save_ptr);
 			}
 			xfree(tmp);
 		}
-		pack_resp->cpu_cnt = xmalloc(sizeof(uint16_t) * resp->node_cnt);
-		pack_resp->host_list = hostlist_create(resp->node_list);
+		het_job_resp->cpu_cnt =
+			xmalloc(sizeof(uint16_t) * resp->node_cnt);
+		het_job_resp->host_list = hostlist_create(resp->node_list);
 		for (i = 0, k = 0;
 		     (i < resp->num_cpu_groups) && (k < resp->node_cnt); i++) {
 			for (j = 0; j < resp->cpu_count_reps[i]; j++) {
-				pack_resp->cpu_cnt[k++] =
+				het_job_resp->cpu_cnt[k++] =
 					resp->cpus_per_node[i];
 				if (k >= resp->node_cnt)
 					break;
@@ -937,13 +945,13 @@ static char *_compress_pack_nodelist(List used_resp_list)
 			if (k >= resp->node_cnt)
 				break;
 		}
-		list_append(pack_resp_list, pack_resp);
+		list_append(het_job_resp_list, het_job_resp);
 	}
 	list_iterator_destroy(resp_iter);
 
 	len += (cnt + 16);
-	pack_nodelist = xmalloc(len);
-	(void) hostset_ranged_string(hs, len, pack_nodelist);
+	het_job_nodelist = xmalloc(len);
+	(void) hostset_ranged_string(hs, len, het_job_nodelist);
 
 	cpu_inx = 0;
 	cnt = hostset_count(hs);
@@ -951,31 +959,30 @@ static char *_compress_pack_nodelist(List used_resp_list)
 	reps = xmalloc(sizeof(uint32_t) * (cnt + 1));
 	for (i = 0; i < cnt; i++) {
 		node_name = hostset_nth(hs, i);
-		resp_iter = list_iterator_create(pack_resp_list);
-		while ((pack_resp = (pack_resp_struct_t *)
-				    list_next(resp_iter))) {
-			j = hostlist_find(pack_resp->host_list, node_name);
-			if ((j == -1) || !pack_resp->cpu_cnt)
-				continue;	/* node not in this pack job */
+		resp_iter = list_iterator_create(het_job_resp_list);
+		while ((het_job_resp = list_next(resp_iter))) {
+			j = hostlist_find(het_job_resp->host_list, node_name);
+			if ((j == -1) || !het_job_resp->cpu_cnt)
+				continue;	/* node not in this hetjob */
 			if (have_aliases) {
 				if (aliases)
 					xstrcat(aliases, ",");
-				if (pack_resp->alias_list &&
-				    pack_resp->alias_list[j]) {
+				if (het_job_resp->alias_list &&
+				    het_job_resp->alias_list[j]) {
 					xstrcat(aliases,
-						pack_resp->alias_list[j]);
+						het_job_resp->alias_list[j]);
 				} else {
 					xstrfmtcat(aliases, "%s:%s:%s",
 						   node_name, node_name,
 						   node_name);
 				}
 			}
-			if (cpus[cpu_inx] == pack_resp->cpu_cnt[j]) {
+			if (cpus[cpu_inx] == het_job_resp->cpu_cnt[j]) {
 				reps[cpu_inx]++;
 			} else {
 				if (cpus[cpu_inx] != 0)
 					cpu_inx++;
-				cpus[cpu_inx] = pack_resp->cpu_cnt[j];
+				cpus[cpu_inx] = het_job_resp->cpu_cnt[j];
 				reps[cpu_inx]++;
 			}
 			break;
@@ -1003,9 +1010,9 @@ static char *_compress_pack_nodelist(List used_resp_list)
 	xfree(reps);
 	xfree(cpus);
 	hostset_destroy(hs);
-	list_destroy(pack_resp_list);
+	list_destroy(het_job_resp_list);
 
-	return pack_nodelist;
+	return het_job_nodelist;
 }
 
 extern void create_srun_job(void **p_job, bool *got_alloc,
@@ -1016,10 +1023,9 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 	List used_resp_list = NULL;
 	ListIterator opt_iter, resp_iter;
 	srun_job_t *job = NULL;
-	int i, max_list_offset, max_pack_offset, pack_offset = -1;
-	slurm_opt_t *opt_local;
-	uint32_t my_job_id = 0, pack_jobid = 0;
-	char *pack_nodelist = NULL;
+	int i, max_list_offset, max_het_job_offset, het_job_offset = -1;
+	uint32_t my_job_id = 0, het_job_id = 0;
+	char *het_job_nodelist = NULL;
 	bool begin_error_logged = false;
 	bool core_spec_error_logged = false;
 #ifdef HAVE_NATIVE_CRAY
@@ -1042,7 +1048,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 
 	} else if (sropt.no_alloc) {
 		if (opt_list ||
-		    (sropt.pack_grp_bits && (bit_fls(sropt.pack_grp_bits) > 0)))
+		    (sropt.het_grp_bits && (bit_fls(sropt.het_grp_bits) > 0)))
 			fatal("--no-allocation option not supported for heterogeneous jobs");
 		info("do not allocate resources");
 		job = job_create_noalloc();
@@ -1053,51 +1059,51 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 		if (create_job_step(job, false, &opt) < 0)
 			exit(error_exit);
 	} else if ((job_resp_list = existing_allocation())) {
+		slurm_opt_t *opt_local;
+
 		max_list_offset = 0;
-		max_pack_offset = list_count(job_resp_list) - 1;
+		max_het_job_offset = list_count(job_resp_list) - 1;
 		if (opt_list) {
 			opt_iter = list_iterator_create(opt_list);
 			while ((opt_local = list_next(opt_iter))) {
 				srun_opt_t *srun_opt = opt_local->srun_opt;
 				xassert(srun_opt);
-				if (srun_opt->pack_grp_bits) {
-					i = bit_fls(srun_opt->pack_grp_bits);
+				if (srun_opt->het_grp_bits) {
+					i = bit_fls(srun_opt->het_grp_bits);
 					max_list_offset = MAX(max_list_offset,
 							      i);
 				}
 			}
 			list_iterator_destroy(opt_iter);
-			if (max_list_offset > max_pack_offset) {
-				error("Attempt to run a job step with pack group value of %d, "
+			if (max_list_offset > max_het_job_offset) {
+				error("Attempt to run a job step with het group value of %d, "
 				      "but the job allocation has maximum value of %d",
-				      max_list_offset, max_pack_offset);
+				      max_list_offset, max_het_job_offset);
 				exit(1);
 			}
 		}
 		srun_job_list = list_create(NULL);
 		used_resp_list = list_create(NULL);
-		if (max_pack_offset > 0)
-			pack_offset = 0;
+		if (max_het_job_offset > 0)
+			het_job_offset = 0;
 		resp_iter = list_iterator_create(job_resp_list);
-		while ((resp = (resource_allocation_response_msg_t *)
-				list_next(resp_iter))) {
+		while ((resp = list_next(resp_iter))) {
 			bool merge_nodelist = true;
+			if (my_job_id == 0) {
+				my_job_id = resp->job_id;
+				if (resp->working_cluster_rec)
+					slurm_setup_remote_working_cluster(resp);
+			}
 			_print_job_information(resp);
 			(void) get_next_opt(-2);
-			while ((opt_local = get_next_opt(pack_offset))) {
+			while ((opt_local = get_next_opt(het_job_offset))) {
 				srun_opt_t *srun_opt = opt_local->srun_opt;
 				xassert(srun_opt);
-				if (my_job_id == 0) {
-					my_job_id = resp->job_id;
-					if (resp->working_cluster_rec)
-						slurm_setup_remote_working_cluster(resp);
-				}
 				if (merge_nodelist) {
 					merge_nodelist = false;
 					list_append(used_resp_list, resp);
 				}
-				if (srun_opt->nodes_set_env  &&
-				    !srun_opt->nodes_set_opt &&
+				if (slurm_option_set_by_env(opt_local, 'N') &&
 				    (opt_local->min_nodes > resp->node_cnt)) {
 					/*
 					 * This signifies the job used the
@@ -1108,9 +1114,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 					 * size
 					 */
 					if (!node_cnt_error_logged) {
-						error("SLURM_NNODES environment variable "
-						      "conflicts with allocated "
-						      "node count (%u != %u).",
+						error("SLURM_JOB_NUM_NODES environment variable conflicts with allocated node count (%u != %u).",
 						      opt_local->min_nodes,
 						      resp->node_cnt);
 						node_cnt_error_logged = true;
@@ -1142,7 +1146,8 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 #ifdef HAVE_NATIVE_CRAY
 				if (opt_local->network &&
 				    !network_error_logged) {
-					if (srun_opt->network_set_env) {
+					if (slurm_option_set_by_env(opt_local,
+								    LONG_OPT_NETWORK)) {
 						debug2("Ignoring SLURM_NETWORK value for a "
 						       "job step within an existing job. "
 						       "Using what was set at job "
@@ -1158,7 +1163,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 #endif
 				if (srun_opt->exclusive)
 					_step_opt_exclusive(opt_local);
-				_set_env_vars(resp, pack_offset);
+				_set_env_vars(resp, het_job_offset);
 				if (_validate_relative(resp, opt_local))
 					exit(error_exit);
 				if (opt_local->begin && !begin_error_logged) {
@@ -1174,48 +1179,47 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 								 opt_local);
 				if (!job)
 					exit(error_exit);
-				if (max_pack_offset > 0)
-					job->pack_offset = pack_offset;
+				if (max_het_job_offset > 0)
+					job->het_job_offset = het_job_offset;
 				list_append(srun_job_list, job);
 			}	/* While more option structures */
-			pack_offset++;
-		}	/* More pack job components */
+			het_job_offset++;
+		}	/* More hetjob components */
 		list_iterator_destroy(resp_iter);
 
-		max_pack_offset = get_max_pack_group();
-		pack_offset = list_count(job_resp_list) - 1;
-		if (max_pack_offset > pack_offset) {
-			error("Requested pack-group offset exceeds highest pack job index (%d > %d)",
-			      max_pack_offset, pack_offset);
+		max_het_job_offset = get_max_het_group();
+		het_job_offset = list_count(job_resp_list) - 1;
+		if (max_het_job_offset > het_job_offset) {
+			error("Requested het-group offset exceeds highest hetjob index (%d > %d)",
+			      max_het_job_offset, het_job_offset);
 			exit(error_exit);
 		}
 		i = list_count(srun_job_list);
 		if (i == 0) {
-			error("No directives to start application on any available "
-			      "pack job components");
+			error("No directives to start application on any available hetjob components");
 			exit(error_exit);
 		}
 		if (i == 1)
 			FREE_NULL_LIST(srun_job_list);	/* Just use "job" */
-		if (srun_job_list && (list_count(srun_job_list) > 1) &&
-		    opt_list && (list_count(opt_list) > 1) && my_job_id) {
-			pack_jobid = my_job_id;
+		if (list_count(job_resp_list) > 1) {
+			if (my_job_id)
+				het_job_id = my_job_id;
+			het_job_nodelist =
+				_compress_het_job_nodelist(used_resp_list);
 		}
-		if (list_count(job_resp_list) > 1)
-			pack_nodelist = _compress_pack_nodelist(used_resp_list);
 		list_destroy(used_resp_list);
-		if (_create_job_step(job, false, srun_job_list, pack_jobid,
-				     pack_nodelist) < 0) {
+		if (_create_job_step(job, false, srun_job_list, het_job_id,
+				     het_job_nodelist) < 0) {
 			if (*got_alloc)
 				slurm_complete_job(my_job_id, 1);
 			else
 				_cancel_steps(srun_job_list);
 			exit(error_exit);
 		}
-		xfree(pack_nodelist);
+		xfree(het_job_nodelist);
 	} else {
 		/* Combined job allocation and job step launch */
-#if defined HAVE_FRONT_END && (!defined HAVE_REAL_CRAY)
+#if defined HAVE_FRONT_END
 		uid_t my_uid = getuid();
 		if ((my_uid != 0) &&
 		    (my_uid != slurm_get_slurm_user_id())) {
@@ -1223,20 +1227,21 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 			exit(error_exit);
 		}
 #endif
-		if (!sropt.job_name_set_env && sropt.job_name_set_cmd)
+		if (slurm_option_set_by_cli(&opt, 'J'))
 			setenvfs("SLURM_JOB_NAME=%s", opt.job_name);
-		else if (!sropt.job_name_set_env && sropt.argc)
+		else if (!slurm_option_set_by_env(&opt, 'J') && sropt.argc)
 			setenvfs("SLURM_JOB_NAME=%s", sropt.argv[0]);
 
 		if (opt_list) {
-			job_resp_list = allocate_pack_nodes(handle_signals);
+			job_resp_list = allocate_het_job_nodes(handle_signals);
 			if (!job_resp_list)
 				exit(error_exit);
 			srun_job_list = list_create(NULL);
 			opt_iter  = list_iterator_create(opt_list);
 			resp_iter = list_iterator_create(job_resp_list);
-			while ((resp = (resource_allocation_response_msg_t *)
-				       list_next(resp_iter))) {
+			while ((resp = list_next(resp_iter))) {
+				slurm_opt_t *opt_local;
+
 				if (my_job_id == 0) {
 					my_job_id = resp->job_id;
 					*got_alloc = true;
@@ -1245,20 +1250,22 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 				if (!opt_local)
 					break;
 				_print_job_information(resp);
-				_set_env_vars(resp, ++pack_offset);
-				_set_env_vars2(resp, pack_offset);
+				_set_env_vars(resp, ++het_job_offset);
+				_set_env_vars2(resp, het_job_offset);
 				if (_validate_relative(resp, opt_local)) {
 					slurm_complete_job(my_job_id, 1);
 					exit(error_exit);
 				}
 				job = job_create_allocation(resp, opt_local);
-				job->pack_offset = pack_offset;
+				job->het_job_offset = het_job_offset;
 				list_append(srun_job_list, job);
 				_set_step_opts(opt_local);
 			}
 			list_iterator_destroy(opt_iter);
 			list_iterator_destroy(resp_iter);
-			setenvfs("SLURM_PACK_SIZE=%d", pack_offset + 1);
+			/* Continue support for old hetjob terminology. */
+			setenvfs("SLURM_PACK_SIZE=%d", het_job_offset + 1);
+			setenvfs("SLURM_HET_SIZE=%d", het_job_offset + 1);
 		} else {
 			if (!(resp = allocate_nodes(handle_signals, &opt)))
 				exit(error_exit);
@@ -1275,26 +1282,26 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 		}
 		if (srun_job_list && (list_count(srun_job_list) > 1) &&
 		    opt_list && (list_count(opt_list) > 1) && my_job_id) {
-			pack_jobid = my_job_id;
-			pack_nodelist = _compress_pack_nodelist(job_resp_list);
+			het_job_id = my_job_id;
+			het_job_nodelist =
+				_compress_het_job_nodelist(job_resp_list);
 		}
 
 		/*
 		 *  Become --uid user
 		 */
 		if (_become_user () < 0)
-			info("Warning: Unable to assume uid=%u", opt.uid);
-		if (_create_job_step(job, true, srun_job_list, pack_jobid,
-				     pack_nodelist) < 0) {
+			fatal("Unable to assume uid=%u", opt.uid);
+		if (_create_job_step(job, true, srun_job_list, het_job_id,
+				     het_job_nodelist) < 0) {
 			slurm_complete_job(my_job_id, 1);
 			exit(error_exit);
 		}
-		xfree(pack_nodelist);
+		xfree(het_job_nodelist);
 
 		if (opt_list) {
 			resp_iter = list_iterator_create(job_resp_list);
-			while ((resp = (resource_allocation_response_msg_t *)
-				       list_next(resp_iter))) {
+			while ((resp = list_next(resp_iter))) {
 				slurm_free_resource_allocation_response_msg(
 									resp);
 			}
@@ -1308,7 +1315,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 	 *  Become --uid user
 	 */
 	if (_become_user () < 0)
-		info("Warning: Unable to assume uid=%u", opt.uid);
+		fatal("Unable to assume uid=%u", opt.uid);
 
 	if (!slurm_started) {
 		/*
@@ -1322,6 +1329,9 @@ extern void create_srun_job(void **p_job, bool *got_alloc,
 		*p_job = (void *) srun_job_list;
 	else
 		*p_job = (void *) job;
+
+	if (job)
+	        _srun_cli_filter_post_submit(my_job_id, job->stepid);
 }
 
 extern void pre_launch_srun_job(srun_job_t *job, bool slurm_started,
@@ -1342,7 +1352,7 @@ extern void pre_launch_srun_job(srun_job_t *job, bool slurm_started,
 		exit(error_exit);
 	}
 
-	env_array_merge(&job->env, (const char **)__environ);
+	env_array_merge(&job->env, (const char **)environ);
 }
 
 extern void fini_srun(srun_job_t *job, bool got_alloc, uint32_t *global_rc,
@@ -1474,11 +1484,11 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
  	job->nodelist = xstrdup(ainfo->nodelist);
  	job->partition = xstrdup(ainfo->partition);
 	job->stepid  = ainfo->stepid;
-	job->pack_jobid  = NO_VAL;
-	job->pack_nnodes = NO_VAL;
-	job->pack_ntasks = NO_VAL;
- 	job->pack_offset = NO_VAL;
-	job->pack_task_offset = NO_VAL;
+	job->het_job_id  = NO_VAL;
+	job->het_job_nnodes = NO_VAL;
+	job->het_job_ntasks = NO_VAL;
+ 	job->het_job_offset = NO_VAL;
+	job->het_job_task_offset = NO_VAL;
 	job->nhosts   = ainfo->nnodes;
 
 #if defined HAVE_FRONT_END
@@ -1488,7 +1498,7 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 	if (opt_local->min_nodes > job->nhosts) {
 		error("Only allocated %d nodes asked for %d",
 		      job->nhosts, opt_local->min_nodes);
-		if (opt_local->exc_nodes) {
+		if (opt_local->exclude) {
 			/* When resources are pre-allocated and some nodes
 			 * are explicitly excluded, this error can occur. */
 			error("Are required nodes explicitly excluded?");
@@ -1534,12 +1544,10 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 
 extern void job_update_io_fnames(srun_job_t *job, slurm_opt_t *opt_local)
 {
-	srun_opt_t *srun_opt = opt_local->srun_opt;
-	xassert(srun_opt);
-	job->ifname = fname_create(job, srun_opt->ifname, opt_local->ntasks);
-	job->ofname = fname_create(job, srun_opt->ofname, opt_local->ntasks);
-	job->efname = srun_opt->efname ?
-		      fname_create(job, srun_opt->efname, opt_local->ntasks) :
+	job->ifname = fname_create(job, opt_local->ifname, opt_local->ntasks);
+	job->ofname = fname_create(job, opt_local->ofname, opt_local->ntasks);
+	job->efname = opt_local->efname ?
+		      fname_create(job, opt_local->efname, opt_local->ntasks) :
 		      job->ofname;
 }
 
@@ -1561,25 +1569,25 @@ _normalize_hostlist(const char *hostlist)
 
 static int _become_user (void)
 {
-	char *user = uid_to_string(opt.uid);
-	gid_t gid = gid_from_uid(opt.uid);
+	char *user;
 
-	if (xstrcmp(user, "nobody") == 0) {
+	/* Already the user, so there's nothing to change. Return early. */
+	if (opt.uid == getuid())
+		return 0;
+
+	if (!(user = uid_to_string_or_null(opt.uid))) {
 		xfree(user);
 		return (error ("Invalid user id %u: %m", opt.uid));
 	}
 
-	if (opt.uid == getuid ()) {
-		xfree(user);
-		return (0);
-	}
-
-	if ((opt.egid != (gid_t) -1) && (setgid (opt.egid) < 0)) {
+	if ((opt.gid != getgid()) && (setgid(opt.gid) < 0)) {
 		xfree(user);
 		return (error ("setgid: %m"));
 	}
 
-	(void) initgroups(user, gid); /* Ignore errors */
+	if (initgroups(user, gid_from_uid(opt.uid)))
+		return (error ("initgroups: %m"));
+
 	xfree(user);
 
 	if (setuid (opt.uid) < 0)
@@ -1627,7 +1635,7 @@ static long _diff_tv_str(struct timeval *tv1, struct timeval *tv2)
 	long delta_t;
 
 	delta_t  = MIN((tv2->tv_sec - tv1->tv_sec), 10);
-	delta_t *= 1000000;
+	delta_t *= USEC_IN_SEC;
 	delta_t +=  tv2->tv_usec - tv1->tv_usec;
 	return delta_t;
 }
@@ -1690,7 +1698,7 @@ static void _print_job_information(resource_allocation_response_msg_t *resp)
 	char *str = NULL;
 	char *sep = "";
 
-	if (!_verbose)
+	if (!opt.verbose)
 		return;
 
 	xstrfmtcat(str, "jobid %u: nodes(%u):`%s', cpu counts: ",
@@ -1706,12 +1714,14 @@ static void _print_job_information(resource_allocation_response_msg_t *resp)
 	xfree(str);
 }
 
-/* NOTE: Executed once for entire pack job */
+/* NOTE: Executed once for entire hetjob */
 static void _run_srun_epilog (srun_job_t *job)
 {
 	int rc;
 
 	if (sropt.epilog && xstrcasecmp(sropt.epilog, "none") != 0) {
+		if (setenvf(NULL, "SLURM_SCRIPT_CONTEXT", "epilog_srun") < 0)
+			error("unable to set SLURM_SCRIPT_CONTEXT in environment");
 		rc = _run_srun_script(job, sropt.epilog);
 		debug("srun epilog rc = %d", rc);
 	}
@@ -1722,6 +1732,8 @@ static void _run_srun_prolog (srun_job_t *job)
 	int rc;
 
 	if (sropt.prolog && xstrcasecmp(sropt.prolog, "none") != 0) {
+		if (setenvf(NULL, "SLURM_SCRIPT_CONTEXT", "prolog_srun") < 0)
+			error("unable to set SLURM_SCRIPT_CONTEXT in environment");
 		rc = _run_srun_script(job, sropt.prolog);
 		debug("srun prolog rc = %d", rc);
 	}
@@ -1749,7 +1761,7 @@ static int _run_srun_script (srun_job_t *job, char *script)
 	if (cpid == 0) {
 		/*
 		 * set the prolog/epilog scripts command line arguments to the
-		 * application arguments (for last pack job component), but
+		 * application arguments (for last hetjob component), but
 		 * shifted one higher
 		 */
 		args = xmalloc(sizeof(char *) * 1024);
@@ -1776,25 +1788,25 @@ static int _run_srun_script (srun_job_t *job, char *script)
 	/* NOTREACHED */
 }
 
-static char *_build_key(char *base, int pack_offset)
+static char *_build_key(char *base, int het_job_offset)
 {
 	char *key = NULL;
 
-	if (pack_offset == -1)
+	if (het_job_offset == -1)
 		key = xstrdup(base);
 	else
-		xstrfmtcat(key, "%s_PACK_GROUP_%d", base, pack_offset);
+		xstrfmtcat(key, "%s_PACK_GROUP_%d", base, het_job_offset);
 
 	return key;
 }
 
 static void _set_env_vars(resource_allocation_response_msg_t *resp,
-			  int pack_offset)
+			  int het_job_offset)
 {
 	char *key, *value, *tmp;
 	int i;
 
-	key = _build_key("SLURM_JOB_CPUS_PER_NODE", pack_offset);
+	key = _build_key("SLURM_JOB_CPUS_PER_NODE", het_job_offset);
 	if (!getenv(key)) {
 		tmp = uint32_compressed_to_str(resp->num_cpu_groups,
 					       resp->cpus_per_node,
@@ -1805,7 +1817,7 @@ static void _set_env_vars(resource_allocation_response_msg_t *resp,
 	}
 	xfree(key);
 
-	key = _build_key("SLURM_NODE_ALIASES", pack_offset);
+	key = _build_key("SLURM_NODE_ALIASES", het_job_offset);
 	if (resp->alias_list) {
 		if (setenv(key, resp->alias_list, 1) < 0)
 			error("unable to set %s in environment", key);
@@ -1832,37 +1844,37 @@ static void _set_env_vars(resource_allocation_response_msg_t *resp,
 }
 
 /*
- * Set some pack-job environment variables for combined job & step allocation
+ * Set some hetjob environment variables for combined job & step allocation
  */
 static void _set_env_vars2(resource_allocation_response_msg_t *resp,
-			   int pack_offset)
+			   int het_job_offset)
 {
 	char *key;
 
 	if (resp->account) {
-		key = _build_key("SLURM_JOB_ACCOUNT", pack_offset);
+		key = _build_key("SLURM_JOB_ACCOUNT", het_job_offset);
 		if (!getenv(key) &&
-		    (setenvf(NULL, key, "%u", resp->account) < 0)) {
+		    (setenvf(NULL, key, "%s", resp->account) < 0)) {
 			error("unable to set %s in environment", key);
 		}
 		xfree(key);
 	}
 
-	key = _build_key("SLURM_JOB_ID", pack_offset);
+	key = _build_key("SLURM_JOB_ID", het_job_offset);
 	if (!getenv(key) &&
 	    (setenvf(NULL, key, "%u", resp->job_id) < 0)) {
 		error("unable to set %s in environment", key);
 	}
 	xfree(key);
 
-	key = _build_key("SLURM_JOB_NODELIST", pack_offset);
+	key = _build_key("SLURM_JOB_NODELIST", het_job_offset);
 	if (!getenv(key) &&
 	    (setenvf(NULL, key, "%s", resp->node_list) < 0)) {
 		error("unable to set %s in environment", key);
 	}
 	xfree(key);
 
-	key = _build_key("SLURM_JOB_PARTITION", pack_offset);
+	key = _build_key("SLURM_JOB_PARTITION", het_job_offset);
 	if (!getenv(key) &&
 	    (setenvf(NULL, key, "%s", resp->partition) < 0)) {
 		error("unable to set %s in environment", key);
@@ -1870,7 +1882,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	xfree(key);
 
 	if (resp->qos) {
-		key = _build_key("SLURM_JOB_QOS", pack_offset);
+		key = _build_key("SLURM_JOB_QOS", het_job_offset);
 		if (!getenv(key) &&
 		    (setenvf(NULL, key, "%s", resp->qos) < 0)) {
 			error("unable to set %s in environment", key);
@@ -1879,7 +1891,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	}
 
 	if (resp->resv_name) {
-		key = _build_key("SLURM_JOB_RESERVATION", pack_offset);
+		key = _build_key("SLURM_JOB_RESERVATION", het_job_offset);
 		if (!getenv(key) &&
 		    (setenvf(NULL, key, "%s", resp->resv_name) < 0)) {
 			error("unable to set %s in environment", key);
@@ -1888,7 +1900,7 @@ static void _set_env_vars2(resource_allocation_response_msg_t *resp,
 	}
 
 	if (resp->alias_list) {
-		key = _build_key("SLURM_NODE_ALIASES", pack_offset);
+		key = _build_key("SLURM_NODE_ALIASES", het_job_offset);
 		if (!getenv(key) &&
 		    (setenvf(NULL, key, "%s", resp->alias_list) < 0)) {
 			error("unable to set %s in environment", key);
@@ -1975,14 +1987,7 @@ static int _set_rlimit_env(void)
 	/*
 	 *  Now increase NOFILE to the max available for this srun
 	 */
-	if (getrlimit (RLIMIT_NOFILE, rlim) < 0)
-		return (error ("getrlimit (RLIMIT_NOFILE): %m"));
-
-	if (rlim->rlim_cur < rlim->rlim_max) {
-		rlim->rlim_cur = rlim->rlim_max;
-		if (setrlimit (RLIMIT_NOFILE, rlim) < 0)
-			return (error ("Unable to increase max no. files: %m"));
-	}
+	rlimits_maximize_nofile();
 
 	return rc;
 }
@@ -2017,7 +2022,7 @@ static int _set_umask_env(void)
 {
 	if (!getenv("SRUN_DEBUG")) {	/* do not change current value */
 		/* NOTE: Default debug level is 3 (info) */
-		int log_level = LOG_LEVEL_INFO + _verbose - opt.quiet;
+		int log_level = LOG_LEVEL_INFO + opt.verbose - opt.quiet;
 
 		if (setenvf(NULL, "SRUN_DEBUG", "%d", log_level) < 0)
 			error ("unable to set SRUN_DEBUG in environment");
@@ -2097,7 +2102,7 @@ static int _shepherd_spawn(srun_job_t *job, List srun_job_list, bool got_alloc)
 	if (srun_job_list) {
 		ListIterator job_iter;
 		job_iter  = list_iterator_create(srun_job_list);
-		while ((job = (srun_job_t *) list_next(job_iter))) {
+		while ((job = list_next(job_iter))) {
 			(void) slurm_kill_job_step(job->jobid, job->stepid,
 						   SIGKILL);
 			if (got_alloc)
@@ -2177,11 +2182,11 @@ static void _step_opt_exclusive(slurm_opt_t *opt_local)
 		error("--ntasks must be set with --exclusive");
 		exit(error_exit);
 	}
-	if (srun_opt->relative_set) {
+	if (srun_opt->relative != NO_VAL) {
 		error("--relative disabled, incompatible with --exclusive");
 		exit(error_exit);
 	}
-	if (opt_local->exc_nodes) {
+	if (opt_local->exclude) {
 		error("--exclude is incompatible with --exclusive");
 		exit(error_exit);
 	}
@@ -2193,19 +2198,18 @@ static int _validate_relative(resource_allocation_response_msg_t *resp,
 	srun_opt_t *srun_opt = opt_local->srun_opt;
 	xassert(srun_opt);
 
-	if (srun_opt->relative_set &&
+	if ((srun_opt->relative != NO_VAL) &&
 	    ((srun_opt->relative + opt_local->min_nodes)
 	     > resp->node_cnt)) {
-		if (srun_opt->nodes_set_opt) {
+		if (slurm_option_set_by_cli(opt_local, 'N')) {
 			/* -N command line option used */
 			error("--relative and --nodes option incompatible "
 			      "with count of allocated nodes (%d+%d>%d)",
 			      srun_opt->relative,
 			      opt_local->min_nodes,
 			      resp->node_cnt);
-		} else {		/* SLURM_NNODES option used */
-			error("--relative and SLURM_NNODES option incompatible "
-			      "with count of allocated nodes (%d+%d>%d)",
+		} else {		/* SLURM_JOB_NUM_NODES option used */
+			error("--relative and SLURM_JOB_NUM_NODES option incompatible with count of allocated nodes (%d+%d>%d)",
 			      srun_opt->relative,
 			      opt_local->min_nodes,
 			      resp->node_cnt);
@@ -2219,4 +2223,25 @@ static void _call_spank_fini(void)
 {
 	if (-1 != shepherd_fd)
 		spank_fini(NULL);
+}
+
+/*
+ * Run cli_filter_post_submit on all opt structures
+ * Convenience function since this might need to run in two spots
+ */
+static void _srun_cli_filter_post_submit(uint32_t jobid, uint32_t stepid)
+{
+	static bool post_submit_ran = false;
+	int idx = 0, components = 1;
+
+	if (post_submit_ran)
+		return;
+
+	if (opt_list)
+		components = list_count(opt_list);
+
+	for (idx = 0; idx < components; idx++)
+		cli_filter_plugin_post_submit(idx, jobid, stepid);
+
+	post_submit_ran = true;
 }

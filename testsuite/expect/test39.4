@@ -1,7 +1,7 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test of SLURM functionality
-#          Test some invalid combintations of --gpu options
+# Purpose: Test of Slurm functionality
+#          Test some invalid combinations of --gpu options
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
 #          "FAILURE: ..." otherwise with an explanation of the failure, OR
@@ -10,22 +10,22 @@
 # Copyright (C) 2018 SchedMD LLC
 # Written by Morris Jette
 #
-# This file is part of SLURM, a resource management program.
+# This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
-# SLURM is free software; you can redistribute it and/or modify it under
+# Slurm is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
 # Software Foundation; either version 2 of the License, or (at your option)
 # any later version.
 #
-# SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+# Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 # details.
 #
 # You should have received a copy of the GNU General Public License along
-# with SLURM; if not, write to the Free Software Foundation, Inc.,
+# with Slurm; if not, write to the Free Software Foundation, Inc.,
 # 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
 ############################################################################
 source ./globals
@@ -176,45 +176,9 @@ expect {
 }
 
 #
-# Specify gpus-per-task, but no task count
-#
-send_user "\n\n==== TEST 6 ====\n"
-spawn $sbatch --gpus-per-task=1 -N1 --output=/dev/null -t1 --wrap $bin_hostname
-expect {
-	-re "Submitted batch job ($number)" {
-		cancel_job $expect_out(1,string)
-		send_user "\nFAILURE: batch request not rejected\n"
-		set exit_code 1
-		exp_continue
-	}
-	-re "error: " {
-		send_user "\nError is expected, no worries.\n"
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: sbatch not responding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
-
-#
-# Additional tests only if more than 1 GPU per node in default partition
-#
-if {$gpu_cnt < 2} {
-	send_user "\nWARNING: Additional test require 2 or more GPUs in the default partition\n"
-	if {$exit_code == 0} {
-		send_user "\nSUCCESS\n"
-	}
-	exit $exit_code
-}
-
-#
 # Specify inconsistent tasks per node (variation of test 4)
 #
-send_user "\n\n==== TEST 7 ====\n"
+send_user "\n\n==== TEST 6 ====\n"
 spawn $sbatch --gpus-per-task=1 --gpus-per-node=2 --ntasks-per-node=1 -N1 --output=/dev/null -t1 --wrap $bin_hostname
 expect {
 	-re "Submitted batch job ($number)" {

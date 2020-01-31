@@ -44,11 +44,7 @@
 #include "src/srun/libsrun/opt.h"
 #include "src/srun/libsrun/srun_job.h"
 
-typedef struct slurmctld_communication_addr {
-	uint16_t port;
-} slurmctld_comm_addr_t;
-
-slurmctld_comm_addr_t slurmctld_comm_addr;
+extern uint16_t slurmctld_comm_port;
 
 /*
  * Allocate nodes from the slurm controller -- retrying the attempt
@@ -62,14 +58,14 @@ extern resource_allocation_response_msg_t *
 	allocate_nodes(bool handle_signals, slurm_opt_t *opt_local);
 
 /*
- * Allocate nodes for heterogeneous/pack job from the slurm controller -- 
+ * Allocate nodes for heterogeneous job from the slurm controller --
  * retrying the attempt if the controller appears to be down, and optionally
  * waiting for resources if none are currently available (see opt.immediate)
  *
  * Returns a pointer to a resource_allocation_response_msg which must
  * be freed with slurm_free_resource_allocation_response_msg()
  */
-List allocate_pack_nodes(bool handle_signals);
+List allocate_het_job_nodes(bool handle_signals);
 
 /* dummy function to handle all signals we want to ignore */
 void ignore_signal(int signo);

@@ -53,6 +53,13 @@
 #include "src/common/slurmdb_defs.h"
 #include "src/common/slurm_opt.h"
 
+enum wrappers {
+	WRPR_START,
+	WRPR_BSUB,
+	WRPR_PBS,
+	WRPR_CNT
+};
+
 typedef struct sbatch_env_opts {
 	uint32_t cpus_per_task;
 	char *   dist;
@@ -69,10 +76,9 @@ typedef struct sbatch_env_opts {
 
 extern slurm_opt_t opt;
 extern sbatch_opt_t sbopt;
-extern sbatch_env_t pack_env;
+extern sbatch_env_t het_job_env;
 extern int   error_exit;
-extern int   ignore_pbs;
-extern bool  is_pack_job;
+extern bool  is_het_job;
 
 /*
  * process_options_first_pass()
@@ -100,11 +106,11 @@ extern char *process_options_first_pass(int argc, char **argv);
  * argc IN - Count of elements in argv
  * argv IN - Array of elements to parse
  * argc_off OUT - Offset of first non-parsable element
- * pack_inx IN - pack job component ID, zero origin
- * more_packs OUT - more packs job specifications in script to process
+ * het_job_inx IN - hetjob component ID, zero origin
+ * more_het_comps OUT - more hetjob component specifications in script to process
  */
 extern void process_options_second_pass(int argc, char **argv, int *argc_off,
-					int pack_inx, bool *more_packs,
+					int het_job_inx, bool *more_het_comps,
 					const char *file,
 					const void *script_body,
 					int script_size);
@@ -119,5 +125,13 @@ extern int   spank_unset_job_env(const char *name);
 
 extern void init_envs(sbatch_env_t *local_env);
 extern void set_envs(char ***array_ptr, sbatch_env_t *local_env,
-		     int pack_offset);
+		     int het_job_offset);
+
+extern char *get_argument(const char *file, int lineno, const char *line,
+			  int *skipped);
+extern char *next_line(const void *buf, int size, void **state);
+
+/* Translate #BSUB and #PBS directives in job script */
+extern bool xlate_batch_script(const char *file, const void *body,
+			       int size, int magic);
 #endif	/* _HAVE_OPT_H */

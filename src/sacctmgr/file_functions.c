@@ -42,6 +42,8 @@
 #include "src/common/strlcpy.h"
 #include "src/common/uid.h"
 
+#define BUFFER_SIZE 4096
+
 typedef struct {
 	slurmdb_admin_level_t admin;
 	slurmdb_assoc_rec_t assoc_rec;
@@ -254,8 +256,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 		} else if (!xstrncasecmp(sub, "Coordinator",
 					 MAX(command_len, 2))) {
 			if (!file_opts->coord_list)
-				file_opts->coord_list =
-					list_create(slurm_destroy_char);
+				file_opts->coord_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->coord_list, option);
 		} else if (!xstrncasecmp(sub, "Classification",
 					 MAX(command_len, 2))) {
@@ -268,8 +269,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 					 MAX(command_len, 8))) {
 			file_opts->def_wckey = xstrdup(option);
 			if (!file_opts->wckey_list)
-				file_opts->wckey_list =
-					list_create(slurm_destroy_char);
+				file_opts->wckey_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->wckey_list, option);
 		} else if (!xstrncasecmp(sub, "Description",
 					 MAX(command_len, 3))) {
@@ -283,8 +283,7 @@ static sacctmgr_file_opts_t *_parse_options(char *options)
 		} else if (!xstrncasecmp(sub, "WCKeys",
 					 MAX(command_len, 2))) {
 			if (!file_opts->wckey_list)
-				file_opts->wckey_list =
-					list_create(slurm_destroy_char);
+				file_opts->wckey_list = list_create(xfree_ptr);
 			slurm_addto_char_list(file_opts->wckey_list, option);
 		} else if (!sacctmgr_set_assoc_rec(
 				   &file_opts->assoc_rec, sub, option,
@@ -332,7 +331,7 @@ static int _print_out_assoc(List assoc_list, bool user, bool add)
 	if (!assoc_list || !list_count(assoc_list))
 		return rc;
 
-	format_list = list_create(slurm_destroy_char);
+	format_list = list_create(xfree_ptr);
 	if (user)
 		slurm_addto_char_list(format_list,
 				      "User,Account");
@@ -622,6 +621,18 @@ static int _mod_assoc(sacctmgr_file_opts_t *file_opts,
 			   parent);
 	}
 
+	if ((file_opts->assoc_rec.priority != NO_VAL)
+	    && (assoc->priority != file_opts->assoc_rec.priority)) {
+		mod_assoc.priority = file_opts->assoc_rec.priority;
+		changed = 1;
+		xstrfmtcat(my_info,
+			   "%-30.30s for %-7.7s %-10.10s %8d -> %d\n",
+			   " Changed Priority",
+			   type, name,
+			   assoc->priority,
+			   file_opts->assoc_rec.priority);
+	}
+
 	if (assoc->qos_list && list_count(assoc->qos_list) &&
 	    file_opts->assoc_rec.qos_list &&
 	    list_count(file_opts->assoc_rec.qos_list)) {
@@ -632,7 +643,7 @@ static int _mod_assoc(sacctmgr_file_opts_t *file_opts,
 		char *now_qos = NULL, *new_qos = NULL;
 
 		if (!mod_assoc.qos_list)
-			mod_assoc.qos_list = list_create(slurm_destroy_char);
+			mod_assoc.qos_list = list_create(xfree_ptr);
 		while ((new_qos = list_next(new_qos_itr))) {
 			while ((now_qos = list_next(now_qos_itr))) {
 				if (!xstrcmp(new_qos, now_qos))
@@ -1523,6 +1534,9 @@ extern int print_file_add_limits_to_line(char **line,
 		xstrfmtcat(*line, ":MaxWallDurationPerJob=%u",
 			   assoc->max_wall_pj);
 
+	if (assoc->priority != INFINITE)
+		xstrfmtcat(*line, ":Priority=%u", assoc->priority);
+
 	if (assoc->qos_list && list_count(assoc->qos_list)) {
 		char *temp_char = NULL;
 		if (!g_qos_list)
@@ -1700,7 +1714,7 @@ extern void load_sacctmgr_cfg_file (int argc, char **argv)
 	mod_user_list = list_create(slurmdb_destroy_user_rec);
 	mod_assoc_list = list_create(slurmdb_destroy_assoc_rec);
 
-	format_list = list_create(slurm_destroy_char);
+	format_list = list_create(xfree_ptr);
 
 	while ((num_lines = _get_next_line(line, BUFFER_SIZE, fd)) > 0) {
 		lc += num_lines;

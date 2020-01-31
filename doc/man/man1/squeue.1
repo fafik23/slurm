@@ -1,4 +1,4 @@
-.TH squeue "1" "Slurm Commands" "June 2018" "Slurm Commands"
+.TH squeue "1" "Slurm Commands" "January 2020" "Slurm Commands"
 
 .SH "NAME"
 squeue \- view information about jobs located in the Slurm scheduling queue.
@@ -94,6 +94,10 @@ Request jobs requesting or using one or more of the named licenses.
 The license list consists of a comma separated list of license names.
 
 .TP
+\fB\-\-me\fR
+Equivalent to \fB\-\-user=<my username>\fR.
+
+.TP
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
 A value of of '\fIall\fR' will query to run on all clusters.
@@ -116,6 +120,10 @@ Specify the information to be displayed, its size and position
 Also see the \fB\-O <output_format>\fR, \fB\-\-Format=<output_format>\fR
 option described below (which supports less flexibility in formatting, but
 supports access to all fields).
+If the command is executed in an federated cluster environment and information
+about more than one cluster is to be displayed and the \fB\-h, \-\-noheader\fR
+option is used, then the cluster name will be displayed before the default
+output formats shown below.
 The default formats with various options are
 
 .RS
@@ -465,6 +473,10 @@ Valid \fItype\fR specifications include:
 Print the account associated with the job.
 (Valid for jobs only)
 .TP
+\fBaccruetime\fR
+Print the accrue time associated with the job.
+(Valid for jobs only)
+.TP
 \fBadmin_comment\fR
 Administrator comment associated with the job.
 (Valid for jobs only)
@@ -495,7 +507,7 @@ Prints whether the batch flag has been set.
 .TP
 \fBbatchhost\fR
 Executing (batch) host. For an allocated session, this is the host on which
-the session is executing (i.e. the node from which the the \fBsrun\fR or the
+the session is executing (i.e. the node from which the \fBsrun\fR or the
 \fBsalloc\fR command was executed). For a batch job, this is the node executing
 the batch script. In the case of a typical Linux cluster, this would be the
 compute node zero of the allocation. In the case of a Cray ALPS
@@ -514,14 +526,6 @@ Burst Buffer specification
 \fBburstbufferstate\fR
 Burst Buffer state
 (Valid for jobs only)
-.TP
-\fBchptdir\fR
-Prints the directory where the job checkpoint will be written to.
-(Valid for job steps only)
-.TP
-\fBchptinter\fR
-Prints the time interval of the checkpoint.
-(Valid for job steps only)
 .TP
 \fBcluster\fR
 Name of the cluster that is running the job or job step.
@@ -711,13 +715,13 @@ reflect the current number of CPUs allocated.
 Number of nodes allocated to the job or the minimum number of nodes
 required by a pending job. The actual number of nodes allocated to a pending
 job may exceed this number if the job specified a node range count (e.g.
-minimum and maximum node counts) or the the job specifies a processor
+minimum and maximum node counts) or the job specifies a processor
 count instead of a node count and the cluster contains nodes with varying
 processor counts. As a job is completing this number will reflect the
 current number of nodes allocated.
 (Valid for jobs only)
 .TP
-\fBnumtask\fR
+\fBnumtasks\fR
 Number of tasks requested by a job or job step.
 This reports the value of the \fB\-\-ntasks\fR option.
 (Valid for jobs and job steps)
@@ -743,14 +747,14 @@ or the partition is configured with OverSubscribe=Force,
 "OK" otherwise (typically allocated dedicated CPUs),
 (Valid for jobs only)
 .TP
-\fBpackjobid\fR
+\fBhetjobid\fR
 Job ID of the heterogeneous job leader.
 .TP
-\fBpackjoboffset\fR
-Zero origin offset within a collection of heterogeneous jobs.
+\fBhetjoboffset\fR
+Zero origin offset within a collection of heterogeneous job components.
 .TP
-\fBpackjobidset\fR
-Expression identifying all job IDs within a heterogeneous job.
+\fBhetjobidset\fR
+Expression identifying all components job IDs within a heterogeneous job.
 .TP
 \fBpartition\fR
 Partition of the job or job step.
@@ -1290,6 +1294,18 @@ released for other jobs.
 \fBTO  TIMEOUT\fR
 Job terminated upon reaching its time limit.
 
+.SH "PERFORMANCE"
+.PP
+Executing \fBsqueue\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBsqueue\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBsqueue\fR or other Slurm client commands that send remote
+procedure calls to \fBslurmctld\fR from loops in shell scripts or other
+programs. Ensure that programs limit calls to \fBsqueue\fR to the minimum
+necessary for the information you are trying to gather.
 
 .SH "ENVIRONMENT VARIABLES"
 .PP
@@ -1360,7 +1376,7 @@ A valid strftime() format can also be specified. For example, a value of
 \fB\-p <qos_list>, \-\-qos=<qos_list>\fR
 .TP
 \fBSQUEUE_SIBLING\fR
-\\fB\-\-sibling\fR
+\fB\-\-sibling\fR
 .TP
 \fBSQUEUE_SORT\fR
 \fB\-S <sort_list>, \-\-sort=<sort_list>\fR
@@ -1447,8 +1463,7 @@ WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.
 .SH "SEE ALSO"
-\fBscancel\fR(1), \fBscontrol\fR(1), \fBsinfo\fR(1),
-\fBsmap\fR(1), \fBsrun\fR(1),
+\fBscancel\fR(1), \fBscontrol\fR(1), \fBsinfo\fR(1), \fBsrun\fR(1),
 \fBslurm_load_ctl_conf\fR (3), \fBslurm_load_jobs\fR (3),
 \fBslurm_load_node\fR (3),
 \fBslurm_load_partitions\fR (3)

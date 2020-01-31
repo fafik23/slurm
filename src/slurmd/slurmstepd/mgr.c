@@ -236,7 +236,7 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 	 * it is resumed */
 	wait_for_resumed(resp_msg->msg_type);
 	while (1) {
-		if (resp_msg->protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		if (resp_msg->protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 			int msg_rc = 0;
 			msg_rc = slurm_send_recv_rc_msg_only_one(resp_msg,
 								 &rc, 0);
@@ -244,13 +244,8 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 			if (!msg_rc && !rc)
 				break;
 		} else {
-			/*
-			 * Old unreliable method. See slurm_send_only_node_msg()
-			 * for further details.
-			 */
-			rc = slurm_send_only_node_msg(resp_msg);
-			if (rc == SLURM_SUCCESS)
-				break;
+			rc = SLURM_ERROR;
+			break;
 		}
 
 		if (!max_retry)
@@ -283,6 +278,13 @@ static void _local_jobacctinfo_aggregate(
 		from->tres_usage_in_max[TRES_ARRAY_MEM];
 	from->tres_usage_in_tot[TRES_ARRAY_VMEM] =
 		from->tres_usage_in_max[TRES_ARRAY_VMEM];
+
+	/*
+	 * Here ave_watts stores the ave of the watts collected so store that
+	 * as the last value so the total will be a total of ave instead of just
+	 * the last watts collected.
+	 */
+	from->tres_usage_out_tot[TRES_ARRAY_ENERGY] = from->energy.ave_watts;
 
 	jobacctinfo_aggregate(dest, from);
 }
@@ -322,7 +324,8 @@ static uint32_t _get_exit_code(stepd_step_rec_t *job)
 		 * tasks in case one of them called abort
 		 */
 		if (WIFSIGNALED(job->task[i]->estatus)) {
-			error("get_exit_code task %u died by signal", i);
+			info("get_exit_code task %u died by signal: %d",
+			     i, WTERMSIG(job->task[i]->estatus));
 			step_rc = job->task[i]->estatus;
 			break;
 		}
@@ -627,6 +630,7 @@ _send_exit_msg(stepd_step_rec_t *job, uint32_t *tid, int n, int status)
 	debug3("sending task exit msg for %d tasks status %d oom %d",
 	       n, status, job->oom_error);
 
+	memset(&msg, 0, sizeof(msg));
 	msg.task_id_list	= tid;
 	msg.num_tasks		= n;
 	if (job->oom_error)
@@ -679,7 +683,7 @@ extern void stepd_wait_for_children_slurmstepd(stepd_step_rec_t *job)
 	slurm_mutex_lock(&step_complete.lock);
 
 	/* wait an extra 3 seconds for every level of tree below this level */
-	if (step_complete.children > 0) {
+	if (step_complete.bits && (step_complete.children > 0)) {
 		ts.tv_sec += 3 * (step_complete.max_depth-step_complete.depth);
 		ts.tv_sec += time(NULL) + REVERSE_TREE_CHILDREN_TIMEOUT;
 
@@ -724,8 +728,6 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	int rc = -1;
 	int retcode;
 	int i;
-	uint16_t port = 0;
-	char ip_buf[16];
 	static bool acct_sent = false;
 
 	debug2("_one_step_complete_msg: first=%d, last=%d", first, last);
@@ -736,7 +738,7 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 		if (last == -1)
 			last = 0;
 	}
-	memset(&msg, 0, sizeof(step_complete_msg_t));
+	memset(&msg, 0, sizeof(msg));
 	msg.job_id = job->jobid;
 	msg.job_step_id = job->stepid;
 	msg.range_first = first;
@@ -819,24 +821,22 @@ _one_step_complete_msg(stepd_step_rec_t *job, int first, int last)
 	while (slurm_send_recv_controller_rc_msg(&req, &rc,
 						 working_cluster_rec) < 0) {
 		if (i++ == 1) {
-			slurm_get_ip_str(&step_complete.parent_addr, &port,
-					 ip_buf, sizeof(ip_buf));
-			error("Rank %d failed sending step completion message "
-			      "directly to slurmctld (%s:%u), retrying",
-			      step_complete.rank, ip_buf, port);
+			error("Rank %d failed sending step completion message directly to slurmctld, retrying",
+			      step_complete.rank);
 		}
 		sleep(60);
 	}
 	if (i > 1) {
-		info("Rank %d sent step completion message directly to "
-		     "slurmctld (%s:%u)", step_complete.rank, ip_buf, port);
+		info("Rank %d sent step completion message directly to slurmctld",
+		     step_complete.rank);
 	}
 
 finished:
 	jobacctinfo_destroy(msg.jobacct);
 }
 
-/* Given a starting bit in the step_complete.bits bitstring, "start",
+/*
+ * Given a starting bit in the step_complete.bits bitstring, "start",
  * find the next contiguous range of set bits and return the first
  * and last indices of the range in "first" and "last".
  *
@@ -847,6 +847,9 @@ _bit_getrange(int start, int size, int *first, int *last)
 {
 	int i;
 	bool found_first = false;
+
+	if (!step_complete.bits)
+		return 0;
 
 	for (i = start; i < size; i++) {
 		if (bit_test(step_complete.bits, i)) {
@@ -888,7 +891,10 @@ extern void stepd_send_step_complete_msgs(stepd_step_rec_t *job)
 
 	slurm_mutex_lock(&step_complete.lock);
 	start = 0;
-	size = bit_size(step_complete.bits);
+	if (step_complete.bits)
+		size = bit_size(step_complete.bits);
+	else
+		size = 0;
 
 	/* If no children, send message and return early */
 	if (size == 0) {
@@ -919,15 +925,6 @@ extern void stepd_send_step_complete_msgs(stepd_step_rec_t *job)
 	slurm_mutex_unlock(&step_complete.lock);
 }
 
-/* This dummy function is provided so that the checkpoint functions can
- * 	resolve this symbol name (as needed for some of the checkpoint
- *	functions used by slurmctld). */
-extern void agent_queue_request(void *dummy)
-{
-	fatal("Invalid agent_queue_request function call, likely from "
-	      "checkpoint plugin");
-}
-
 static void _set_job_state(stepd_step_rec_t *job, slurmstepd_state_t new_state)
 {
 	slurm_mutex_lock(&job->state_mutex);
@@ -944,8 +941,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	int status = 0;
 	pid_t pid;
 	int rc = SLURM_SUCCESS;
-
-#ifdef WITH_SLURM_X11
+	uint32_t jobid;
 	int x11_pipe[2] = {0, 0};
 
 	if (job->x11 && (pipe(x11_pipe) < 0)) {
@@ -954,7 +950,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 		close_slurmd_conn();
 		return SLURM_ERROR;
 	}
-#endif
 
 	debug2("%s: Before call to spank_init()", __func__);
 	if (spank_init(job) < 0) {
@@ -980,7 +975,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 
 		_unblock_signals();
 
-#ifdef WITH_SLURM_X11
 		if (job->x11) {
 			int display, len = 0;
 			char *xauthority;
@@ -1028,9 +1022,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 				sleep(100000);
 
 			exit(1);
-		} else
-#endif	/* WITH_SLURM_X11 */
-		{
+		} else {
 			/*
 			 * Need to exec() something for proctrack/linuxproc to
 			 * work, it will not keep a process named "slurmstepd"
@@ -1067,9 +1059,16 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	jobacct_id.job    = job;
 	jobacct_gather_set_proctrack_container_id(job->cont_id);
 	jobacct_gather_add_task(pid, &jobacct_id, 1);
-	container_g_add_cont(job->jobid, job->cont_id);
+#ifdef HAVE_NATIVE_CRAY
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
+#else
+	jobid = job->jobid;
+#endif
+	container_g_add_cont(jobid, job->cont_id);
 
-#ifdef WITH_SLURM_X11
 	/*
 	 * For the X11 forwarding, we need to know what local port number the
 	 * forwarding code has started listening on so that the slurmd can
@@ -1110,7 +1109,6 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			debug("x11 forwarding local xauthority is %s",
 			      job->x11_xauthority);
 	}
-#endif
 
 	_set_job_state(job, SLURMSTEPD_STEP_RUNNING);
 	if (!conf->job_acct_gather_freq)
@@ -1180,7 +1178,6 @@ job_manager(stepd_step_rec_t *job)
 {
 	int  rc = SLURM_SUCCESS;
 	bool io_initialized = false;
-	char *ckpt_type = slurm_get_checkpoint_type();
 	char *err_msg = NULL;
 
 	debug3("Entered job_manager for %u.%u pid=%d",
@@ -1202,10 +1199,9 @@ job_manager(stepd_step_rec_t *job)
 	    (switch_init(1) != SLURM_SUCCESS)			||
 	    (slurm_proctrack_init() != SLURM_SUCCESS)		||
 	    (slurmd_task_init() != SLURM_SUCCESS)		||
-	    (checkpoint_init(ckpt_type) != SLURM_SUCCESS)	||
 	    (jobacct_gather_init() != SLURM_SUCCESS)		||
 	    (acct_gather_profile_init() != SLURM_SUCCESS)	||
-	    (slurm_crypto_init() != SLURM_SUCCESS)		||
+	    (slurm_cred_init() != SLURM_SUCCESS)		||
 	    (job_container_init() != SLURM_SUCCESS)		||
 	    (gres_plugin_init() != SLURM_SUCCESS)) {
 		rc = SLURM_PLUGIN_NAME_INVALID;
@@ -1233,9 +1229,18 @@ job_manager(stepd_step_rec_t *job)
 	if (job->stepid == SLURM_EXTERN_CONT)
 		return _spawn_job_container(job);
 
-	if (!job->batch && (job->accel_bind_type || job->tres_bind)) {
+	if (!job->batch && (job->accel_bind_type || job->tres_bind ||
+	    job->tres_freq)) {
+		List gres_list = NULL;
+		(void) gres_plugin_init_node_config(conf->node_name,
+						    conf->gres,
+						    &gres_list);
+		debug2("Running gres_plugin_node_config_load()!");
 		(void) gres_plugin_node_config_load(conf->cpus, conf->node_name,
-						    (void *)&xcpuinfo_abs_to_mac);
+						gres_list,
+						(void *)&xcpuinfo_abs_to_mac,
+						(void *)&xcpuinfo_mac_to_abs);
+		FREE_NULL_LIST(gres_list);
 	}
 
 	debug2("Before call to spank_init()");
@@ -1251,19 +1256,6 @@ job_manager(stepd_step_rec_t *job)
 		/* error("switch_g_job_init: %m"); already logged */
 		rc = ESLURM_INTERCONNECT_FAILURE;
 		goto fail2;
-	}
-
-	/* fork necessary threads for checkpoint */
-	if (checkpoint_stepd_prefork(job) != SLURM_SUCCESS) {
-		error("Failed checkpoint_stepd_prefork");
-		rc = SLURM_ERROR;
-		xstrfmtcat(err_msg,
-			   "checkpoint_stepd_prefork failure for job %u.%u on %s",
-			   job->jobid, job->stepid, conf->hostname);
-		(void) log_ctld(LOG_LEVEL_ERROR, err_msg);
-		xfree(err_msg);
-		io_close_task_fds(job);
-		goto fail3;
 	}
 
 	/* fork necessary threads for MPI */
@@ -1393,13 +1385,23 @@ fail2:
 	task_g_post_step(job);
 
 	/*
-	 * Reset CPU and TRES frequencies if changed
+	 * Reset CPU frequencies if changed
 	 */
 	if ((job->cpu_freq_min != NO_VAL) || (job->cpu_freq_max != NO_VAL) ||
 	    (job->cpu_freq_gov != NO_VAL))
 		cpu_freq_reset(job);
-	if (job->tres_freq)
-		tres_freq_reset(job);
+
+	/*
+	 * Reset GRES hardware, if needed. This is where GPU frequency is reset.
+	 * Make sure stepd is root. If not, emit error.
+	 */
+	if (!job->batch && job->tres_freq) {
+		if (getuid() == (uid_t) 0)
+			gres_plugin_step_hardware_fini();
+		else
+			error("%s: invalid permissions: cannot uninitialize GRES hardware unless Slurmd was started as root",
+			      __func__);
+	}
 
 	/*
 	 * Notify srun of completion AFTER frequency reset to avoid race
@@ -1443,7 +1445,6 @@ fail1:
 	if (!job->batch && core_spec_g_clear(job->cont_id))
 		error("core_spec_g_clear: %m");
 
-	xfree(ckpt_type);
 	return(rc);
 }
 
@@ -1648,6 +1649,8 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 	jobacct_id_t jobacct_id;
 	char *oom_value;
 	List exec_wait_list = NULL;
+	uint32_t jobid;
+
 	DEF_TIMERS;
 	START_TIMER;
 
@@ -1705,6 +1708,23 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		goto fail1;
 	} else {
 		*io_initialized = true;
+	}
+
+	/*
+	 * Now that errors will be copied back to srun, set the frequencies of
+	 * the GPUs allocated to the step (and eventually other GRES hardware
+	 * config options). Make sure stepd is root. If not, emit error.
+	 * TODO: generic "settings" parameter rather than tres_freq
+	 */
+	if (!job->batch && job->tres_freq) {
+		if (getuid() == (uid_t) 0) {
+			gres_plugin_step_hardware_init(job->step_gres_list,
+						       job->nodeid,
+						       job->tres_freq);
+		} else {
+			error("%s: invalid permissions: cannot initialize GRES hardware unless Slurmd was started as root",
+			      __func__);
+		}
 	}
 
 	/*
@@ -1892,7 +1912,15 @@ _fork_all_tasks(stepd_step_rec_t *job, bool *io_initialized)
 		}
 	}
 //	jobacct_gather_set_proctrack_container_id(job->cont_id);
-	if (container_g_add_cont(job->jobid, job->cont_id) != SLURM_SUCCESS)
+#ifdef HAVE_NATIVE_CRAY
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
+#else
+	jobid = job->jobid;
+#endif
+	if (container_g_add_cont(jobid, job->cont_id) != SLURM_SUCCESS)
 		error("container_g_add_cont(%u): %m", job->jobid);
 	if (!job->batch && core_spec_g_set(job->cont_id, job->job_core_spec) &&
 	    (job->stepid == 0))
@@ -2032,8 +2060,8 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 	char **tmp_env;
 	uint32_t task_offset = 0;
 
-	if (job->pack_task_offset != NO_VAL)
-		task_offset = job->pack_task_offset;
+	if (job->het_job_task_offset != NO_VAL)
+		task_offset = job->het_job_task_offset;
 	do {
 		pid = wait3(&status, waitflag ? 0 : WNOHANG, &rusage);
 		if (pid == -1) {
@@ -2099,6 +2127,8 @@ _wait_for_any_task(stepd_step_rec_t *job, bool waitflag)
 			job->env = job->envtp->env;
 			env_array_free(tmp_env);
 
+			setenvf(&job->env, "SLURM_SCRIPT_CONTEXT",
+				"epilog_task");
 			if (job->task_epilog) {
 				_run_script_as_user("user task_epilog",
 						    job->task_epilog,
@@ -2278,8 +2308,8 @@ static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 		goto error;
 	}
 
-	if (lseek(fd, length - 1, SEEK_SET) == -1) {
-		error("%s: lseek to %d failed on `%s`: %m",
+	if (ftruncate(fd, length) == -1) {
+		error("%s: ftruncate to %d failed on `%s`: %m",
 		      __func__, length, script);
 		close(fd);
 		goto error;
@@ -2288,14 +2318,6 @@ static char *_make_batch_script(batch_job_launch_msg_t *msg, char *path)
 	output = mmap(0, length, PROT_WRITE | PROT_READ, MAP_SHARED, fd, 0);
 	if (output == MAP_FAILED) {
 		error("%s: mmap failed", __func__);
-		close(fd);
-		goto error;
-	}
-
-	if (write(fd, "", 1) == -1) {
-		error("%s: write failed", __func__);
-		if (errno == ENOSPC)
-			stepd_drain_node("SlurmdSpoolDir is full");
 		close(fd);
 		goto error;
 	}
@@ -2325,7 +2347,7 @@ extern int stepd_drain_node(char *reason)
 	slurm_msg_t req_msg;
 	update_node_msg_t update_node_msg;
 
-	memset(&update_node_msg, 0, sizeof(update_node_msg_t));
+	memset(&update_node_msg, 0, sizeof(update_node_msg));
 	update_node_msg.node_names = conf->node_name;
 	update_node_msg.node_state = NODE_STATE_DRAIN;
 	update_node_msg.reason = reason;
@@ -2444,6 +2466,7 @@ _send_complete_batch_script_msg(stepd_step_rec_t *job, int err, int status)
 	if (conf->msg_aggr_window_msgs > 1)
 		msg_to_ctld = false;
 
+	memset(&req, 0, sizeof(req));
 	req.job_id	= job->jobid;
 	if (job->oom_error)
 		req.job_rc = SIG_OOM;
@@ -2457,7 +2480,7 @@ _send_complete_batch_script_msg(stepd_step_rec_t *job, int err, int status)
 	req_msg.msg_type= REQUEST_COMPLETE_BATCH_SCRIPT;
 	req_msg.data	= &req;
 
-	info("sending REQUEST_COMPLETE_BATCH_SCRIPT, error:%u status %d",
+	info("sending REQUEST_COMPLETE_BATCH_SCRIPT, error:%d status:%d",
 	     err, status);
 
 	/* Note: these log messages don't go to slurmd.log from here */
@@ -2781,17 +2804,25 @@ _run_script_as_user(const char *name, const char *path, stepd_step_rec_t *job,
 	if ((cpid = _exec_wait_get_pid (ei)) == 0) {
 		struct priv_state sprivs;
 		char *argv[2];
+		uint32_t jobid;
 
-		/* container_g_add_pid needs to be called in the
+#ifdef HAVE_NATIVE_CRAY
+		if (job->het_job_id && (job->het_job_id != NO_VAL))
+			jobid = job->het_job_id;
+		else
+			jobid = job->jobid;
+#else
+		jobid = job->jobid;
+#endif
+		/* container_g_join needs to be called in the
 		   forked process part of the fork to avoid a race
 		   condition where if this process makes a file or
 		   detacts itself from a child before we add the pid
 		   to the container in the parent of the fork.
 		*/
-		if ((job->jobid != 0) &&	/* Ignore system processes */
-		    (container_g_add_pid(job->jobid, getpid(), job->uid)
-		     != SLURM_SUCCESS))
-			error("container_g_add_pid(%u): %m", job->jobid);
+		if ((jobid != 0) &&	/* Ignore system processes */
+		    (container_g_join(jobid, job->uid) != SLURM_SUCCESS))
+			error("container_g_join(%u): %m", job->jobid);
 
 		argv[0] = (char *)xstrdup(path);
 		argv[1] = NULL;

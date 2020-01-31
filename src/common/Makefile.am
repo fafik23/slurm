@@ -10,11 +10,9 @@
 
 AUTOMAKE_OPTIONS = foreign
 
-AM_CPPFLAGS     = -I$(top_srcdir) $(lua_CFLAGS)
+AM_CPPFLAGS     = -I$(top_srcdir) $(lua_CFLAGS) -DSBINDIR=\"$(sbindir)\"
 
 noinst_PROGRAMS = libcommon.o libeio.o libspank.o
-# This is needed if compiling on windows
-EXEEXT=
 
 noinst_LTLIBRARIES = 			\
 	libcommon.la 			\
@@ -40,8 +38,9 @@ libcommon_la_SOURCES = 			\
 	net.c net.h                     \
 	log.c log.h			\
 	cbuf.c cbuf.h			\
+	data.c data.h			\
 	bitstring.c bitstring.h 	\
-	mpi.c slurm_mpi.h               \
+	slurm_mpi.c slurm_mpi.h         \
 	pack.c pack.h			\
 	parse_config.c parse_config.h	\
 	parse_value.c parse_value.h	\
@@ -49,7 +48,11 @@ libcommon_la_SOURCES = 			\
 	plugrack.c plugrack.h		\
 	power.c power.h			\
 	print_fields.c print_fields.h	\
+	slurm_resolv.c slurm_resolv.h	\
+	fetch_config.c fetch_config.h	\
+	prep.c prep.h			\
 	read_config.c read_config.h	\
+	run_in_daemon.c run_in_daemon.h	\
 	node_select.c node_select.h	\
 	env.c env.h      		\
 	fd.c fd.h       		\
@@ -67,8 +70,7 @@ libcommon_la_SOURCES = 			\
 	slurm_protocol_pack.h		\
 	slurm_protocol_util.c		\
 	slurm_protocol_util.h		\
-	slurm_protocol_socket_implementation.c	\
-	slurm_protocol_socket_common.h	\
+	slurm_protocol_socket.c		\
 	slurm_protocol_common.h		\
 	slurm_protocol_interface.h	\
 	slurm_protocol_defs.c		\
@@ -91,7 +93,7 @@ libcommon_la_SOURCES = 			\
 	slurm_acct_gather_interconnect.c slurm_acct_gather_interconnect.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
-	slurm_opt.h			\
+	slurm_opt.c slurm_opt.h		\
 	slurm_route.c slurm_route.h	\
 	slurm_time.c slurm_time.h	\
 	slurm_topology.c slurm_topology.h \
@@ -103,18 +105,19 @@ libcommon_la_SOURCES = 			\
 	slurm_resource_info.h		\
 	hostlist.c hostlist.h		\
 	slurm_step_layout.c slurm_step_layout.h	\
-	checkpoint.c checkpoint.h	\
 	job_resources.c job_resources.h	\
 	parse_time.c parse_time.h	\
 	job_options.c job_options.h	\
 	global_defaults.c		\
 	timers.c timers.h		\
+	track_script.c track_script.h	\
 	slurm_xlator.h			\
 	stepd_api.c stepd_api.h		\
 	write_labelled_message.c	\
 	write_labelled_message.h	\
 	proc_args.c proc_args.h		\
 	node_conf.h node_conf.c		\
+	gpu.h gpu.c			\
 	gres.h gres.c			\
 	entity.h entity.c		\
 	layout.h layout.c		\
@@ -127,7 +130,10 @@ libcommon_la_SOURCES = 			\
 	slurm_persist_conn.c slurm_persist_conn.h \
 	run_command.c run_command.h	\
 	x11_util.c x11_util.h		\
+	half_duplex.c half_duplex.h	\
 	state_control.c state_control.h	\
+	site_factor.c site_factor.h	\
+	cli_filter.c cli_filter.h	\
 	tres_bind.c tres_bind.h		\
 	tres_frequency.c tres_frequency.h
 

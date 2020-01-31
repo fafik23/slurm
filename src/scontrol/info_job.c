@@ -37,6 +37,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 #include <arpa/inet.h>
+#include <grp.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -60,11 +61,8 @@ scontrol_load_job(job_info_msg_t ** job_buffer_pptr, uint32_t job_id)
 	if (all_flag)
 		show_flags |= SHOW_ALL;
 
-	if (detail_flag) {
+	if (detail_flag)
 		show_flags |= SHOW_DETAIL;
-		if (detail_flag > 1)
-			show_flags |= SHOW_DETAIL2;
-	}
 	if (federation_flag)
 		show_flags |= SHOW_FEDERATION;
 	if (local_flag)
@@ -198,6 +196,8 @@ scontrol_print_completing_job(job_info_t *job_ptr,
 	node_info_t *node_info;
 	hostlist_t comp_nodes, down_nodes;
 	char *node_buf;
+	char time_str[32];
+	time_t completing_time = 0;
 
 	comp_nodes = hostlist_create(NULL);
 	down_nodes = hostlist_create(NULL);
@@ -221,6 +221,13 @@ scontrol_print_completing_job(job_info_t *job_ptr,
 	}
 
 	fprintf(stdout, "JobId=%u ", job_ptr->job_id);
+
+	slurm_make_time_str(&job_ptr->end_time, time_str, sizeof(time_str));
+	fprintf(stdout, "EndTime=%s ", time_str);
+
+	completing_time = time(NULL) - job_ptr->end_time;
+	secs2time_str(completing_time, time_str, sizeof(time_str));
+	fprintf(stdout, "CompletingTime=%s ", time_str);
 
 	node_buf = hostlist_ranged_string_xmalloc(comp_nodes);
 	if (node_buf && node_buf[0])
@@ -269,10 +276,10 @@ scontrol_get_job_state(uint32_t job_id)
 	return NO_VAL16;
 }
 
-static bool _pack_id_match(job_info_t *job_ptr, uint32_t pack_job_offset)
+static bool _het_job_offset_match(job_info_t *job_ptr, uint32_t het_job_offset)
 {
-	if ((pack_job_offset == NO_VAL) ||
-	    (pack_job_offset == job_ptr->pack_job_offset))
+	if ((het_job_offset == NO_VAL) ||
+	    (het_job_offset == job_ptr->het_job_offset))
 		return true;
 	return false;
 }
@@ -305,7 +312,7 @@ extern void scontrol_print_job(char * job_id_str)
 {
 	int error_code = SLURM_SUCCESS, i, print_cnt = 0;
 	uint32_t job_id = 0;
-	uint32_t array_id = NO_VAL, pack_job_offset = NO_VAL;
+	uint32_t array_id = NO_VAL, het_job_offset = NO_VAL;
 	job_info_msg_t * job_buffer_ptr = NULL;
 	job_info_t *job_ptr = NULL;
 	char *end_ptr = NULL;
@@ -330,7 +337,7 @@ extern void scontrol_print_job(char * job_id_str)
 		if (end_ptr[0] == '_')
 			array_id = strtol(end_ptr + 1, &end_ptr, 10);
 		if (end_ptr[0] == '+')
-			pack_job_offset = strtol(end_ptr + 1, &end_ptr, 10);
+			het_job_offset = strtol(end_ptr + 1, &end_ptr, 10);
 	}
 
 	error_code = scontrol_load_job(&job_buffer_ptr, job_id);
@@ -352,7 +359,7 @@ extern void scontrol_print_job(char * job_id_str)
 	     i < job_buffer_ptr->record_count; i++, job_ptr++) {
 		char *save_array_str = NULL;
 		uint32_t save_task_id = 0;
-		if (!_pack_id_match(job_ptr, pack_job_offset))
+		if (!_het_job_offset_match(job_ptr, het_job_offset))
 			continue;
 		if (!_task_id_in_job(job_ptr, array_id))
 			continue;
@@ -377,9 +384,9 @@ extern void scontrol_print_job(char * job_id_str)
 				if (array_id != NO_VAL) {
 					printf("Job %u_%u not found\n",
 					       job_id, array_id);
-				} else if (pack_job_offset != NO_VAL) {
+				} else if (het_job_offset != NO_VAL) {
 					printf("Job %u+%u not found\n",
-					       job_id, pack_job_offset);
+					       job_id, het_job_offset);
 				} else {
 					printf("Job %u not found\n", job_id);
 				}
@@ -717,6 +724,72 @@ scontrol_list_pids(const char *jobid_str, const char *node_name)
 	} else {
 		_list_pids_all_steps(node_name, jobid);
 	}
+}
+
+extern void scontrol_getent(const char *node_name)
+{
+	List steps = NULL;
+	ListIterator itr = NULL;
+	step_loc_t *stepd;
+	int fd;
+	struct passwd *pwd = NULL;
+	struct group **grps = NULL;
+
+	if (!(steps = stepd_available(NULL, node_name))) {
+		fprintf(stderr, "No steps found on this node\n");
+		return;
+	}
+
+	itr = list_iterator_create(steps);
+	while ((stepd = list_next(itr))) {
+		fd = stepd_connect(NULL, node_name, stepd->jobid,
+				   stepd->stepid,
+				   &stepd->protocol_version);
+
+		if (fd < 0)
+			continue;
+		pwd = stepd_getpw(fd, stepd->protocol_version,
+				  GETPW_MATCH_ALWAYS, 0, NULL);
+
+		if (!pwd) {
+			close(fd);
+			continue;
+		}
+
+		if (stepd->stepid == SLURM_EXTERN_CONT)
+			printf("JobId=%u.Extern:\nUser:\n", stepd->jobid);
+		else if (stepd->stepid == SLURM_BATCH_SCRIPT)
+			printf("JobId=%u.Batch:\nUser:\n", stepd->jobid);
+		else
+			printf("JobId=%u.%u:\nUser:\n",
+			       stepd->jobid, stepd->stepid);
+
+		printf("%s:%s:%u:%u:%s:%s:%s\nGroups:\n",
+		       pwd->pw_name, pwd->pw_passwd, pwd->pw_uid, pwd->pw_gid,
+		       pwd->pw_gecos, pwd->pw_dir, pwd->pw_shell);
+
+		xfree_struct_passwd(pwd);
+
+		grps = stepd_getgr(fd, stepd->protocol_version,
+				   GETGR_MATCH_ALWAYS, 0, NULL);
+		if (!grps) {
+			close(fd);
+			printf("\n");
+			continue;
+		}
+
+		for (int i = 0; grps[i]; i++) {
+			printf("%s:%s:%u:%s\n",
+			       grps[i]->gr_name, grps[i]->gr_passwd,
+			       grps[i]->gr_gid,
+			       (grps[i]->gr_mem) ? grps[i]->gr_mem[0] : "");
+		}
+		close(fd);
+		xfree_struct_group_array(grps);
+		printf("\n");
+	}
+	list_iterator_destroy(itr);
+	FREE_NULL_LIST(steps);
 }
 
 /*

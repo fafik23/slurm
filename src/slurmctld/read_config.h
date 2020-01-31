@@ -48,6 +48,11 @@ extern void accounts_list_build(char *accounts, char ***accounts_array);
 extern void accounts_list_free(char ***accounts_array);
 
 /*
+ * Free the global response_cluster_rec
+ */
+extern void cluster_rec_free(void);
+
+/*
  * read_slurm_conf - load the slurm configuration from the configured file.
  * read_slurm_conf can be called more than once if so desired.
  * IN recover - replace job, node and/or partition data with latest
@@ -63,6 +68,12 @@ extern void accounts_list_free(char ***accounts_array);
  * Note: Operates on common variables only
  */
 extern int read_slurm_conf(int recover, bool reconfig);
+
+/*
+ * Build depend_list for every job and submit remote dependencies to siblings.
+ * This function must be called after fed_mgr_init().
+ */
+extern int restore_job_dependencies(void);
 
 extern int dump_config_state_lite(void);
 extern int load_config_state_lite(void);

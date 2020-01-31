@@ -262,7 +262,7 @@ static int validate_hostent_copy(
 extern
 bool is_full_path(const char *path)
 {
-	if (path[0] == '/')
+	if (path && path[0] == '/')
 		return true;
 
 	return false;
@@ -273,7 +273,7 @@ bool is_full_path(const char *path)
  * Given a relative path in input make it full relative
  * to the current working directory.
  */
-extern char *make_full_path(char *rpath)
+extern char *make_full_path(const char *rpath)
 {
 	char *cwd;
 	char *cwd2 = NULL;

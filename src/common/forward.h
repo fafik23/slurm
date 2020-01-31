@@ -43,18 +43,16 @@
 #include "src/common/slurm_protocol_api.h"
 
 /*
- * forward_init    - initilize forward structure
+ * forward_init    - initialize forward structure
  * IN: forward     - forward_t *   - struct to store forward info
- * IN: from        - forward_t *   - (OPTIONAL) can be NULL, can be used to
- *                                   init the forward to this state
  * RET: VOID
  */
-extern void forward_init(forward_t *forward, forward_t *from);
+extern void forward_init(forward_t *forward);
 
 /*
  * forward_msg	      - logic to forward a message which has been received and
  *			accumulate the return codes from processes getting the
- *			the forwarded message
+ *			forwarded message
  *
  * IN: forward_struct - forward_struct_t *   - holds information about message
  *                                             that needs to be forwarded to
@@ -90,7 +88,7 @@ extern int forward_msg(forward_struct_t *forward_struct,
 /*
  * start_msg_tree  - logic to begin the forward tree and
  *                   accumulate the return codes from processes getting the
- *                   the forwarded message
+ *                   forwarded message
  *
  * IN: hl          - hostlist_t   - list of every node to send message to
  * IN: msg         - slurm_msg_t  - message to send.

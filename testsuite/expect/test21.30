@@ -199,25 +199,7 @@ if {$got_node != 1} {
 }
 
 # Get the number of cpus on a node
-
-spawn $scontrol show node $test_node
-expect {
-	-re "CPUTot=($number)" {
-		set totcpus $expect_out(1,string)
-		exp_continue
-	}
-	-re "ThreadsPerCore=($number)" {
-		set nthreads $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: scontrol is not responding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
+lassign [get_node_cpus $test_node] totcpus nthreads
 
 if {$totcpus == 0} {
 	send_user "\nFAILURE: no cpus where found\n"
@@ -347,8 +329,7 @@ if {[test_super_user] == 0} {
 #
 # Some tests will not work properly when allocating sockets or whole nodes to jobs
 #
-set select_type [test_select_type]
-if {![string compare $select_type "linear"] || [default_part_exclusive]} {
+if {[test_linear] || [default_part_exclusive]} {
 	send_user "\nWARNING: This test is incompatible with exclusive node allocations\n"
 	exit 0
 }
@@ -453,7 +434,7 @@ expect {
 set mod_qos_vals(GrpNodes) $grn_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_1
+inc21_30_1 "QOSGrpNodeLimit"
 if {$exit_code != 0} {
 	endit
 }
@@ -471,7 +452,7 @@ if { $one_task_pc } {
 	set grcpu_num [expr $grcpu_num / $nthreads]
 }
 
-inc21_30_2
+inc21_30_2 "QOSGrpCpuLimit"
 if {$exit_code != 0} {
 	endit
 }
@@ -483,7 +464,7 @@ set mod_qos_vals(GrpCpus) "-1"
 set mod_qos_vals(GrpJobs) $grjobs_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_3
+inc21_30_3 "QOSGrpJobsLimit"
 if {$exit_code != 0} {
 	endit
 }
@@ -513,7 +494,7 @@ if { $one_task_pc } {
 }
 
 
-inc21_30_5
+inc21_30_5 "QOSMaxCpuPerJobLimit"
 if {$exit_code != 0} {
 	endit
 }
@@ -525,7 +506,7 @@ set mod_qos_vals(MaxCpus) "-1"
 set mod_qos_vals(MaxNodes) $maxnode_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_6
+inc21_30_6 "QOSMaxNodePerJobLimit|PartitionConfig"
 if {$exit_code != 0} {
 	endit
 }
@@ -537,7 +518,7 @@ set mod_qos_vals(MaxNodes) "-1"
 set mod_qos_vals(MaxJobs) $maxjobs_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_7
+inc21_30_7 "QOSMaxJobsPerUserLimit"
 if {$exit_code != 0} {
 	endit
 }
@@ -564,7 +545,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set grpcpumin_num [expr $grpcpumin_num / $nthreads]
 }
-inc21_30_9
+inc21_30_9 "QOSGrpCPUMinutesLimit"
 if {$exit_code != 0 } {
 	endit
 }
@@ -581,7 +562,7 @@ if { $prio_multifactor != 0 } {
 	if { $one_task_pc } {
 		set grpcpurunmin_num [expr $grpcpurunmin_num / $nthreads]
 	}
-	inc21_30_10
+	inc21_30_10 "QOSGrpCPURunMinutesLimit"
 	if {$exit_code != 0 } {
 		endit
 	}
@@ -594,7 +575,7 @@ if { $prio_multifactor != 0 } {
 set mod_qos_vals(GrpMem) $grpmem_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_11
+inc21_30_11 "QOSGrpMemLimit"
 if {$exit_code != 0 } {
 	endit
 }
@@ -624,7 +605,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set maxcpumin_num [expr $maxcpumin_num / $nthreads]
 }
-inc21_30_13
+inc21_30_13 "QOSMaxCpuMinutesPerJobLimit"
 if {$exit_code != 0 } {
 	endit
 }
@@ -636,7 +617,7 @@ set mod_qos_vals(MaxCpuMin) "-1"
 set mod_qos_vals(MaxWall) $maxwall_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_14
+inc21_30_14 "QOSMaxWallDurationPerJobLimit"
 if {$exit_code != 0 } {
 	endit
 }
@@ -657,7 +638,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set maxcpuspu_num [expr $maxcpuspu_num / $nthreads]
 }
-inc21_30_15
+inc21_30_15 "QOSMaxCpuPerUserLimit"
 if {$exit_code != 0 } {
 	endit
 }
@@ -669,7 +650,7 @@ set mod_qos_vals(MaxCpusPerUser) "-1"
 set mod_qos_vals(MaxNodesPerUser) $maxnodespu_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
-inc21_30_16
+inc21_30_16 "QOSMaxNodePerUserLimit|PartitionConfig"
 if {$exit_code != 0 } {
 	endit
 }
@@ -720,7 +701,7 @@ if { $one_task_pc } {
 	set grcpu_num [expr $grcpu_num / $nthreads]
 }
 
-inc21_30_2
+inc21_30_2 "QOSGrpBilling"
 if {$exit_code != 0} {
 	endit
 }
@@ -736,7 +717,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set grpcpumin_num [expr $grpcpumin_num / $nthreads]
 }
-inc21_30_9
+inc21_30_9 "QOSGrpBillingMinutes"
 if {$exit_code != 0 } {
 	endit
 }
@@ -754,7 +735,7 @@ if { $prio_multifactor != 0 } {
 	if { $one_task_pc } {
 		set grpcpurunmin_num [expr $grpcpurunmin_num / $nthreads]
 	}
-	inc21_30_10
+	inc21_30_10 "QOSGrpBillingRunMinutes"
 	if {$exit_code != 0 } {
 		endit
 	}
@@ -773,7 +754,7 @@ if { $one_task_pc } {
 	set maxcpu_num [expr $maxcpu_num / $nthreads]
 }
 
-inc21_30_5
+inc21_30_5 "QOSMaxBillingPerJob"
 if {$exit_code != 0} {
 	endit
 }
@@ -788,7 +769,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set maxcpumin_num [expr $maxcpumin_num / $nthreads]
 }
-inc21_30_13
+inc21_30_13 "QOSMaxBillingMinutesPerJob"
 if {$exit_code != 0 } {
 	endit
 }
@@ -809,7 +790,7 @@ sleep $time_spacing
 if { $one_task_pc } {
 	set maxcpuspu_num [expr $maxcpuspu_num / $nthreads]
 }
-inc21_30_15
+inc21_30_15 "QOSMaxBillingPerUser"
 if {$exit_code != 0 } {
 	endit
 }

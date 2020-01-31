@@ -1,4 +1,4 @@
-.TH sinfo "1" "Slurm Commands" "November 2016" "Slurm Commands"
+.TH sinfo "1" "Slurm Commands" "December 2019" "Slurm Commands"
 
 .SH "NAME"
 sinfo \- view information about Slurm nodes and partitions.
@@ -86,15 +86,24 @@ Don't convert units from their original type (e.g. 2048M won't be converted to
 
 .TP
 \fB\-N\fR, \fB\-\-Node\fR
-Print information in a node\-oriented format with one line per node.
+Print information in a node\-oriented format with one line per node
+and partition. That is, if a node belongs to more than one partition, then one
+line for each node\-partition pair will be shown.
+If \fB\-\-partition\fR is also specified, then only one line per node in this
+partition is shown.
 The default is to print information in a partition\-oriented format.
 This is ignored if the \fB\-\-format\fR option is specified.
 
 .TP
 \fB\-o <output_format>\fR, \fB\-\-format=<output_format>\fR
 Specify the information to be displayed using an \fBsinfo\fR
-format string. Format strings transparently used by \fBsinfo\fR
-when running with various options are
+format string.
+If the command is executed in an federated cluster environment and information
+about more than one cluster is to be displayed and the \fB\-h, \-\-noheader\fR
+option is used, then the cluster name will be displayed before the default
+output formats shown below.
+Format strings transparently used by \fBsinfo\fR when running with various
+options are
 .RS
 .TP 15
 .I "default"
@@ -354,6 +363,9 @@ Groups which may use the nodes.
 \fBgres\fR
 Generic resources (gres) associated with the nodes.
 .TP
+\fBgresused\fR
+Generic resources (gres) currently in use on the nodes.
+.TP
 \fBmaxcpuspernode\fR
 The max number of CPUs per node available to jobs in the partition.
 .TP
@@ -503,7 +515,7 @@ Possible values include (case insensitive): ALLOC, ALLOCATED,
 COMP, COMPLETING, DOWN, DRAIN (for node in DRAINING or DRAINED
 states), DRAINED, DRAINING, FAIL, FUTURE, FUTR,
 IDLE, MAINT, MIX, MIXED, NO_RESPOND, NPC, PERFCTRS,
-POWER_DOWN, POWER_UP, RESV, RESERVED, UNK, and UNKNOWN.
+POWER_DOWN, POWERING_DOWN, POWER_UP, RESV, RESERVED, UNK, and UNKNOWN.
 By default nodes in the specified state are reported whether
 they are responding or not.
 The \fB\-\-dead\fR and \fB\-\-responding\fR options may be
@@ -528,7 +540,9 @@ Print version information and exit.
 .SH "OUTPUT FIELD DESCRIPTIONS"
 .TP
 \fBAVAIL\fR
-Partition state: \fBup\fR or \fBdown\fR.
+Partition state. Can be either \fBup\fR, \fBdown\fR, \fBdrain\fR, or \fBinact\fR
+(for INACTIVE). See the partition definition's \fBState\fR parameter in the
+\fBslurm.conf\fR(5) man page for more information.
 .TP
 \fBCPUS\fR
 Count of CPUs (processors) on each node.
@@ -635,6 +649,9 @@ running at reduced frequency).
 \fB#\fR
 The node is presently being powered up or configured.
 .TP
+\fB%\fR
+The node is presently being powered down.
+.TP
 \fB$\fR
 The node is currently in a reservation with a flag value of "maintenance".
 .TP
@@ -714,6 +731,9 @@ this node as not usable for any other jobs
 \fBPOWER_DOWN\fR
 The node is currently powered down and not capable of running any jobs.
 .TP
+\fBPOWERING_DOWN\fR
+The node is currently powering down and not capable of running any jobs.
+.TP
 \fBPOWER_UP\fR
 The node is currently in the process of being powered up.
 .TP
@@ -723,6 +743,19 @@ The node is in an advanced reservation and not generally available.
 \fBUNKNOWN\fR
 The Slurm controller has just started and the node's state
 has not yet been determined.
+
+.SH "PERFORMANCE"
+.PP
+Executing \fBsinfo\fR sends a remote procedure call to \fBslurmctld\fR. If
+enough calls from \fBsinfo\fR or other Slurm client commands that send remote
+procedure calls to the \fBslurmctld\fR daemon come in at once, it can result in
+a degradation of performance of the \fBslurmctld\fR daemon, possibly resulting
+in a denial of service.
+.PP
+Do not run \fBsinfo\fR or other Slurm client commands that send remote procedure
+calls to \fBslurmctld\fR from loops in shell scripts or other programs. Ensure
+that programs limit calls to \fBsinfo\fR to the minimum necessary for the
+information you are trying to gather.
 
 .SH "ENVIRONMENT VARIABLES"
 .PP
@@ -855,7 +888,7 @@ FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.
 
 .SH "SEE ALSO"
-\fBscontrol\fR(1), \fBsmap\fR(1), \fBsqueue\fR(1),
+\fBscontrol\fR(1), \fBsqueue\fR(1),
 \fBslurm_load_ctl_conf\fR (3), \fBslurm_load_jobs\fR (3),
 \fBslurm_load_node\fR (3),
 \fBslurm_load_partitions\fR (3),

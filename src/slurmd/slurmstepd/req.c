@@ -37,6 +37,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE	/* needed for struct ucred definition */
+
 #include <signal.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -46,7 +48,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "src/common/checkpoint.h"
 #include "src/common/cpu_frequency.h"
 #include "src/common/fd.h"
 #include "src/common/eio.h"
@@ -77,20 +78,22 @@
 #include "src/slurmd/common/task_plugin.h"
 
 static void *_handle_accept(void *arg);
-static int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid);
+static int _handle_request(int fd, stepd_step_rec_t *job,
+			   uid_t uid, pid_t remote_pid);
 static int _handle_state(int fd, stepd_step_rec_t *job);
 static int _handle_info(int fd, stepd_step_rec_t *job);
 static int _handle_mem_limits(int fd, stepd_step_rec_t *job);
 static int _handle_uid(int fd, stepd_step_rec_t *job);
 static int _handle_nodeid(int fd, stepd_step_rec_t *job);
 static int _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid);
-static int _handle_checkpoint_tasks(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_pid_in_container(int fd, stepd_step_rec_t *job);
 static void *_wait_extern_pid(void *args);
 static int _handle_add_extern_pid_internal(stepd_step_rec_t *job, pid_t pid);
 static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job);
 static int _handle_x11_display(int fd, stepd_step_rec_t *job);
+static int _handle_getpw(int fd, stepd_step_rec_t *job, pid_t remote_pid);
+static int _handle_getgr(int fd, stepd_step_rec_t *job, pid_t remote_pid);
 static int _handle_daemon_pid(int fd, stepd_step_rec_t *job);
 static int _handle_notify_job(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid);
@@ -126,7 +129,7 @@ typedef struct {
 
 static pthread_mutex_t message_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t message_cond = PTHREAD_COND_INITIALIZER;
-static int message_connections;
+static int message_connections = 0;
 static int msg_target_node_id = 0;
 
 /*
@@ -149,6 +152,17 @@ _create_socket(const char *name)
 	int fd;
 	int len;
 	struct sockaddr_un addr;
+
+	/*
+	 * If socket name would be truncated, emit error and exit
+	 */
+	if (strlen(name) > sizeof(addr.sun_path) - 1) {
+		error("%s: Unix socket path '%s' is too long. (%ld > %ld)",
+		      __func__, name, (long int)(strlen(name) + 1),
+		      (long int)sizeof(addr.sun_path));
+		errno = ESLURMD_INVALID_SOCKET_NAME_LEN;
+		return -1;
+	}
 
 	/* create a unix domain stream socket */
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
@@ -232,7 +246,7 @@ _domain_socket_destroy(int fd)
 		error("Unable to close domain socket: %m");
 
 	if (unlink(socket_name) == -1)
-		error("Unable to unlink domain socket: %m");
+		error("Unable to unlink domain socket `%s`: %m", socket_name);
 }
 
 /* Wait for the job to be running (pids added) before continuing. */
@@ -316,6 +330,14 @@ static void _wait_for_connections(void)
 	slurm_mutex_unlock(&message_lock);
 }
 
+static void _decrement_message_connections(void)
+{
+	slurm_mutex_lock(&message_lock);
+	message_connections--;
+	slurm_cond_signal(&message_cond);
+	slurm_mutex_unlock(&message_lock);
+}
+
 static bool
 _msg_socket_readable(eio_obj_t *obj)
 {
@@ -384,66 +406,91 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 	return SLURM_SUCCESS;
 }
 
-static void *
-_handle_accept(void *arg)
+static void *_handle_accept(void *arg)
 {
 	/*struct request_params *param = (struct request_params *)arg;*/
 	int fd = ((struct request_params *)arg)->fd;
 	stepd_step_rec_t *job = ((struct request_params *)arg)->job;
 	int req;
-	int len;
+	int client_protocol_ver;
 	Buf buffer = NULL;
-	void *auth_cred;
 	int rc;
 	uid_t uid;
-	gid_t gid;
-	char *auth_info;
+	pid_t remote_pid = NO_VAL;
 
-	debug3("Entering _handle_accept (new thread)");
+	debug3("%s: entering (new thread)", __func__);
 	xfree(arg);
 
+	/*
+	 * Prior to 19.05, REQUEST_CONNECT was the first thing written on
+	 * the socket, followed by an auth_cred. In 19.05, this changes over
+	 * to SLURM_PROTOCOL_VERSION from the client and the (unneeded)
+	 * credential is no longer received. The REQUEST_CONNECT block should
+	 * be removed two versions after 19.05.
+	 */
 	safe_read(fd, &req, sizeof(int));
-	if (req != REQUEST_CONNECT) {
-		error("First message must be REQUEST_CONNECT");
-		goto fail;
-	}
+	if (req == REQUEST_CONNECT) {
+		int len;
+		void *auth_cred;
+		char *auth_info = slurm_get_auth_info();
 
-	safe_read(fd, &len, sizeof(int));
-	buffer = init_buf(len);
-	safe_read(fd, get_buf_data(buffer), len);
+		/* assume oldest we can talk to */
+		client_protocol_ver = SLURM_MIN_PROTOCOL_VERSION;
 
-	/* Unpack and verify the auth credential */
-	auth_cred = g_slurm_auth_unpack(buffer, SLURM_PROTOCOL_VERSION);
-	if (auth_cred == NULL) {
-		error("Unpacking authentication credential: %s",
-		      g_slurm_auth_errstr(g_slurm_auth_errno(NULL)));
-		FREE_NULL_BUFFER(buffer);
-		goto fail;
-	}
-	auth_info = slurm_get_auth_info();
-	rc = g_slurm_auth_verify(auth_cred, auth_info);
-	if (rc != SLURM_SUCCESS) {
-		error("Verifying authentication credential: %s",
-		      g_slurm_auth_errstr(g_slurm_auth_errno(auth_cred)));
+		safe_read(fd, &len, sizeof(int));
+		buffer = init_buf(len);
+		safe_read(fd, get_buf_data(buffer), len);
+
+		/* Unpack and verify the auth credential */
+		auth_cred = g_slurm_auth_unpack(buffer, SLURM_PROTOCOL_VERSION);
+		if (auth_cred == NULL) {
+			error("Unpacking authentication credential: %m");
+			FREE_NULL_BUFFER(buffer);
+			goto fail;
+		}
+		rc = g_slurm_auth_verify(auth_cred, auth_info);
+		if (rc != SLURM_SUCCESS) {
+			error("Verifying authentication credential: %m");
+			xfree(auth_info);
+			(void) g_slurm_auth_destroy(auth_cred);
+			FREE_NULL_BUFFER(buffer);
+			goto fail;
+		}
 		xfree(auth_info);
-		(void) g_slurm_auth_destroy(auth_cred);
+
+		/* Get the uid from the credential, then destroy it. */
+		uid = g_slurm_auth_get_uid(auth_cred);
+		g_slurm_auth_destroy(auth_cred);
 		FREE_NULL_BUFFER(buffer);
+	} else if (req >= SLURM_MIN_PROTOCOL_VERSION) {
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__)
+		gid_t tmp_gid;
+
+		rc = getpeereid(fd, &uid, &tmp_gid);
+#else
+		struct ucred ucred;
+		socklen_t len = sizeof(ucred);
+
+		rc = getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &ucred, &len);
+		uid = ucred.uid;
+		remote_pid = ucred.pid;
+#endif
+		if (rc)
+			goto fail;
+		client_protocol_ver = req;
+	} else {
+		error("%s: Invalid Protocol Version %d", __func__, req);
 		goto fail;
 	}
 
-	/* Get the uid & gid from the credential, then destroy it. */
-	uid = g_slurm_auth_get_uid(auth_cred, auth_info);
-	gid = g_slurm_auth_get_gid(auth_cred, auth_info);
-	xfree(auth_info);
-	debug3("  Identity: uid=%d, gid=%d", uid, gid);
-	g_slurm_auth_destroy(auth_cred);
-	FREE_NULL_BUFFER(buffer);
+	debug3("%s: Protocol Version %d from uid=%u",
+	       __func__, client_protocol_ver, uid);
 
 	rc = SLURM_PROTOCOL_VERSION;
 	safe_write(fd, &rc, sizeof(int));
 
 	while (1) {
-		rc = _handle_request(fd, job, uid, gid);
+		rc = _handle_request(fd, job, uid, remote_pid);
 		if (rc != SLURM_SUCCESS)
 			break;
 	}
@@ -451,12 +498,8 @@ _handle_accept(void *arg)
 	if (close(fd) == -1)
 		error("Closing accepted fd: %m");
 
-	slurm_mutex_lock(&message_lock);
-	message_connections--;
-	slurm_cond_signal(&message_cond);
-	slurm_mutex_unlock(&message_lock);
-
-	debug3("Leaving  _handle_accept");
+	debug3("Leaving %s", __func__);
+	_decrement_message_connections();
 	return NULL;
 
 fail:
@@ -465,39 +508,34 @@ fail:
 rwfail:
 	if (close(fd) == -1)
 		error("Closing accepted fd after error: %m");
-	debug("Leaving  _handle_accept on an error");
+	debug("Leaving %s on an error", __func__);
 	FREE_NULL_BUFFER(buffer);
+	_decrement_message_connections();
 	return NULL;
 }
 
 
-int
-_handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid)
+int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, pid_t remote_pid)
 {
 	int rc = SLURM_SUCCESS;
 	int req;
 
-	debug3("Entering _handle_request");
+	debug3("%s: entering", __func__);
 	if ((rc = read(fd, &req, sizeof(int))) != sizeof(int)) {
 		if (rc == 0) { /* EOF, normal */
 			return -1;
 		} else {
-			debug3("Leaving _handle_request on read error: %m");
+			debug3("%s: leaving on read error: %m", __func__);
 			return SLURM_ERROR;
 		}
 	}
-	debug3("Got request %d", req);
+
 	switch (req) {
-	case REQUEST_SIGNAL_PROCESS_GROUP:	/* Defunct */
 	case REQUEST_SIGNAL_TASK_LOCAL:		/* Defunct */
 	case REQUEST_SIGNAL_TASK_GLOBAL:	/* Defunct */
 	case REQUEST_SIGNAL_CONTAINER:
 		debug("Handling REQUEST_SIGNAL_CONTAINER");
 		rc = _handle_signal_container(fd, job, uid);
-		break;
-	case REQUEST_CHECKPOINT_TASKS:
-		debug("Handling REQUEST_CHECKPOINT_TASKS");
-		rc = _handle_checkpoint_tasks(fd, job, uid);
 		break;
 	case REQUEST_STATE:
 		debug("Handling REQUEST_STATE");
@@ -575,14 +613,21 @@ _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid)
 		debug("Handling REQUEST_X11_DISPLAY");
 		rc = _handle_x11_display(fd, job);
 		break;
+	case REQUEST_GETPW:
+		debug("Handling REQUEST_GETPW");
+		rc = _handle_getpw(fd, job, remote_pid);
+		break;
+	case REQUEST_GETGR:
+		debug("Handling REQUEST_GETGR");
+		rc = _handle_getgr(fd, job, remote_pid);
+		break;
 	default:
 		error("Unrecognized request: %d", req);
 		rc = SLURM_ERROR;
 		break;
 	}
 
-	debug3("Leaving  _handle_request: %s",
-	       rc ? "SLURM_ERROR" : "SLURM_SUCCESS");
+	debug3("%s: leaving with rc: %d", __func__, rc);
 	return rc;
 }
 
@@ -720,8 +765,10 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		}
 		slurm_make_time_str(&now, time_str, sizeof(time_str));
 
-		/* Not really errors,
-		 * but we want messages displayed by default */
+		/*
+		 * Not really errors,
+		 * but we want messages displayed by default
+		 */
 		if (sig == SIG_TIME_LIMIT) {
 			error("*** %s ON %s CANCELLED AT %s DUE TO TIME LIMIT ***",
 			      entity, job->node_name, time_str);
@@ -788,15 +835,18 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		sig = SIGKILL;
 	}
 
-	if (flag & KILL_JOB_BATCH
-	    && job->stepid == SLURM_BATCH_SCRIPT) {
-		/* We should only signal the batch script
-		 * and nothing else, the job pgid is the
-		 * equal to the pid of the batch script.
-		 */
-		if (kill(job->pgid, sig) < 0) {
-			error("%s: failed signal %d container pid"
-			      "%u job %u.%u %m",
+	/*
+	 * Specific handle for the batch container and some related flags.
+	 */
+	if (job->stepid == SLURM_BATCH_SCRIPT &&
+	    ((flag & KILL_JOB_BATCH) || (flag & KILL_FULL_JOB))) {
+
+		if (flag & KILL_FULL_JOB)
+			rc = killpg(job->pgid, sig);
+		else
+			rc = kill(job->pgid, sig);
+		if (rc < 0) {
+			error("%s: failed signal %d pid %u job %u.%u %m",
 			      __func__, sig, job->pgid,
 			      job->jobid, job->stepid);
 			rc = SLURM_ERROR;
@@ -804,11 +854,12 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 			slurm_mutex_unlock(&suspend_mutex);
 			goto done;
 		}
-		rc = SLURM_SUCCESS;
-		errnum = 0;
-		verbose("%s: sent signal %d to container pid %u job %u.%u",
+
+		verbose("%s: sent signal %d to pid %u job %u.%u",
 			__func__, sig, job->pgid,
 			job->jobid, job->stepid);
+		rc = SLURM_SUCCESS;
+		errnum = 0;
 		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	}
@@ -833,91 +884,6 @@ done:
 	safe_write(fd, &errnum, sizeof(int));
 	return SLURM_SUCCESS;
 rwfail:
-	return SLURM_ERROR;
-}
-
-static int
-_handle_checkpoint_tasks(int fd, stepd_step_rec_t *job, uid_t uid)
-{
-	int rc = SLURM_SUCCESS;
-	time_t timestamp;
-	int len;
-	char *image_dir = NULL;
-
-	debug3("_handle_checkpoint_tasks for job %u.%u",
-	       job->jobid, job->stepid);
-
-	safe_read(fd, &timestamp, sizeof(time_t));
-	safe_read(fd, &len, sizeof(int));
-	if (len) {
-		image_dir = xmalloc (len);
-		safe_read(fd, image_dir, len); /* '\0' terminated */
-	}
-
-	debug3("  uid = %d", uid);
-	if (uid != job->uid && !_slurm_authorized_user(uid)) {
-		debug("checkpoint req from uid %ld for job %u.%u "
-		      "owned by uid %ld",
-		      (long)uid, job->jobid, job->stepid, (long)job->uid);
-		rc = EPERM;
-		goto done;
-	}
-
-	if (job->ckpt_timestamp &&
-	    timestamp == job->ckpt_timestamp) {
-		debug("duplicate checkpoint req for job %u.%u, "
-		      "timestamp %ld. discarded.",
-		      job->jobid, job->stepid, (long)timestamp);
-		rc = ESLURM_ALREADY_DONE; /* EINPROGRESS? */
-		goto done;
-	}
-
-	/*
-	 * Sanity checks
-	 */
-	if (job->pgid <= (pid_t)1) {
-		debug ("step %u.%u invalid [jmgr_pid:%d pgid:%u]",
-		       job->jobid, job->stepid, job->jmgr_pid, job->pgid);
-		rc = ESLURMD_JOB_NOTRUNNING;
-		goto done;
-	}
-
-	slurm_mutex_lock(&suspend_mutex);
-	if (suspended) {
-		rc = ESLURMD_STEP_SUSPENDED;
-		slurm_mutex_unlock(&suspend_mutex);
-		goto done;
-	}
-
-	/* set timestamp in case another request comes */
-	job->ckpt_timestamp = timestamp;
-
-	/* TODO: do we need job->ckpt_dir any more,
-	 *	except for checkpoint/xlch? */
-/*	if (! image_dir) { */
-/*		image_dir = xstrdup(job->ckpt_dir); */
-/*	} */
-
-	/* call the plugin to send the request */
-	if (checkpoint_signal_tasks(job, image_dir) != SLURM_SUCCESS) {
-		rc = -1;
-		verbose("Error sending checkpoint request to %u.%u: %s",
-			job->jobid, job->stepid, slurm_strerror(rc));
-	} else {
-		verbose("Sent checkpoint request to %u.%u",
-			job->jobid, job->stepid);
-	}
-
-	slurm_mutex_unlock(&suspend_mutex);
-
-done:
-	/* Send the return code */
-	safe_write(fd, &rc, sizeof(int));
-	xfree(image_dir);
-	return SLURM_SUCCESS;
-
-rwfail:
-	xfree(image_dir);
 	return SLURM_ERROR;
 }
 
@@ -1324,6 +1290,165 @@ rwfail:
 	return SLURM_ERROR;
 }
 
+static int _handle_getpw(int fd, stepd_step_rec_t *job, pid_t remote_pid)
+{
+	uid_t uid;
+	int mode = 0;
+	int len = 0;
+	char *name = NULL;
+	bool pid_match, user_match = false;
+	int found = 0;
+
+	safe_read(fd, &mode, sizeof(int));
+	safe_read(fd, &uid, sizeof(uid_t));
+	safe_read(fd, &len, sizeof(int));
+	if (len) {
+		name = xmalloc(len + 1); /* add room for NUL */
+		safe_read(fd, name, len);
+	}
+
+	pid_match = proctrack_g_has_pid(job->cont_id, remote_pid);
+
+	if (uid == job->uid)
+		user_match = true;
+	else if (!xstrcmp(name, job->user_name))
+		user_match = true;
+
+	if (mode == GETPW_MATCH_USER_AND_PID)
+		found = (user_match && pid_match);
+	else if (mode == GETPW_MATCH_PID)
+		found = pid_match;
+	else if (mode == GETPW_MATCH_ALWAYS)
+		found = 1;
+
+	if (!job->user_name || !job->pw_gecos ||
+	    !job->pw_dir || !job->pw_shell) {
+		error("%s: incomplete data, ignoring request", __func__);
+		found = 0;
+	}
+
+	safe_write(fd, &found, sizeof(int));
+
+	if (!found)
+		return SLURM_SUCCESS;
+
+	len = strlen(job->user_name);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->user_name, len);
+
+	len = 1;
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, "x", len);
+
+	safe_write(fd, &job->uid, sizeof(uid_t));
+	safe_write(fd, &job->gid, sizeof(gid_t));
+
+	len = strlen(job->pw_gecos);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->pw_gecos, len);
+
+	len = strlen(job->pw_dir);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->pw_dir, len);
+
+	len = strlen(job->pw_shell);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->pw_shell, len);
+
+	debug2("Leaving %s", __func__);
+	return SLURM_SUCCESS;
+
+rwfail:
+	xfree(name);
+	return SLURM_ERROR;
+}
+
+static int _send_one_struct_group(int fd, stepd_step_rec_t *job, int offset)
+{
+	int len;
+
+	if (!job->gr_names[offset])
+		goto rwfail;
+	len = strlen(job->gr_names[offset]);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->gr_names[offset], len);
+
+	len = 1;
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, "x", len);
+
+	safe_write(fd, &job->gids[offset], sizeof(gid_t));
+
+	len = strlen(job->user_name);
+	safe_write(fd, &len, sizeof(int));
+	safe_write(fd, job->user_name, len);
+
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_ERROR;
+}
+
+static int _handle_getgr(int fd, stepd_step_rec_t *job, pid_t remote_pid)
+{
+	gid_t gid;
+	int mode = 0;
+	int len = 0;
+	char *name = NULL;
+	int offset = 0;
+	bool pid_match;
+	int found = 0;
+
+	safe_read(fd, &mode, sizeof(int));
+	safe_read(fd, &gid, sizeof(gid_t));
+	safe_read(fd, &len, sizeof(int));
+	if (len) {
+		name = xmalloc(len + 1); /* add room for NUL */
+		safe_read(fd, name, len);
+	}
+
+	pid_match = proctrack_g_has_pid(job->cont_id, remote_pid);
+
+	if (!job->ngids || !job->gids || !job->gr_names) {
+		error("%s: incomplete data, ignoring request", __func__);
+	} else if (mode == GETGR_MATCH_GROUP_AND_PID ) {
+		while (offset < job->ngids) {
+			if (gid == job->gids[offset])
+				break;
+			if (!xstrcmp(name, job->gr_names[offset]))
+				break;
+			offset++;
+		}
+		if (offset < job->ngids)
+			found = 1;
+	} else if (mode == GETGR_MATCH_PID) {
+		found = pid_match ? job->ngids : 0;
+	} else if (mode == GETGR_MATCH_ALWAYS) {
+		found = job->ngids;
+	}
+
+	safe_write(fd, &found, sizeof(int));
+
+	if (!found)
+		return SLURM_SUCCESS;
+
+	if (mode == GETGR_MATCH_GROUP_AND_PID) {
+		if (_send_one_struct_group(fd, job, offset))
+			goto rwfail;
+	} else {
+		for (int i = 0; i < job->ngids; i++) {
+			if (_send_one_struct_group(fd, job, i))
+				goto rwfail;
+		}
+	}
+
+	debug2("Leaving %s", __func__);
+	return SLURM_SUCCESS;
+
+rwfail:
+	xfree(name);
+	return SLURM_ERROR;
+}
+
 static int
 _handle_daemon_pid(int fd, stepd_step_rec_t *job)
 {
@@ -1337,7 +1462,6 @@ rwfail:
 static int
 _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid)
 {
-	static int launch_poe = -1;
 	int rc = SLURM_SUCCESS;
 	int errnum = 0;
 	uint16_t job_core_spec = NO_VAL16;
@@ -1361,14 +1485,6 @@ _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid)
 	}
 
 	acct_gather_suspend_poll();
-	if (launch_poe == -1) {
-		char *launch_type = slurm_get_launch_type();
-		if (!xstrcmp(launch_type, "launch/poe"))
-			launch_poe = 1;
-		else
-			launch_poe = 0;
-		xfree(launch_type);
-	}
 
 	/*
 	 * Signal the container
@@ -1389,18 +1505,14 @@ _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid)
 		 *
 		 * In some cases, 1 second has proven insufficient. Longer
 		 * delays may help ensure that all MPI tasks have been stopped
-		 * (that depends upon the MPI implementaiton used), but will
+		 * (that depends upon the MPI implementation used), but will
 		 * also permit longer time periods when more than one job can
 		 * be running on each resource (not good). */
-		if (launch_poe == 0) {
-			/* IBM MPI seens to periodically hang upon receipt
-			 * of SIGTSTP. */
-			if (proctrack_g_signal(job->cont_id, SIGTSTP) < 0) {
-				verbose("Error suspending %u.%u (SIGTSTP): %m",
-					job->jobid, job->stepid);
-			} else
-				sleep(2);
-		}
+		if (proctrack_g_signal(job->cont_id, SIGTSTP) < 0) {
+			verbose("Error suspending %u.%u (SIGTSTP): %m",
+				job->jobid, job->stepid);
+		} else
+			sleep(2);
 
 		if (proctrack_g_signal(job->cont_id, SIGSTOP) < 0) {
 			verbose("Error suspending %u.%u (SIGSTOP): %m",
@@ -1479,13 +1591,12 @@ _handle_resume(int fd, stepd_step_rec_t *job, uid_t uid)
 		error("switch_g_job_step_post_resume: %m");
 
 	/*
-	 * Reset CPU and TRES frequencies if changed
+	 * Reset CPU frequencies if changed
 	 */
 	if ((job->cpu_freq_min != NO_VAL) || (job->cpu_freq_max != NO_VAL) ||
 	    (job->cpu_freq_gov != NO_VAL))
 		cpu_freq_set(job);
-	if (job->tres_freq)
-		tres_freq_set(job);
+	// TODO: Reset TRES frequencies?
 
 	slurm_mutex_unlock(&suspend_mutex);
 
@@ -1566,7 +1677,7 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 	 * ("srun --no-alloc ...") and no tree information can be built
 	 *  without the hostlist from the credential.
 	 */
-	if (step_complete.rank >= 0) {
+	if (step_complete.bits && (step_complete.rank >= 0)) {
 #if 0
 		char bits_string[128];
 		debug2("Setting range %d (bit %d) through %d(bit %d)",
@@ -1608,6 +1719,7 @@ rwfail:	if (lock_set) {
 		slurm_cond_signal(&step_complete.cond);
 		slurm_mutex_unlock(&step_complete.lock);
 	}
+	xfree(buf);	/* In case of failure before moving to "buffer" */
 	FREE_NULL_BUFFER(buffer);
 	return SLURM_ERROR;
 }

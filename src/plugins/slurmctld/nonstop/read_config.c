@@ -148,7 +148,7 @@ static spare_node_resv_t *_xlate_hot_spares(char *spare_str, int *spare_cnt)
 	char *part, *sep;
 	int i, node_cnt = 0;
 	spare_node_resv_t *spare_ptr = NULL;
-	struct part_record *part_ptr = NULL;
+	part_record_t *part_ptr = NULL;
 	/* Locks: Read partition */
 	slurmctld_lock_t part_read_lock =
 	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
@@ -335,7 +335,7 @@ extern void create_hot_spare_resv(void)
 	int i;
 	char resv_name[1024];
 	ListIterator part_iterator;
-	struct part_record *part_ptr;
+	part_record_t *part_ptr;
 	/* Locks: Read partition */
 	slurmctld_lock_t part_read_lock =
 	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
@@ -346,13 +346,13 @@ extern void create_hot_spare_resv(void)
 
 	lock_slurmctld(part_read_lock);
 	part_iterator = list_iterator_create(part_list);
-	while ((part_ptr = (struct part_record *) list_next(part_iterator))) {
+	while ((part_ptr = list_next(part_iterator))) {
 		snprintf(resv_name, sizeof(resv_name), "HOT_SPARE_%s",
 			 part_ptr->name);
 		for (i = 0; i < hot_spare_info_cnt; i++) {
 			if (hot_spare_info[i].part_ptr != part_ptr)
 				continue;
-			memset(&resv_msg, 0, sizeof(resv_desc_msg_t));
+			memset(&resv_msg, 0, sizeof(resv_msg));
 			node_cnt[0] = hot_spare_info[i].node_cnt;
 			node_cnt[1] = 0;
 			resv_msg.duration	= 356 * 24 * 60 * 60;
@@ -379,6 +379,7 @@ extern void create_hot_spare_resv(void)
 		}
 		if ((i >= hot_spare_info_cnt) && find_resv_name(resv_name)) {
 			info("Deleting vestigial reservation %s", resv_name);
+			memset(&delete_resv_msg, 0, sizeof(delete_resv_msg));
 			delete_resv_msg.name = resv_name;
 			(void) delete_resv(&delete_resv_msg);
 		}

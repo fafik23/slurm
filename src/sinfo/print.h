@@ -64,6 +64,9 @@ typedef struct sinfo_format {
 int format_add_function(List list, int width, bool right_justify,
 		char * suffix,
 		int (*function) (sinfo_data_t  *, int, bool, char *));
+int format_prepend_function(List list, int width, bool right_justify,
+		char * suffix,
+		int (*function) (sinfo_data_t  *, int, bool, char *));
 
 void print_date(void);
 int  print_sinfo_entry(sinfo_data_t *sinfo_data);
@@ -94,6 +97,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_groups)
 #define format_add_gres(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_gres)
+#define format_add_gres_used(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_gres_used)
 #define format_add_memory(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_memory)
 #define format_add_node_address(list,wid,right,suffix) \
@@ -162,6 +167,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_alloc_mem)
 #define format_add_cluster_name(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_cluster_name)
+#define format_prepend_cluster_name(list,wid,right,suffix) \
+	format_prepend_function(list,wid,right,suffix,_print_cluster_name)
 
 /*****************************************************************************
  * Print Field Functions
@@ -190,6 +197,8 @@ int _print_features_act(sinfo_data_t * sinfo_data, int width,
 int _print_groups(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_gres(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
+int _print_gres_used(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_memory(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);

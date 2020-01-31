@@ -99,8 +99,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			uint32_t id = 0;
 
 			if (!assoc_cond->id_list)
-				assoc_cond->id_list =
-					list_create(slurm_destroy_char);
+				assoc_cond->id_list = list_create(xfree_ptr);
 			slurm_addto_char_list(assoc_cond->id_list,
 					      argv[i]+end);
 			/* check to make sure user gave ints here */
@@ -204,8 +203,7 @@ extern bool sacctmgr_check_default_qos(uint32_t qos_id,
 			}
 
 			if (!no_access_list)
-				no_access_list =
-					list_create(slurm_destroy_char);
+				no_access_list = list_create(xfree_ptr);
 			list_append(no_access_list, object);
 		}
 	}
@@ -242,7 +240,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 	if (!xstrncasecmp(type, "Accounts", MAX(command_len, 2))
 		   || !xstrncasecmp(type, "Acct", MAX(command_len, 4))) {
 		if (!assoc_cond->acct_list)
-			assoc_cond->acct_list = list_create(slurm_destroy_char);
+			assoc_cond->acct_list = list_create(xfree_ptr);
 		slurm_addto_char_list(assoc_cond->acct_list, value);
 
 		if (list_count(assoc_cond->acct_list))
@@ -254,7 +252,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 		uint32_t id = 0;
 
 		if (!assoc_cond->id_list)
-			assoc_cond->id_list =list_create(slurm_destroy_char);
+			assoc_cond->id_list = list_create(xfree_ptr);
 		slurm_addto_char_list(assoc_cond->id_list, value);
 		/* check to make sure user gave ints here */
 		itr = list_iterator_create(assoc_cond->id_list);
@@ -268,14 +266,12 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 		set = 1;
 	} else if (!xstrncasecmp(type, "Clusters", MAX(command_len, 1))) {
 		if (!assoc_cond->cluster_list)
-			assoc_cond->cluster_list =
-				list_create(slurm_destroy_char);
+			assoc_cond->cluster_list = list_create(xfree_ptr);
 		if (slurm_addto_char_list(assoc_cond->cluster_list, value))
 			set = 1;
 	} else if (!xstrncasecmp(type, "DefaultQOS", MAX(command_len, 8))) {
 		if (!assoc_cond->def_qos_id_list)
-			assoc_cond->def_qos_id_list =
-				list_create(slurm_destroy_char);
+			assoc_cond->def_qos_id_list = list_create(xfree_ptr);
 
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
@@ -288,19 +284,17 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 			exit_code = 1;
 	} else if (!xstrncasecmp(type, "Partitions", MAX(command_len, 3))) {
 		if (!assoc_cond->partition_list)
-			assoc_cond->partition_list =
-				list_create(slurm_destroy_char);
+			assoc_cond->partition_list = list_create(xfree_ptr);
 		if (slurm_addto_char_list(assoc_cond->partition_list, value))
 			set = 1;
 	} else if (!xstrncasecmp(type, "Parents", MAX(command_len, 4))) {
 		if (!assoc_cond->parent_acct_list)
-			assoc_cond->parent_acct_list =
-				list_create(slurm_destroy_char);
+			assoc_cond->parent_acct_list = list_create(xfree_ptr);
 		if (slurm_addto_char_list(assoc_cond->parent_acct_list, value))
 			set = 1;
 	} else if (!xstrncasecmp(type, "QosLevel", MAX(command_len, 1))) {
 		if (!assoc_cond->qos_list)
-			assoc_cond->qos_list = list_create(slurm_destroy_char);
+			assoc_cond->qos_list = list_create(xfree_ptr);
 
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
@@ -311,7 +305,7 @@ extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 			set = 1;
 	} else if (!xstrncasecmp(type, "Users", MAX(command_len, 1))) {
 		if (!assoc_cond->user_list)
-			assoc_cond->user_list = list_create(slurm_destroy_char);
+			assoc_cond->user_list = list_create(xfree_ptr);
 		if (slurm_addto_char_list_with_case(assoc_cond->user_list,
 						    value, user_case_norm))
 			set = 1;
@@ -593,12 +587,16 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				" Bad MaxWall time format: %s\n",
 				type);
 		}
-	} else if (!xstrncasecmp(type, "Parent", MAX(command_len, 1))) {
+	} else if (!xstrncasecmp(type, "Parent", MAX(command_len, 2))) {
 		assoc->parent_acct = strip_quotes(value, NULL, 1);
 		set = 1;
+	} else if (!xstrncasecmp(type, "Priority", MAX(command_len, 2))) {
+		if (get_uint(value, &assoc->priority, "Priority") ==
+		    SLURM_SUCCESS)
+			set = 1;
 	} else if (!xstrncasecmp(type, "QosLevel", MAX(command_len, 1))) {
 		if (!assoc->qos_list)
-			assoc->qos_list = list_create(slurm_destroy_char);
+			assoc->qos_list = list_create(xfree_ptr);
 
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
@@ -785,6 +783,9 @@ extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 	case PRINT_PART:
 		field->print_routine(field, assoc->partition, last);
 		break;
+	case PRINT_PRIO:
+		field->print_routine(field, assoc->priority, last);
+		break;
 	case PRINT_QOS:
 		if (!g_qos_list)
 			g_qos_list = slurmdb_qos_get(
@@ -824,7 +825,7 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 
 	print_field_t *field = NULL;
 
-	List format_list = list_create(slurm_destroy_char);
+	List format_list = list_create(xfree_ptr);
 	List print_fields_list; /* types are of print_field_t */
 
 	for (i=0; i<argc; i++) {
@@ -843,7 +844,7 @@ extern int sacctmgr_list_assoc(int argc, char **argv)
 		slurm_addto_char_list(format_list, "Cluster,Account,User,Part");
 		if (!assoc_cond->without_parent_limits)
 			slurm_addto_char_list(format_list,
-					      "Share,GrpJ,GrpTRES,"
+					      "Share,Priority,GrpJ,GrpTRES,"
 					      "GrpS,GrpWall,GrpTRESMins,MaxJ,"
 					      "MaxTRES,MaxTRESPerN,MaxS,MaxW,"
 					      "MaxTRESMins,QOS,DefaultQOS,"

@@ -100,6 +100,8 @@ parse_command_line( int argc, char* *argv )
 {
 	int opt_char;
 	int option_index;
+	bool override_format_env = false;
+
 	static struct option long_options[] = {
 		{"noheader",   no_argument,       0, 'h'},
 		{"jobs",       optional_argument, 0, 'j'},
@@ -146,6 +148,7 @@ parse_command_line( int argc, char* *argv )
 			break;
 		case (int) 'l':
 			params.long_list = true;
+			override_format_env = true;
 			break;
 		case (int) 'M':
 			FREE_NULL_LIST(params.clusters);
@@ -162,6 +165,7 @@ parse_command_line( int argc, char* *argv )
 		case (int) 'o':
 			xfree(params.format);
 			params.format = xstrdup(optarg);
+			override_format_env = true;
 			break;
 		case (int) 'S':
 			xfree(params.sort);
@@ -201,6 +205,16 @@ parse_command_line( int argc, char* *argv )
 			_usage();
 			exit(0);
 		}
+	}
+
+	if (params.long_list && params.format)
+		fatal("Options -o(--format) and -l(--long) are mutually exclusive. Please remove one and retry.");
+
+	/* This needs to be evaluated here instead of _opt_env*/
+	if (!override_format_env) {
+		char *env_val;
+		if ((env_val = getenv("SPRIO_FORMAT")))
+			params.format = xstrdup(env_val);
 	}
 
 	if (optind < argc) {
@@ -269,6 +283,16 @@ extern int parse_format( char* format )
 							     field_size,
 							     right_justify,
 							     suffix );
+		else if (field[0] == 'b')
+			job_format_add_assoc_priority_normalized(
+							params.format_list,
+							field_size,
+							right_justify, suffix);
+		else if (field[0] == 'B')
+			job_format_add_assoc_priority_weighted(
+							params.format_list,
+							field_size,
+							right_justify, suffix);
 		else if (field[0] == 'c')
 			job_format_add_cluster_name(params.format_list,
 						    field_size, right_justify,
@@ -317,6 +341,10 @@ extern int parse_format( char* format )
 			job_format_add_partition(params.format_list,
 						 field_size, right_justify,
 						 suffix);
+		else if (field[0] == 'S')
+			job_format_add_site_priority(params.format_list,
+						     field_size,
+						     right_justify, suffix);
 		else if (field[0] == 'q')
 			job_format_add_qos_priority_normalized(params.format_list,
 							       field_size,

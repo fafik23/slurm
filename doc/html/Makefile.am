@@ -13,16 +13,17 @@ generated_html = \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
-	checkpoint_blcr.html \
-	checkpoint_plugins.html \
+	classic_fair_share.html \
+	cli_filter_plugins.html \
 	cons_res.html \
 	cons_res_share.html \
+	containers.html \
 	contributor.html \
 	core_spec.html \
 	core_spec_plugins.html \
 	cpu_management.html \
 	cray.html \
-	crypto_plugins.html \
+	cred_plugins.html \
 	disclaimer.html \
 	dist_plane.html \
 	documentation.html \
@@ -39,7 +40,6 @@ generated_html = \
 	hdf5_profile_user_guide.html \
 	heterogeneous_jobs.html \
 	high_throughput.html \
-	ibm-pe.html \
 	intel_knl.html \
 	jobacct_gatherplugins.html \
 	job_array.html \
@@ -61,6 +61,7 @@ generated_html = \
 	mpiplugins.html \
 	multi_cluster.html \
 	news.html \
+	nss_slurm.html \
 	node_features_plugins.html \
 	overview.html \
 	pam_slurm_adopt.html \
@@ -86,15 +87,14 @@ generated_html = \
 	resource_limits.html \
 	rosetta.html \
 	route_plugin.html \
-	rpc.html \
 	sched_config.html \
 	schedplugins.html \
 	select_design.html \
 	selectplugins.html \
+	site_factor.html \
 	slurm.html \
 	slurmctld_plugstack.html \
 	slurm_ug_agenda.html \
-	slurm_ug_cfp.html \
 	switchplugins.html \
 	taskplugins.html \
 	team.html \

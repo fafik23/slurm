@@ -413,7 +413,7 @@ static int _attach_to_tasks(uint32_t jobid,
 		hosts = layout->front_end;
 	else
 		hosts = layout->node_list;
-	nodes_resp = slurm_send_recv_msgs(hosts, &msg, timeout, false);
+	nodes_resp = slurm_send_recv_msgs(hosts, &msg, timeout);
 	if (nodes_resp == NULL) {
 		error("slurm_send_recv_msgs failed: %m");
 		return SLURM_ERROR;
@@ -571,12 +571,10 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	static uid_t slurm_uid;
 	static bool slurm_uid_set = false;
 	message_thread_state_t *mts = (message_thread_state_t *)arg;
-	char *auth_info = slurm_get_auth_info();
 	uid_t req_uid;
 	uid_t uid = getuid();
 
-	req_uid = g_slurm_auth_get_uid(msg->auth_cred, auth_info);
-	xfree(auth_info);
+	req_uid = g_slurm_auth_get_uid(msg->auth_cred);
 
 	if (!slurm_uid_set) {
 		slurm_uid = slurm_get_slurm_user_id();

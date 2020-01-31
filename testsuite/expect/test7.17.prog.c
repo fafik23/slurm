@@ -54,7 +54,11 @@
 #include "src/common/pack.h"
 #include "src/common/xstring.h"
 
-/* main - slurmctld main function, start various threads and process RPCs */
+/*
+ * main - slurmctld main function, start various threads and process RPCs
+ * test7.17.prog <TRES_PER_NODE> <CONFIG_DIR_HEAD> <CONFIG_SUB_DIR> <CPU_COUNT>
+ * 
+ */
 int main(int argc, char *argv[])
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY;
@@ -80,7 +84,7 @@ int main(int argc, char *argv[])
 	strcpy(config_dir, argv[2]);
 	strcpy(config_dir,strcat(config_dir, "/test7.17_configs"));
 	strcpy(test, strcat(config_dir, argv[3]));
-	strcpy(slurm_conf,strcat(test, "/slurm.conf"));
+	strcpy(slurm_conf, strcat(test, "/slurm.conf"));
 
 	/* Enable detailed logging for now */
 	opts.stderr_level = LOG_LEVEL_DEBUG;
@@ -96,11 +100,23 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	setenv("SLURM_CONFIG_DIR",config_dir, 1);
+	setenv("SLURM_CONFIG_DIR", config_dir, 1);
+
+	/*
+	 * Logic normally executed by slurmctld daemon
+	 */
+	orig_config = "gpu:8";
+	rc = gres_plugin_init_node_config(node_name, orig_config,
+					  &node_gres_list);
+	if (rc != SLURM_SUCCESS) {
+		slurm_perror("failure: gres_plugin_init_node_config");
+		exit(1);
+	}
 
 	cpu_count = strtol(argv[4], NULL, 10);
 	node_name = "test_node";
-	rc = gres_plugin_node_config_load(cpu_count, node_name, NULL);
+	rc = gres_plugin_node_config_load(cpu_count, node_name, node_gres_list, NULL,
+					  NULL);
 	if (rc != SLURM_SUCCESS) {
 		slurm_perror("failure: gres_plugin_node_config_load");
 		exit(1);
@@ -113,16 +129,6 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/*
-	 * Logic normally executed by slurmctld daemon
-	 */
-	orig_config = "gpu:8";
-	rc = gres_plugin_init_node_config(node_name, orig_config,
-					  &node_gres_list);
-	if (rc != SLURM_SUCCESS) {
-		slurm_perror("failure: gres_plugin_init_node_config");
-		exit(1);
-	}
 
 	set_buf_offset(buffer, 0);
 	rc = gres_plugin_node_config_unpack(buffer, node_name);
@@ -146,6 +152,7 @@ int main(int argc, char *argv[])
 		tres_per_node = xstrdup(argv[1]);
 
 	rc = gres_plugin_job_state_validate(NULL,	/* cpus_per_tres */
+					    NULL,	/* tres_freq */
 					    NULL,	/* tres_per_job */
 					    tres_per_node,
 					    NULL,	/* tres_per_socket */

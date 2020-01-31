@@ -1149,7 +1149,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 			r_usage = xmalloc(sizeof(local_resv_usage_t));
 			r_usage->id = slurm_atoul(row[RESV_REQ_ID]);
 
-			r_usage->local_assocs = list_create(slurm_destroy_char);
+			r_usage->local_assocs = list_create(xfree_ptr);
 			slurm_addto_char_list(r_usage->local_assocs,
 					      row[RESV_REQ_ASSOCS]);
 			r_usage->loc_tres =
@@ -1356,7 +1356,7 @@ extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
 
 			/*
 			 * Now figure out there was a disconnected
-			 * slurmctld durning this job.
+			 * slurmctld during this job.
 			 */
 			list_iterator_reset(c_itr);
 			while ((loc_c_usage = list_next(c_itr))) {
@@ -1729,7 +1729,7 @@ extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
 	char *unit_name;
 
 	while (curr_start < end) {
-		if (!slurm_localtime_r(&curr_start, &start_tm)) {
+		if (!localtime_r(&curr_start, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      curr_start);
 			return SLURM_ERROR;

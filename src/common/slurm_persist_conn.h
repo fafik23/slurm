@@ -44,6 +44,7 @@
 #define PERSIST_FLAG_RECONNECT      0x0002
 #define PERSIST_FLAG_ALREADY_INITED 0x0004
 #define PERSIST_FLAG_P_USER_CASE    0x0008
+#define PERSIST_FLAG_SUPPRESS_ERR   0x0010
 
 typedef enum {
 	PERSIST_TYPE_NONE = 0,
@@ -54,10 +55,10 @@ typedef enum {
 } persist_conn_type_t;
 
 typedef struct {
-	uint16_t msg_type;	/* see slurmdbd_msg_type_t or
-				 * slurm_msg_type_t */
-	void * data;		/* pointer to a message type below */
+	void *conn;		/* slurm_persist_conn_t */
+	void *data;		/* pointer to a message type below */
 	uint32_t data_size;     /* size of data */
+	uint16_t msg_type;	/* slurmdbd_msg_type_t / slurm_msg_type_t */
 } persist_msg_t;
 
 typedef struct {

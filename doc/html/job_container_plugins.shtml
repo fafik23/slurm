@@ -34,7 +34,7 @@ There is no requirement with respect to its format.</p>
 If specified, identifies the version of Slurm used to build this plugin and
 any attempt to load the plugin from a different version of Slurm will result
 in an error.
-If not specified, then the plugin may be loadeed by Slurm commands and
+If not specified, then the plugin may be loaded by Slurm commands and
 daemons from any version, however this may result in difficult to diagnose
 failures due to changes in the arguments to plugin functions or changes
 in other Slurm functions used by the plugin.</p>
@@ -42,7 +42,6 @@ in other Slurm functions used by the plugin.</p>
 <p>The programmer is urged to study
 <span class="commandline">src/plugins/proctrack/job_container/job_container_cncu.c</span>
 for an example implementation of a Slurm proctrack plugin.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <h2>Data Objects</h2>
 <p> The implementation must support a container ID of type uint64_t.
@@ -59,7 +58,6 @@ The implementation should endeavor to provide useful and pertinent information
 by whatever means is practical.
 Successful API calls are not required to reset errno to a known value.</p>
 
-<p class="footer"><a href="#top">top</a></p>
 
 <h2>API Functions</h2>
 <p>The following functions must appear. Functions which are not implemented should
@@ -109,21 +107,6 @@ Process tracking container value as set by the proctrack plugin.</p>
 the plugin should return SLURM_ERROR and set the errno to an appropriate value
 to indicate the reason for failure.</p>
 
-<p class="commandline">int container_p_add_pid (uint32_t job_id, pid_t pid, uid_t uid);</p>
-<p style="margin-left:.2in"><b>Description</b>: Add a specific process ID
-to a given job's container. The process is first placed into a process tracking
-container (PAGG).</p>
-<p style="margin-left:.2in"><b>Arguments</b>:<br>
-<span class="commandline"> job_id</span>&nbsp; &nbsp;&nbsp;(input)
-Job ID.<br>
-<span class="commandline"> pid</span>&nbsp; &nbsp;&nbsp;(input)
-Process ID.<br>
-<span class="commandline"> uid</span>&nbsp; &nbsp;&nbsp;(input)
-Owning user ID.</p>
-<p style="margin-left:.2in"><b>Returns</b>: SLURM_SUCCESS if successful. On failure,
-the plugin should return SLURM_ERROR and set the errno to an appropriate value
-to indicate the reason for failure.</p>
-
 <p class="commandline">int container_p_delete (uint32_t job_id);</p>
 <p style="margin-left:.2in"><b>Description</b>: Destroy or otherwise
 invalidate a job container.
@@ -136,12 +119,24 @@ Job ID.</p>
 the plugin should return SLURM_ERROR and set the errno to an appropriate value
 to indicate the reason for failure.</p>
 
+<p class="commandline">int container_p_join(uint32_t job_id, uid_t uid);</p>
+<p style="margin-left:.2in"><b>Description</b>: Add this process
+to a given job's container. The process is first placed into a process tracking
+container (PAGG).</p>
+<p style="margin-left:.2in"><b>Arguments</b>:<br>
+<span class="commandline"> job_id</span>&nbsp; &nbsp;&nbsp;(input)
+Job ID.<br>
+<span class="commandline"> uid</span>&nbsp; &nbsp;&nbsp;(input)
+Owning user ID.</p>
+<p style="margin-left:.2in"><b>Returns</b>: SLURM_SUCCESS if successful. On failure,
+the plugin should return SLURM_ERROR and set the errno to an appropriate value
+to indicate the reason for failure.</p>
+
 <p class="commandline">void container_p_reconfig (void);</p>
 <p style="margin-left:.2in"><b>Description</b>: Note change in configuration,
 especially the value of the DebugFlags with respect to JobContainer.</p>
 
-<p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 27 March 2015</p>
+<p style="text-align:center;">Last modified 22 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

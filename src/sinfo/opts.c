@@ -294,6 +294,9 @@ extern void parse_command_line(int argc, char **argv)
 		}
 	}
 
+	if (params.long_output && params.format)
+		fatal("Options -o(--format) and -l(--long) are mutually exclusive. Please remove one and retry.");
+
 	if (opt_a_set && opt_p_set) {
 		error("Conflicting options, -a and -p, specified. "
 		      "Please choose one or the other.");
@@ -317,35 +320,40 @@ extern void parse_command_line(int argc, char **argv)
 	}
 
 	if ( params.format == NULL ) {
+		params.def_format = true;
 		if ( params.summarize ) {
+			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
-			params.format = "%9P %.5a %.10l %.16F  %N";
+			params.format = "partition:9 ,available:.5 ,time:.10 ,nodeaiot:.16 ,nodelist:0";
 		} else if ( params.node_flag ) {
+			long_form = true;
 			params.node_field_flag = true;	/* compute size later */
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "%N %.6D %.9P %.11T %.4c %.8z %.6m %.8d %.6w %.8f %20E" :
-			  "%N %.6D %.9P %6t";
+			  "nodelist:0 ,nodes:.6 ,partition:.9 ,statelong:.11 ,cpus:4 ,socketcorethread:.8 ,memory:.6 ,disk:.8 ,weight:.6 ,features:.8 ,reason:20" :
+			  "nodelist:0 ,nodes:.6 ,partition:.9 ,statecompact:6";
 
 		} else if (params.list_reasons) {
+			long_form = true;
 			params.format = params.long_output ?
-			  "%20E %12U %19H %6t %N" :
-			  "%20E %9u %19H %N";
+			  "reason:20 ,userlong:12 ,timestamp:19 ,statecompact:6 ,nodelist:0" :
+			  "reason:20 ,user:9 ,timestamp:19 ,nodelist:0";
 
 		} else if ((env_val = getenv ("SINFO_FORMAT"))) {
 			params.format = xstrdup(env_val);
 
-
 		} else if (params.fed) {
+			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "%9P %8V %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N" :
-			  "%9P %8V %.5a %.10l %.6D %.6t %N";
+			  "partition:9 ,cluster:8 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0" :
+			  "partition:9 ,cluster:8 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0";
 		} else {
+			long_form = true;
 			params.part_field_flag = true;	/* compute size later */
 			params.format = params.long_output ?
-			  "%9P %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N" :
-			  "%9P %.5a %.10l %.6D %.6t %N";
+			  "partition:9 ,available:.5 ,time:.10 ,size:.10 ,root:.4 ,oversubscribe:.8 ,groups:.10 ,nodes:.6 ,statelong:.11 ,nodelist:0" :
+			  "partition:9 ,available:.5 ,time:.10 ,nodes:.6 ,statecompact:.6 ,nodelist:0";
 		}
 	}
 
@@ -498,6 +506,8 @@ _node_state_list (void)
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_COMPLETING));
 	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_POWERING_DOWN));
+	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_POWER_SAVE));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_POWER_UP));
@@ -560,6 +570,8 @@ _node_state_id (char *str)
 		return NODE_STATE_COMPLETING;
 	if (xstrncasecmp("NO_RESPOND", str, len) == 0)
 		return NODE_STATE_NO_RESPOND;
+	if (_node_state_equal (NODE_STATE_POWERING_DOWN, str))
+		return NODE_STATE_POWERING_DOWN;
 	if (_node_state_equal (NODE_STATE_POWER_SAVE, str))
 		return NODE_STATE_POWER_SAVE;
 	if (_node_state_equal (NODE_STATE_POWER_UP, str))
@@ -859,7 +871,7 @@ _parse_format( char* format )
 					right_justify,
 					suffix );
 		} else if (format_all) {
-			;	/* ignore */
+			xfree(suffix);	/* ignore */
 		} else {
 			prefix = xstrdup("%");
 			xstrcat(prefix, token);
@@ -987,6 +999,12 @@ static int _parse_long_format (char* format_long)
 		} else if (!xstrcasecmp(token, "gres")) {
 			params.match_flags.gres_flag = true;
 			format_add_gres( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!xstrcasecmp(token, "gresused")) {
+			params.match_flags.gres_used_flag = true;
+			format_add_gres_used( params.format_list,
 					 field_size,
 					 right_justify,
 					 suffix );
@@ -1236,7 +1254,7 @@ static void
 _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 		   char **suffix)
 {
-	char *ptr;
+	char *end_ptr = NULL, *ptr;
 
 	xassert(token);
 	ptr = strchr(token, ':');
@@ -1248,7 +1266,9 @@ _parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
 		} else {
 			*right_justify = false;
 		}
-		*field_size = atoi(ptr + 1);
+		*field_size = strtol(ptr + 1, &end_ptr, 10);
+		if (end_ptr[0] != '\0')
+			*suffix = xstrdup(end_ptr);
 	} else {
 		*right_justify = false;
 		*field_size = 20;
@@ -1299,6 +1319,8 @@ void _print_options( void )
 	printf("groups_flag     = %s\n", params.match_flags.groups_flag ?
 					"true" : "false");
 	printf("gres_flag       = %s\n", params.match_flags.gres_flag ?
+			"true" : "false");
+	printf("gres_used_flag  = %s\n", params.match_flags.gres_used_flag ?
 			"true" : "false");
 	printf("job_size_flag   = %s\n", params.match_flags.job_size_flag ?
 					"true" : "false");

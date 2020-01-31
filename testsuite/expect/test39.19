@@ -1,6 +1,6 @@
 #!/usr/bin/env expect
 ############################################################################
-# Purpose: Test of SLURM functionality
+# Purpose: Test of Slurm functionality
 #          Test accounting for GPU resources with various allocation options
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
@@ -10,22 +10,22 @@
 # Copyright (C) 2018 SchedMD LLC
 # Written by Morris Jette
 #
-# This file is part of SLURM, a resource management program.
+# This file is part of Slurm, a resource management program.
 # For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
-# SLURM is free software; you can redistribute it and/or modify it under
+# Slurm is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
 # Software Foundation; either version 2 of the License, or (at your option)
 # any later version.
 #
-# SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+# Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 # WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 # FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 # details.
 #
 # You should have received a copy of the GNU General Public License along
-# with SLURM; if not, write to the Free Software Foundation, Inc.,
+# with Slurm; if not, write to the Free Software Foundation, Inc.,
 # 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
 ############################################################################
 source ./globals
@@ -36,39 +36,6 @@ set file_in1       "test$test_id.input1"
 set file_in2       "test$test_id.input2"
 set file_out       "test$test_id.output"
 
-proc get_node_config {} {
-	global cpus_per_socket sockets_per_node test_id
-	global exit_code file_in1 max_job_delay number srun scontrol
-
-	set cpus_tot 1
-	set sockets_per_node 1
-	set cpus_per_socket 1
-	make_bash_script $file_in1 "$scontrol show node \$SLURM_JOB_NODENAME"
-	set timeout $max_job_delay
-	log_user 0
-	set srun_pid [spawn $srun -n1 -t1 -J "test$test_id" $file_in1]
-	expect {
-		-re "CPUTot=($number)" {
-			set cpus_tot $expect_out(1,string)
-			exp_continue
-		}
-		-re "Sockets=($number)" {
-			set sockets_per_node $expect_out(1,string)
-			exp_continue
-		}
-		timeout {
-			send_user "\nFAILURE: srun not responding\n"
-			slow_kill $srun_pid
-			set exit_code 1
-		}
-		eof {
-			wait
-		}
-	}
-	log_user 1
-	set cpus_per_socket [expr $cpus_tot / $sockets_per_node]
-}
-
 #
 # Validate the job, batch step and step 0 of a job have the proper GPU counts
 # No step to test if step_gpus == -1
@@ -76,15 +43,16 @@ proc get_node_config {} {
 # NOTE: AllocGRES and ReqGRES values for all steps (including batch step)
 #	are reported based upon the job specification
 #
-proc test_acct { job_id job_gpus step_gpus } {
-	global bin_cat bin_rm bin_grep exit_code file_out number sacct
+proc test_acct { job_id job_gpus step_gpus have_gpu_types } {
+	global alpha_numeric_under number
+	global bin_cat bin_rm bin_grep exit_code file_out sacct
 
 	if {$job_id == 0} {
 		return
 	}
 
 	sleep 2
-	send_user "\mJob $job_id Expected job GPUs:$job_gpus  Step GPUs:$step_gpus\n"
+	send_user "\nJob $job_id Expected job GPUs:$job_gpus  Step GPUs:$step_gpus\n"
 	exec $bin_rm -f $file_out
 	exec >$file_out $sacct --job=$job_id --parsable2 --start=today -o JobID,AllocGRES,ReqGRES,AllocTRES
 
@@ -116,12 +84,22 @@ proc test_acct { job_id job_gpus step_gpus } {
 				}
 				exp_continue
 			}
+			-re "gres/gpu:($alpha_numeric_under)=($number)" {
+				if {$have_gpu_types != 0} {
+					incr match
+					if {$expect_out(2,string) != $step_gpus} {
+						send_user "\nFAILURE: bad step GPU count reported by sacct ($expect_out(2,string) != $step_gpus)\n"
+						set exit_code 1
+					}
+				}
+				exp_continue
+			}
 			eof {
 				wait
 			}
 		}
 		if {$match != 3} {
-			send_user "\nFAILURE: missing step GPU count report from sacct ($match != 3)\n"
+			send_user "\nFAILURE: Missing step GPU count report from sacct ($match != 3)\n"
 		}
 	}
 
@@ -150,7 +128,7 @@ proc test_acct { job_id job_gpus step_gpus } {
 		-re "gpu:($number)" {
 			incr match
 			if {$expect_out(1,string) != $job_gpus} {
-				send_user "\nFAILURE: bad job GPU count reported by sacct ($expect_out(1,string) != $job_gpus)\n"
+				send_user "\nFAILURE: Bad job GPU count reported by sacct ($expect_out(1,string) != $job_gpus)\n"
 				set exit_code 1
 			}
 			exp_continue
@@ -158,8 +136,18 @@ proc test_acct { job_id job_gpus step_gpus } {
 		-re "gres/gpu=($number)" {
 			incr match
 			if {$expect_out(1,string) != $job_gpus} {
-				send_user "\nFAILURE: bad job GPU count reported by sacct ($expect_out(1,string) != $job_gpus)\n"
+				send_user "\nFAILURE: Bad job GPU count reported by sacct ($expect_out(1,string) != $job_gpus)\n"
 				set exit_code 1
+			}
+			exp_continue
+		}
+		-re "gres/gpu:($alpha_numeric_under)=($number)" {
+			if {$have_gpu_types != 0} {
+				incr match
+				if {$expect_out(2,string) != $job_gpus} {
+					send_user "\nFAILURE: Bad job GPU count reported by sacct ($expect_out(2,string) != $job_gpus)\n"
+					set exit_code 1
+				}
 			}
 			exp_continue
 		}
@@ -168,13 +156,54 @@ proc test_acct { job_id job_gpus step_gpus } {
 		}
 	}
 	if {$match != 3} {
-		send_user "\nFAILURE: missing job GPU count report from sacct ($match != 3)\n"
+		send_user "\nFAILURE: Missing job GPU count report from sacct ($match != 3)\n"
 	}
 	exec $bin_rm -f $file_out
 	log_user 1
 }
 
+#
+# Validate the job, batch step and step 0 of a job have the proper GPU counts
+# No step to test if step_gpus == -1
+#
+# NOTE: AllocGRES and ReqGRES values for all steps (including batch step)
+#	are reported based upon the job specification
+#
+proc test_out_file { file_out target } {
+	global alpha_numeric_under number bin_cat exit_code
+
+	if {[wait_for_file $file_out] != 0} {
+		send_user "\nFAILURE: no output file\n"
+		exit 1
+	}
+
+	set match 0
+	spawn $bin_cat $file_out
+	expect {
+		-re "TRES=.*,gres/gpu=($number)" {
+			set match $expect_out(1,string)
+			exp_continue
+		}
+		-re "TRES=.*,gres/gpu:($alpha_numeric_under)=($number)" {
+			set match $expect_out(2,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	if {$match != $target} {
+		send_user "\nFAILURE: Failed to account for proper GPU count ($match != $target)\n"
+		set exit_code 1
+	}
+}
+
 print_header $test_id
+
+if { [test_account_storage] == 0 } {
+	send_user "\nWARNING: This test can't be run without a usable AccountStorageType\n"
+	exit 0
+}
 
 set store_tres [string tolower [get_acct_store_tres]]
 set store_gpu [string first "gres/gpu" $store_tres]
@@ -186,9 +215,7 @@ if {$store_gpu == -1} {
 	exit $exit_code
 }
 
-set select_type [test_select_type]
-if {![string compare $select_type "cons_tres"] ||
-    (![string compare $select_type "cray"] && [test_select_type_params "other_cons_tres"])} {
+if {[test_cons_tres]} {
 	send_user "\nValid configuration, using select/cons_tres\n"
 } else {
 	send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
@@ -213,8 +240,10 @@ if {$gpu_cnt < 2} {
 
 get_node_config
 set cpus_per_node [expr $sockets_per_node * $cpus_per_socket]
+set sockets_with_gpus [get_gpu_socket_count $gpu_cnt $sockets_per_node]
 
 send_user "GPUs per node is $gpu_cnt\n"
+send_user "Sockets with GPUs $sockets_with_gpus\n"
 send_user "Sockets per node is $sockets_per_node\n"
 send_user "CPUs per socket is $cpus_per_socket\n"
 send_user "CPUs per node is $cpus_per_node\n"
@@ -257,7 +286,7 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
@@ -266,11 +295,19 @@ if {[wait_for_file $file_out] != 0} {
 	send_user "\nFAILURE: no output file\n"
 	exit 1
 }
+set have_gpu_types 0
 set match 0
 spawn $bin_cat $file_out
 expect {
 	-re "TRES=.*,gres/gpu=($number)" {
 		set match $expect_out(1,string)
+		exp_continue
+	}
+	-re "TRES=.*,gres/gpu:($alpha_numeric_under)=($number)" {
+		if {$match == 0} {
+			set have_gpu_types 1
+			set match $expect_out(2,string)
+		}
 		exp_continue
 	}
 	eof {
@@ -282,7 +319,7 @@ if {$match != $target} {
 	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
 	set exit_code 1
 }
-test_acct $job_id $target -1
+test_acct $job_id $target -1 $have_gpu_types
 
 #
 # Test --gpus option by job
@@ -316,31 +353,13 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$match != $target} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
-	set exit_code 1
-}
-test_acct $job_id $target -1
+test_out_file $file_out $target
+test_acct $job_id $target -1 $have_gpu_types
 
 #
 # Test --gpus-per-task option by job
@@ -376,31 +395,13 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$match != $nb_tasks} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $nb_tasks)\n"
-	set exit_code 1
-}
-test_acct $job_id $nb_tasks -1
+test_out_file $file_out $nb_tasks
+test_acct $job_id $nb_tasks -1 $have_gpu_types
 
 #
 # Test --gpus-per-socket option by job
@@ -409,13 +410,15 @@ send_user "\n\nTEST 4: --gpus-per-socket option by job\n"
 
 exec $bin_rm -f $file_out
 
-if {$sockets_per_node >= 2} {
+if {$sockets_with_gpus >= 2} {
 	set nb_sockets 2
+	set cpus_per_task $cpus_per_socket
 } else {
 	set nb_sockets 1
+	set cpus_per_task 1
 }
 set job_id 0
-spawn $sbatch --gres=craynetwork:0 --gpus-per-socket=1 -N$nb_nodes --sockets-per-node=$nb_sockets -t1 -o $file_out -J "test$test_id" ./$file_in1
+spawn $sbatch --gres=craynetwork:0 --gpus-per-socket=1 -N$nb_nodes  --ntasks=$nb_nodes --sockets-per-node=$nb_sockets --cpus-per-task=$cpus_per_task -t1 -o $file_out -J "test$test_id" ./$file_in1
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -435,32 +438,14 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
 set target [expr $nb_nodes * $nb_sockets]
-if {$match != $target} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
-	set exit_code 1
-}
-test_acct $job_id $target -1
+test_out_file $file_out $target
+test_acct $job_id $target -1 $have_gpu_types
 
 #
 # Test --gpus-per-node option by step
@@ -501,32 +486,14 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
 set target [expr $nb_nodes * 2]
-if {$match != $target} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
-	set exit_code 1
-}
-test_acct $job_id $target $target
+test_out_file $file_out $target
+test_acct $job_id $target $target $have_gpu_types
 
 #
 # Test --gpus option by step
@@ -560,31 +527,13 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$match != $target} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
-	set exit_code 1
-}
-test_acct $job_id $target $target
+test_out_file $file_out $target
+test_acct $job_id $target $target $have_gpu_types
 
 #
 # Test --gpus-per-task option by step
@@ -620,31 +569,13 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$match != $nb_tasks} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $nb_tasks)\n"
-	set exit_code 1
-}
-test_acct $job_id $nb_tasks $nb_tasks
+test_out_file $file_out $nb_tasks
+test_acct $job_id $nb_tasks $nb_tasks $have_gpu_types
 
 #
 # Test --gpus-per-socket option by step
@@ -653,13 +584,15 @@ send_user "\n\nTEST 8: --gpus-per-socket option by step\n"
 
 exec $bin_rm -f $file_out
 
-if {$sockets_per_node >= 2} {
+if {$sockets_with_gpus >= 2} {
 	set nb_sockets 2
+	set cpus_per_task $cpus_per_socket
 } else {
 	set nb_sockets 1
+	set cpus_per_task 1
 }
 set job_id 0
-spawn $sbatch --gres=craynetwork:0 --gpus-per-socket=1 -N$nb_nodes --sockets-per-node=$nb_sockets -t1 -o $file_out -J "test$test_id" ./$file_in1
+spawn $sbatch --gres=craynetwork:0 --gpus-per-socket=1 -N$nb_nodes  --ntasks=$nb_nodes --sockets-per-node=$nb_sockets --cpus-per-task=$cpus_per_task -t1 -o $file_out -J "test$test_id" ./$file_in1
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -679,32 +612,14 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
 set target [expr $nb_nodes * $nb_sockets]
-if {$match != $target} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $target)\n"
-	set exit_code 1
-}
-test_acct $job_id $target $target
+test_out_file $file_out $target
+test_acct $job_id $target $target $have_gpu_types
 
 #
 # Test --gpus-per-task option by step
@@ -752,31 +667,13 @@ if {$job_id == 0} {
 }
 
 if {[wait_for_job $job_id "DONE"] != 0} {
-	send_user "\nFAILURE: job did not complete\n"
+	send_user "\nFAILURE: job $job_id did not complete\n"
 	cancel_job $job_id
 	exit 1
 }
 
-if {[wait_for_file $file_out] != 0} {
-	send_user "\nFAILURE: no output file\n"
-	exit 1
-}
-set match 0
-spawn $bin_cat $file_out
-expect {
-	-re "TRES=.*,gres/gpu=($number)" {
-		set match $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-if {$match != $step_tasks} {
-	send_user "\nFAILURE: failed to account for proper GPU count ($match != $step_tasks)\n"
-	set exit_code 1
-}
-test_acct $job_id $job_tasks $step_tasks
+test_out_file $file_out $step_tasks
+test_acct $job_id $job_tasks $step_tasks $have_gpu_types
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in1 $file_in2 $file_out

@@ -139,7 +139,7 @@ static void _set_collectors(char *this_node_name)
 	return; /* on a FrontEnd system this would never be useful. */
 #endif
 
-	if (!run_in_daemon("slurmd"))
+	if (!running_in_slurmd())
 		return; /* Only compute nodes have collectors */
 
 	/*
@@ -196,7 +196,7 @@ static void _set_collectors(char *this_node_name)
 				slurm_set_addr(msg_collect_node, parent_port,
 					       parent);
 			} else {
-				slurm_conf_get_addr(parent, msg_collect_node);
+				slurm_conf_get_addr(parent, msg_collect_node, 0);
 				msg_collect_node->sin_port = htons(parent_port);
 			}
 			if (debug_flags & DEBUG_FLAG_ROUTE) {
@@ -216,7 +216,7 @@ static void _set_collectors(char *this_node_name)
 						       backup_port, backup[i]);
 				} else {
 					slurm_conf_get_addr(backup[i],
-						msg_collect_backup[i-1]);
+						msg_collect_backup[i-1], 0);
 					msg_collect_backup[i-1]->sin_port =
 						htons(backup_port);
 				}
@@ -494,7 +494,7 @@ extern int route_split_hostlist_treewidth(hostlist_t hl,
 
 	host_count = hostlist_count(hl);
 	span = set_span(host_count, tree_width);
-	*sp_hl = (hostlist_t*) xmalloc(tree_width * sizeof(hostlist_t));
+	*sp_hl = xmalloc(tree_width * sizeof(hostlist_t));
 
 	while ((name = hostlist_shift(hl))) {
 		(*sp_hl)[nhl] = hostlist_create(name);

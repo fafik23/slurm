@@ -1,6 +1,6 @@
 <!--#include virtual="header.txt"-->
 
-<h2><a name="top">Slurm APIs</a></h2>
+<h1><a name="top">Slurm APIs</a></h1>
 
 <h3>Overview</h3>
 <p>All of the Slurm commands utilize a collection of Application Programming
@@ -28,7 +28,6 @@ specifications.</li>
 <i>slurm_load_ctl_conf</i>.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Get Job Information</h3>
@@ -49,15 +48,10 @@ all jobs.</li>
 <li><b>slurm_print_job_info</b> &mdash; Print information about
 a specific job.</li>
 
-<li><b>slurm_get_select_jobinfo</b> &mdash; Get <i>select</i> plugin
-specific information associated with the job. The information
-available is will vary by select plugin type configured.</li>
-
 <li><b>slurm_free_job_info_msg</b> &mdash; Free storage allocated by
 <i>slurm_load_jobs</i>.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Get Job Step Information</h3>
@@ -77,7 +71,6 @@ a specific job step.</li>
 allocated by <i>slurm_get_job_steps</i>.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Get Node Information</h3>
@@ -96,7 +89,6 @@ a specific node.</li>
 allocated by <i>slurm_load_node</i>.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Get Partition Information</h3>
@@ -115,7 +107,6 @@ a specific partition.</li>
 allocated by <i>slurm_load_partitions</i>.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Error Handling</h3>
@@ -131,7 +122,6 @@ standard output.</li>
 Slurm error code.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Resource Allocation</h3>
@@ -175,7 +165,6 @@ memory leak. This can be used to confirm that an
 allocation is still active or for error recovery.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Job Step Creation</h3>
@@ -212,7 +201,6 @@ field as returned by <i>slurm_step_ctx_get</i>.</li>
 <li><b>slurm_spawn_kill</b> &mdash; Signal spawned tasks.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Job and Job Step Signaling and Cancelling</h3>
@@ -223,7 +211,6 @@ field as returned by <i>slurm_step_ctx_get</i>.</li>
 <li><b>slurm_kill_job_step</b> &mdash; Signal or cancel a job step.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Job Completion</h3>
@@ -236,40 +223,6 @@ Releases resource allocation for the job.</li>
 job step.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
-
-
-<h3>Checkpoint</h3>
-<ul>
-
-<li><b>slurm_checkpoint_able</b> &mdash; Note that a specific job or
-job step is eligible for checkpoint.</li>
-
-<li><b>slurm_checkpoint_complete</b> &mdash; Note that a requested
-checkpoint has completed.</li>
-
-<li><b>slurm_checkpoint_create</b> &mdash; Request a checkpoint for
-a specific job step. Continue execution upon completion of the
-checkpoint.</li>
-
-<li><b>slurm_checkpoint_vacate</b> &mdash; Request a checkpoint for
-a specific job step. Terminate execution upon completion of the
-checkpoint.</li>
-
-<li><b>slurm_checkpoint_disable</b> &mdash; Make the identified job step
-non-checkpointable.</li>
-
-<li><b>slurm_checkpoint_enable</b> &mdash; Make the identified job
-step checkpointable.</li>
-
-<li><b>slurm_checkpoint_error</b> &mdash; Get error information for
-the last checkpoint operation on a given job step.</li>
-
-<li><b>slurm_checkpoint_restart</b> &mdash; Request that a previously
-checkpointed job resume execution.</li>
-
-</ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Administrative Functions</h3>
@@ -300,7 +253,6 @@ information associated with a given partition.</li>
 <li><b>slurm_delete_partition</b> &mdash; Destroy a partition.</li>
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h3>Slurm Host List Support</h3>
@@ -324,8 +276,7 @@ name.</li>
 allocated by <i>slurm_hostlist_create</i>.
 
 </ul>
-<p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 13 November 2005</p>
+<p style="text-align:center;">Last modified 23 November 2019</p>
 
 <!--#include virtual="footer.txt"-->

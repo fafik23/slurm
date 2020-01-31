@@ -36,12 +36,18 @@ set cfgdir      [pwd]
 
 print_header $test_id
 
+if {[test_cray]} {
+#	Many Cray-specific changes required in slurm.conf test files
+	send_user "\nWARNING: This test can not run on a Cray system\n"
+	exit $exit_code
+}
+
 #
 # Delete left-over programs and rebuild them
 #
 file delete $test_prog
 
-set cmd "$bin_cc ${test_prog}.c -g -pthread -export-dynamic -o ${test_prog} -I${src_dir} -I${build_dir} ${build_dir}/src/api/libslurm.o -ldl"
+set cmd "$bin_cc ${test_prog}.c -g -pthread -export-dynamic -o ${test_prog} -I${src_dir} -I${build_dir} ${build_dir}/src/api/libslurm.o -ldl -lresolv"
 send_user "$cmd\n"
 eval exec $cmd
 
@@ -65,7 +71,7 @@ expect {
 	}
 }
 if {$cpu_match != 1} {
-	send_user "\nFAILURE: number of CPUs is incorrect\n"
+	send_user "\nFAILURE: number of COREs is incorrect\n"
 	set exit_code 1
 }
 

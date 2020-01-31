@@ -113,6 +113,8 @@
 /* fd.[ch] functions */
 #define fd_set_blocking		slurm_fd_set_blocking
 #define fd_set_nonblocking	slurm_fd_set_nonblocking
+#define send_fd_over_pipe	slurm_send_fd_over_pipe
+#define receive_fd_over_pipe	slurm_receive_fd_over_pipe
 
 /* hostlist.[ch] functions */
 #define	hostlist_create		slurm_hostlist_create
@@ -185,6 +187,7 @@
 #define	list_find_first		slurm_list_find_first
 #define	list_delete_all		slurm_list_delete_all
 #define	list_for_each		slurm_list_for_each
+#define	list_for_each_max	slurm_list_for_each_max
 #define	list_sort		slurm_list_sort
 #define	list_push		slurm_list_push
 #define	list_pop		slurm_list_pop
@@ -199,9 +202,10 @@
 #define	list_find		slurm_list_find
 #define	list_remove		slurm_list_remove
 #define	list_delete_item	slurm_list_delete_item
-#define	list_install_fork_handlers slurm_list_install_fork_handlers
 
 /* log.[ch] functions */
+#define get_log_level		slurm_get_log_level
+#define get_sched_log_level	slurm_get_sched_log_level
 #define	log_init		slurm_log_init
 #define	log_reinit		slurm_log_reinit
 #define	log_fini		slurm_log_fini
@@ -211,16 +215,12 @@
 #define	log_fp			slurm_log_fp
 #define	log_has_data		slurm_log_has_data
 #define	log_flush		slurm_log_flush
+#define log_var			slurm_log_var
 #define	fatal_abort		slurm_fatal_abort
 #define	fatal			slurm_fatal
 #define	error			slurm_error
 #define	info			slurm_info
 #define	verbose			slurm_verbose
-#define	debug			slurm_debug
-#define	debug2			slurm_debug2
-#define	debug3			slurm_debug3
-#define	debug4			slurm_debug4
-#define	debug5			slurm_debug5
 
 /* macros.h functions
  * None exported today.
@@ -284,20 +284,29 @@
 #define env_array_append_fmt	slurm_env_array_append_fmt
 #define env_array_overwrite	slurm_env_array_overwrite
 #define env_array_overwrite_fmt slurm_env_array_overwrite_fmt
-#define env_array_overwrite_pack_fmt  slurm_env_array_overwrite_pack_fmt
+#define env_array_overwrite_het_fmt  slurm_env_array_overwrite_het_fmt
 
 /* read_config.[ch] functions */
 #define destroy_config_key_pair	slurm_destroy_config_key_pair
 #define get_extra_conf_path	slurm_get_extra_conf_path
 #define sort_key_pairs		slurm_sort_key_pairs
+
+/* run_in_daemon.[ch] functions */
 #define run_in_daemon           slurm_run_in_daemon
+#define running_in_slurmctld    slurm_running_in_slurmctld
+#define running_in_slurmd       slurm_running_in_slurmd
+#define running_in_slurmdbd     slurm_running_in_slurmdbd
+#define running_in_slurmdstepd  slurm_running_in_slurmdstepd
+#define running_in_slurmstepd   slurm_running_in_slurmstepd
 
 /* slurm_auth.[ch] functions
  * None exported today.
  * The header file used only for #define values. */
 
 /* strlcpy.[ch] functions */
+#ifndef HAVE_STRLCPY
 #define	strlcpy			slurm_strlcpy
+#endif
 
 /* switch.[ch] functions
  * None exported today.
@@ -305,6 +314,9 @@
 
 /* xassert.[ch] functions */
 #define	__xassert_failed	slurm_xassert_failed
+
+/* xmalloc.[ch] functions */
+#define xfree_ptr		slurm_xfree_ptr
 
 /* xsignal.[ch] functions */
 #define	xsignal			slurm_xsignal
@@ -356,7 +368,6 @@
 #define node_state_string_compact slurm_node_state_string_compact
 #define private_data_string	slurm_private_data_string
 #define accounting_enforce_string slurm_accounting_enforce_string
-#define node_use_string		slurm_node_use_string
 #define reservation_flags_string slurm_reservation_flags_string
 #define print_multi_line_string slurm_print_multi_line_string
 
@@ -371,6 +382,7 @@
 /* slurmdbd_pack.[ch] functions */
 #define pack_slurmdbd_msg	slurm_pack_slurmdbd_msg
 #define unpack_slurmdbd_msg	slurm_unpack_slurmdbd_msg
+#define slurmdbd_pack_fini_msg	slurm_slurmdbd_pack_fini_msg
 
 /* plugin.[ch] functions */
 #define plugin_get_syms         slurm_plugin_get_syms
@@ -383,7 +395,6 @@
 #define plugrack_destroy        slurm_plugrack_destroy
 #define plugrack_read_dir       slurm_plugrack_read_dir
 #define plugrack_set_major_type slurm_plugrack_set_major_type
-#define plugrack_set_paranoia   slurm_plugrack_set_paranoia
 #define plugrack_use_by_type    slurm_plugrack_use_by_type
 
 #define jobacctinfo_pack	slurm_jobacctinfo_pack
@@ -439,6 +450,11 @@
 #define stepd_get_uid			slurm_stepd_get_uid
 #define stepd_add_extern_pid		slurm_stepd_add_extern_pid
 #define stepd_get_x11_display		slurm_stepd_get_x11_display
+#define stepd_get_info			slurm_stepd_get_info
+#define stepd_getpw			slurm_stepd_getpw
+#define xfree_struct_passwd		slurm_xfree_struct_passwd
+#define stepd_getgr			slurm_stepd_getgr
+#define xfree_struct_group_array	slurm_xfree_struct_group_array
 
 /* xcgroup_read_config.[ch] */
 #define xcgroup_config_read_mutex       slurm_xcgroup_config_read_mutex

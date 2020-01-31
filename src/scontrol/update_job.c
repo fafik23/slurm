@@ -54,14 +54,6 @@ static bool	_is_job_id(char *job_str);
 static bool	_is_single_job(char *job_id_str);
 static char *	_job_name2id(char *job_name, uint32_t job_uid);
 static char *	_next_job_id(void);
-static int	_parse_checkpoint_args(int argc,
-				       char **argv,
-				       uint16_t *max_wait,
-				       char **image_dir);
-static int	_parse_restart_args(int argc,
-				    char **argv,
-				    uint16_t *stick,
-				    char **image_dir);
 static void	_update_job_size(uint32_t job_id);
 
 /* Local variables for managing job IDs */
@@ -210,163 +202,6 @@ static char *_next_job_id(void)
 fini:	xfree(local_job_str);
 	save_ptr = NULL;
 	return NULL;
-}
-
-/*
- * scontrol_checkpoint - perform some checkpoint/resume operation
- * IN op - checkpoint operation
- * IN job_step_id_str - either a job name (for all steps of the given job) or
- *			a step name: "<jid>.<step_id>"
- * IN argc - argument count
- * IN argv - arguments of the operation
- * RET 0 if no slurm error, errno otherwise. parsing error prints
- *			error message and returns 0
- */
-extern int scontrol_checkpoint(char *op,
-			       char *job_step_id_str,
-			       int argc,
-			       char **argv)
-{
-	int rc = SLURM_SUCCESS;
-	uint32_t job_id = 0, step_id = 0;
-	char *next_str;
-	uint32_t ckpt_errno;
-	char *ckpt_strerror = NULL;
-	int oplen = strlen(op);
-	uint16_t max_wait = CKPT_WAIT, stick = 0;
-	char *image_dir = NULL;
-
-	if (job_step_id_str) {
-		job_id = (uint32_t) strtol (job_step_id_str, &next_str, 10);
-		if (next_str[0] == '.') {
-			step_id = (uint32_t) strtol (&next_str[1], &next_str,
-						     10);
-		} else
-			step_id = NO_VAL;
-		if (next_str[0] != '\0') {
-			fprintf(stderr, "Invalid job step name\n");
-			return 0;
-		}
-	} else {
-		fprintf(stderr, "Invalid job step name\n");
-		return 0;
-	}
-
-	if (xstrncasecmp(op, "able", MAX(oplen, 1)) == 0) {
-		time_t start_time;
-		rc = slurm_checkpoint_able (job_id, step_id, &start_time);
-		if (rc == SLURM_SUCCESS) {
-			if (start_time) {
-				char time_str[32];
-				slurm_make_time_str(&start_time, time_str,
-						    sizeof(time_str));
-				printf("Began at %s\n", time_str);
-			} else
-				printf("Yes\n");
-		} else if (slurm_get_errno() == ESLURM_DISABLED) {
-			printf("No\n");
-			rc = SLURM_SUCCESS;	/* not real error */
-		}
-	}
-	else if (xstrncasecmp(op, "complete", MAX(oplen, 2)) == 0) {
-		/* Undocumented option used for testing purposes */
-		static uint32_t error_code = 1;
-		char error_msg[64];
-		sprintf(error_msg, "test error message %d", error_code);
-		rc = slurm_checkpoint_complete(job_id, step_id, (time_t) 0,
-			error_code++, error_msg);
-	}
-	else if (xstrncasecmp(op, "disable", MAX(oplen, 1)) == 0)
-		rc = slurm_checkpoint_disable (job_id, step_id);
-	else if (xstrncasecmp(op, "enable", MAX(oplen, 2)) == 0)
-		rc = slurm_checkpoint_enable (job_id, step_id);
-	else if (xstrncasecmp(op, "create", MAX(oplen, 2)) == 0) {
-		if (_parse_checkpoint_args(argc, argv, &max_wait, &image_dir)){
-			return 0;
-		}
-		rc = slurm_checkpoint_create (job_id, step_id, max_wait,
-					      image_dir);
-
-	} else if (xstrncasecmp(op, "requeue", MAX(oplen, 2)) == 0) {
-		if (_parse_checkpoint_args(argc, argv, &max_wait, &image_dir)){
-			return 0;
-		}
-		rc = slurm_checkpoint_requeue (job_id, max_wait, image_dir);
-
-	} else if (xstrncasecmp(op, "vacate", MAX(oplen, 2)) == 0) {
-		if (_parse_checkpoint_args(argc, argv, &max_wait, &image_dir)){
-			return 0;
-		}
-		rc = slurm_checkpoint_vacate (job_id, step_id, max_wait,
-					      image_dir);
-
-	} else if (xstrncasecmp(op, "restart", MAX(oplen, 2)) == 0) {
-		if (_parse_restart_args(argc, argv, &stick, &image_dir)) {
-			return 0;
-		}
-		rc = slurm_checkpoint_restart (job_id, step_id, stick,
-					       image_dir);
-
-	} else if (xstrncasecmp(op, "error", MAX(oplen, 2)) == 0) {
-		rc = slurm_checkpoint_error (job_id, step_id,
-			&ckpt_errno, &ckpt_strerror);
-		if (rc == SLURM_SUCCESS) {
-			printf("error(%u): %s\n", ckpt_errno, ckpt_strerror);
-			free(ckpt_strerror);
-		}
-	}
-
-	else {
-		fprintf (stderr, "Invalid checkpoint operation: %s\n", op);
-		return 0;
-	}
-
-	return rc;
-}
-
-static int _parse_checkpoint_args(int argc,
-				  char **argv,
-				  uint16_t *max_wait,
-				  char **image_dir)
-{
-	int i;
-
-	for (i=0; i< argc; i++) {
-		if (xstrncasecmp(argv[i], "MaxWait=", 8) == 0) {
-			*max_wait = (uint16_t) strtol(&argv[i][8],
-						      (char **) NULL, 10);
-		} else if (xstrncasecmp(argv[i], "ImageDir=", 9) == 0) {
-			*image_dir = &argv[i][9];
-		} else {
-			exit_code = 1;
-			error("Invalid input: %s", argv[i]);
-			error("Request aborted");
-			return -1;
-		}
-	}
-	return 0;
-}
-
-static int _parse_restart_args(int argc,
-			       char **argv,
-			       uint16_t *stick,
-			       char **image_dir)
-{
-	int i;
-
-	for (i=0; i< argc; i++) {
-		if (xstrncasecmp(argv[i], "StickToNodes", 5) == 0) {
-			*stick = 1;
-		} else if (xstrncasecmp(argv[i], "ImageDir=", 9) == 0) {
-			*image_dir = &argv[i][9];
-		} else {
-			exit_code = 1;
-			error("Invalid input: %s", argv[i]);
-			error("Request aborted");
-			return -1;
-		}
-	}
-	return 0;
 }
 
 /*
@@ -590,7 +425,7 @@ scontrol_suspend(char *op, char *job_str)
  * IN job_id_str - a job id
  */
 extern void
-scontrol_requeue(char *job_str)
+scontrol_requeue(uint32_t flags, char *job_str)
 {
 	char *job_id_str;
 	int rc, i;
@@ -609,7 +444,7 @@ scontrol_requeue(char *job_str)
 	if (_is_job_id(job_str)) {
 		job_id_str = _next_job_id();
 		while (job_id_str) {
-			rc = slurm_requeue2(job_id_str, 0, &resp);
+			rc = slurm_requeue2(job_id_str, flags, &resp);
 			if (rc != SLURM_SUCCESS) {
 				exit_code = 1;
 				if (quiet_flag != 1) {
@@ -647,18 +482,18 @@ scontrol_requeue(char *job_str)
 }
 
 extern void
-scontrol_requeue_hold(uint32_t state_flag, char *job_str)
+scontrol_requeue_hold(uint32_t flags, char *job_str)
 {
 	int rc, i;
 	char *job_id_str;
 	job_array_resp_msg_t *resp = NULL;
 
-	state_flag |= JOB_REQUEUE_HOLD;
+	flags |= JOB_REQUEUE_HOLD;
 
 	if (_is_job_id(job_str)) {
 		job_id_str = _next_job_id();
 		while (job_id_str) {
-			rc = slurm_requeue2(job_id_str, state_flag, &resp);
+			rc = slurm_requeue2(job_id_str, flags, &resp);
 			if (rc != SLURM_SUCCESS) {
 				exit_code = 1;
 				if (quiet_flag != 1) {
@@ -752,10 +587,15 @@ extern int scontrol_update_job(int argc, char **argv)
 			}
 			val++;
 			vallen = strlen(val);
-		} else if (xstrncasecmp(tag, "Nice", MAX(strlen(tag), 2)) == 0){
-			/* "Nice" is the only tag that might not have an
-			   equal sign, so it is handled specially. */
+		}
+		/* Handle any tags that might not have an equal sign here */
+		else if (xstrncasecmp(tag, "Nice", MAX(strlen(tag), 2)) == 0) {
 			job_msg.nice = NICE_OFFSET + 100;
+			update_cnt++;
+			continue;
+		} else if (!xstrncasecmp(tag, "ResetAccrueTime",
+					 MAX(strlen(tag), 3))) {
+			job_msg.bitflags |= RESET_ACCRUE_TIME;
 			update_cnt++;
 			continue;
 		} else if (!val && argv[i + 1]) {
@@ -774,7 +614,7 @@ extern int scontrol_update_job(int argc, char **argv)
 			job_msg.job_id_str = val;
 		}
 		else if (xstrncasecmp(tag, "AdminComment",
-				      MAX(taglen, 3)) == 0) {
+				      MAX(taglen, 6)) == 0) {
 			if (add_info) {
 				if (add_info[0] == '-') {
 					error("Invalid syntax, AdminComment can not be subtracted from.");
@@ -790,6 +630,19 @@ extern int scontrol_update_job(int argc, char **argv)
 				add_info = NULL;
 			} else
 				job_msg.admin_comment = val;
+			update_cnt++;
+		}
+		else if (xstrncasecmp(tag, "SiteFactor",
+				      MAX(taglen, 5)) == 0) {
+			long long tmp_prio;
+			tmp_prio = strtoll(val, (char **)NULL, 10);
+			if (llabs(tmp_prio) > (NICE_OFFSET - 3)) {
+				error("SiteFactor value out of range (+/- %u). Value ignored",
+				      NICE_OFFSET - 3);
+				exit_code = 1;
+				return 0;
+			}
+			job_msg.site_factor = NICE_OFFSET + tmp_prio;
 			update_cnt++;
 		}
 		else if (xstrncasecmp(tag, "ArrayTaskThrottle",
@@ -1250,6 +1103,20 @@ extern int scontrol_update_job(int argc, char **argv)
 			if ((job_msg.deadline = parse_time(val, 0))) {
 				update_cnt++;
 			}
+		} else if (!xstrncasecmp(tag, "WorkDir", MAX(taglen, 2))) {
+			job_msg.work_dir = val;
+			update_cnt++;
+		} else if (!xstrncasecmp(tag, "MailType", MAX(taglen, 5))) {
+			job_msg.mail_type = parse_mail_type(val);
+			if (job_msg.mail_type == INFINITE16) {
+				fprintf(stderr, "Invalid MailType: %s\n", val);
+				exit_code = 1;
+				return 0;
+			}
+			update_cnt++;
+		} else if (!xstrncasecmp(tag, "MailUser", MAX(taglen, 5))) {
+			job_msg.mail_user = val;
+			update_cnt++;
 		}
 		else {
 			exit_code = 1;
@@ -1386,12 +1253,17 @@ static void _update_job_size(uint32_t job_id)
 	FILE *resize_csh = NULL, *resize_sh = NULL;
 
 	if (!getenv("SLURM_JOBID"))
-		return;		/*No job environment here to update */
+		return;		/* No job environment here to update */
 
 	if (slurm_allocation_lookup(job_id, &alloc_info) !=
 	    SLURM_SUCCESS) {
-		slurm_perror("slurm_allocation_lookup");
-		return;
+		if (slurm_get_errno() != ESLURM_ALREADY_DONE) {
+			slurm_perror("slurm_allocation_lookup");
+			return;
+		}
+		/* Job size reset to zero, not an error */
+		alloc_info = xmalloc(sizeof(resource_allocation_response_msg_t));
+		alloc_info->node_list = xstrdup("");
 	}
 
 	xstrfmtcat(fname_csh, "slurm_job_%u_resize.csh", job_id);
@@ -1477,42 +1349,30 @@ fini:	slurm_free_resource_allocation_response_msg(alloc_info);
 		fclose(resize_sh);
 }
 
-/* parse_requeue_args()
+/*
+ * parse_requeue_args()
  * IN s - string to parse
  * OUT flags - flags to set based upon argument
  * RET 0 on successful parse, -1 otherwise
  */
-extern int
-parse_requeue_flags(char *s, uint32_t *flags)
+extern int parse_requeue_flags(char *s, uint32_t *flags)
 {
-	char *p, *p0, *z;
+	int len;
 
-	p0 = p = xstrdup(s);
-	/* search for =
-	 */
-	z = strchr(p, '=');
-	if (!z) {
-		xfree(p0);
-		return -1;
-	}
-	*z = 0;
-
-	/* validate flags keyword
-	 */
-	if (xstrncasecmp(p, "state", 5)) {
-		xfree(p0);
-		return -1;
-	}
-	++z;
-
-	p = z;
-	if (!xstrncasecmp(p, "specialexit", 11) || !xstrncasecmp(p, "se", 2)) {
-		*flags = JOB_SPECIAL_EXIT;
-		xfree(p0);
+	len = strlen(s);
+	if (!xstrncasecmp(s, "incomplete", len)) {
+		*flags |= JOB_RUNNING;
 		return 0;
 	}
 
-	xfree(p0);
+	if (xstrncasecmp(s, "state=", 6))
+		return -1;
+	s += 6;
+	if (!xstrncasecmp(s, "specialexit", 11) || !xstrncasecmp(s, "se", 2)) {
+		*flags |= JOB_SPECIAL_EXIT;
+		return 0;
+	}
+
 	return -1;
 }
 

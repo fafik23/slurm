@@ -104,6 +104,7 @@ extern char  ** environ;
 int
 main (int argc, char **argv)
 {
+	log_options_t lopts = LOG_OPTS_INITIALIZER;
 	slurm_addr_t *cli;
 	slurm_addr_t *self;
 	slurm_msg_t *msg;
@@ -119,6 +120,9 @@ main (int argc, char **argv)
 	conf->argv = &argv;
 	conf->argc = &argc;
 	init_setproctitle(argc, argv);
+
+	log_init(argv[0], lopts, LOG_DAEMON, NULL);
+
 	if (slurm_select_init(1) != SLURM_SUCCESS )
 		fatal( "failed to initialize node selection plugin" );
 	if (slurm_auth_init(NULL) != SLURM_SUCCESS)
@@ -137,7 +141,6 @@ main (int argc, char **argv)
 
 	/* fork handlers cause mutexes on some global data structures
 	 * to be re-initialized after the fork. */
-	list_install_fork_handlers();
 	slurm_conf_install_fork_handlers();
 
 	/* sets job->msg_handle and job->msgid */
@@ -250,6 +253,8 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	Buf buffer = NULL;
 	slurmd_conf_t *confl, *local_conf = NULL;
 	int tmp_int = 0;
+	List tmp_list = NULL;
+	assoc_mgr_lock_t locks = { .tres = WRITE_LOCK };
 
 	/*  First check to see if we've already initialized the
 	 *   global slurmd_conf_t in 'conf'. Allocate memory if not.
@@ -269,6 +274,11 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	rc = unpack_slurmd_conf_lite_no_alloc(confl, buffer);
 	if (rc == SLURM_ERROR)
 		fatal("slurmstepd: problem with unpack of slurmd_conf");
+
+	slurm_unpack_list(&tmp_list,
+			  slurmdb_unpack_tres_rec,
+			  slurmdb_destroy_tres_rec,
+			  buffer, SLURM_PROTOCOL_VERSION);
 
 	free_buf(buffer);
 
@@ -290,12 +300,28 @@ static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 	} else
 		confl->log_opts.syslog_level  = LOG_LEVEL_QUIET;
 
+	/*
+	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
+	 * up in the log.
+	 */
+	log_alter(confl->log_opts, 0, confl->logfile);
+	log_set_timefmt(confl->log_fmt);
+	debug2("debug level is %d.", confl->debug_level);
+
 	confl->acct_freq_task = NO_VAL16;
 	tmp_int = acct_gather_parse_freq(PROFILE_TASK,
 				       confl->job_acct_gather_freq);
 	if (tmp_int != -1)
 		confl->acct_freq_task = tmp_int;
 
+	xassert(tmp_list);
+
+	assoc_mgr_lock(&locks);
+	assoc_mgr_post_tres_list(tmp_list);
+	debug2("%s: slurmd sent %u TRES.", __func__, g_tres_count);
+	/* assoc_mgr_post_tres_list destroys tmp_list */
+	tmp_list = NULL;
+	assoc_mgr_unlock(&locks);
 
 	return (confl);
 
@@ -355,8 +381,7 @@ static int _handle_spank_mode (int argc, char **argv)
 	 *   This could happen if slurmstepd is run standalone for
 	 *   testing.
 	 */
-	if ((conf = read_slurmd_conf_lite (STDIN_FILENO)))
-		log_alter (conf->log_opts, 0, conf->logfile);
+	conf = read_slurmd_conf_lite (STDIN_FILENO);
 	close (STDIN_FILENO);
 
 	slurm_conf_init(NULL);
@@ -482,52 +507,19 @@ _init_from_slurmd(int sock, char **argv,
 	slurm_msg_t *msg = NULL;
 	uint16_t port;
 	char buf[16];
-	log_options_t lopts = LOG_OPTS_INITIALIZER;
 	uint32_t jobid = 0, stepid = 0;
-	List tmp_list = NULL;
-	assoc_mgr_lock_t locks = { .tres = WRITE_LOCK };
-
-	log_init(argv[0], lopts, LOG_DAEMON, NULL);
 
 	/* receive conf from slurmd */
 	if (!(conf = read_slurmd_conf_lite(sock)))
 		fatal("Failed to read conf from slurmd");
 
-	/*
-	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
-	 * up in the log.
-	 */
-	log_alter(conf->log_opts, 0, conf->logfile);
-	log_set_timefmt(conf->log_fmt);
-
-	debug2("debug level is %d.", conf->debug_level);
-
-	/* Receive TRES information for slurmd */
-	safe_read(sock, &len, sizeof(int));
-	if (len > 0) {
-		incoming_buffer = xmalloc(len);
-		safe_read(sock, incoming_buffer, len);
-		buffer = create_buf(incoming_buffer, len);
-		slurm_unpack_list(&tmp_list,
-				  slurmdb_unpack_tres_rec,
-				  slurmdb_destroy_tres_rec,
-				  buffer, SLURM_PROTOCOL_VERSION);
-		free_buf(buffer);
-	}
-
-	xassert(tmp_list);
-
-	assoc_mgr_lock(&locks);
-	assoc_mgr_post_tres_list(tmp_list);
-	debug2("%s: slurmd sent %u TRES.", __func__, g_tres_count);
-	/* assoc_mgr_post_tres_list destroys tmp_list */
-	tmp_list = NULL;
-	assoc_mgr_unlock(&locks);
-
 	/* receive cgroup conf from slurmd */
 	if (xcgroup_read_conf(sock) != SLURM_SUCCESS)
 		fatal("Failed to read cgroup conf from slurmd");
 
+	/* receive acct_gather conf from slurmd */
+	if (acct_gather_read_conf(sock) != SLURM_SUCCESS)
+		fatal("Failed to read acct_gather conf from slurmd");
 
 	/* receive job type from slurmd */
 	safe_read(sock, &step_type, sizeof(int));
@@ -541,7 +533,8 @@ _init_from_slurmd(int sock, char **argv,
 	safe_read(sock, &step_complete.depth, sizeof(int));
 	safe_read(sock, &step_complete.max_depth, sizeof(int));
 	safe_read(sock, &step_complete.parent_addr, sizeof(slurm_addr_t));
-	step_complete.bits = bit_alloc(step_complete.children);
+	if (step_complete.children)
+		step_complete.bits = bit_alloc(step_complete.children);
 	step_complete.jobacct = jobacctinfo_create(NULL);
 	slurm_mutex_unlock(&step_complete.lock);
 
@@ -693,7 +686,7 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 		gres_plugin_job_set_env(&job->env, job->job_gres_list, 0);
 	} else if (msg->msg_type == REQUEST_LAUNCH_TASKS) {
 		gres_plugin_step_set_env(&job->env, job->step_gres_list, 0,
-					 NULL, NULL, -1);
+					 NULL, -1);
 	}
 
 	/*

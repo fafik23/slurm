@@ -11,7 +11,7 @@ may also prove useful.</p>
 <li><a href="#resp">Slurm is not responding</a></li>
 <li><a href="#sched">Jobs are not getting scheduled</a></li>
 <li><a href="#completing">Jobs and nodes are stuck in COMPLETING state</a></li>
-<li><a href="#nodes">Notes are getting set to a DOWN state</a></li>
+<li><a href="#nodes">Nodes are getting set to a DOWN state</a></li>
 <li><a href="#network">Networking and configuration problems</a></li>
 </ul>
 
@@ -52,7 +52,6 @@ using the commands "<i>/etc/init.d/slurm stop</i>"
 and then "<i>/etc/init.d/slurm startclean</i>").
 Note: All running jobs and other state information will be lost.</li>
 </ol>
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h2><a name="sched">Jobs are not getting scheduled</a></h2>
@@ -85,7 +84,6 @@ See the <a href="faq.html#backfill">backfill documentation</a>
 for more details.</li>
 </ul>
 
-<p class="footer"><a href="#top">top</a></p>
 
 
 <h2><a name="completing">Jobs and nodes are stuck in COMPLETING state</a></h2>
@@ -110,9 +108,8 @@ be killed, by sending email or rebooting the node. For more information,
 see the <i>slurm.conf</i> documentation.</li>
 </ol>
 
-<p class="footer"><a href="#top">top</a></p>
 
-<h2><a name="nodes">Notes are getting set to a DOWN state</a></h2>
+<h2><a name="nodes">Nodes are getting set to a DOWN state</a></h2>
 
 <ol>
 <li>Check the reason why the node is down using the command
@@ -160,7 +157,6 @@ using the commands "<i>/etc/init.d/slurm stop</i>"
 and then "<i>/etc/init.d/slurm startclean</i>").
 Note: All jobs and other state information on that node will be lost.</li>
 </ol>
-<p class="footer"><a href="#top">top</a></p>
 
 <h2><a name="network">Networking and configuration problems</a></h2>
 
@@ -180,18 +176,19 @@ must exist.</li>
 
 <li>Check that compatible versions of Slurm exists on all of
 the nodes (execute "<i>sinfo -V</i>" or "<i>rpm -qa | grep slurm</i>").
-The Slurm version numbers contain three digits which represent the major
-and micro release numbers. The combination of the first and second digits in
-the version designate the major release. The third digit in the
-version designates the micro release (e.g. 17.02.9 is major=17.02, micro=9).
-Changes in the RPCs (remote procedure calls) and state files will only be made
-if the major release number changes.
+The Slurm version number contains three period-separated numbers
+that represent both the major Slurm release and maintenance release level.
+The first two parts combine together to represent the major release, and match
+the year and month of that major release. The third number in the version
+designates a specific maintenance level:
+year.month.maintenance-release (e.g. 17.11.5 is major Slurm release 17.11, and
+maintenance version 5).
+Thus version 17.11.x was initially released in November 2017.
 Slurm daemons will support RPCs and state files from the two previous major
 releases (e.g. a version 17.11.x SlurmDBD will support slurmctld daemons and
 commands with a version of 17.11.x, 17.02.x or 16.05.x).</li>
 </ol>
-<p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 14 June 2018</p>
+<p style="text-align:center;">Last modified 26 April 2019</p>
 
 <!--#include virtual="footer.txt"-->

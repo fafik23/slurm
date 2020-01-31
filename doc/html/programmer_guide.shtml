@@ -31,7 +31,6 @@ be easy porting targets. Code should adhere to the <a href="coding_style.pdf">
 Linux kernel coding style</a>. <i>(Some components of Slurm have been taken from
 various sources. Some of these components do not conform to the Linux kernel
 coding style. However, new code written for Slurm should follow these standards.)</i>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Plugins"></a>
 <h2>Plugins</h2>
@@ -49,7 +48,6 @@ types also have their own documentation available, such as
 <a href="authplugins.html">Slurm Authentication Plugin API</a> and
 <a href="jobcompplugins.html">Slurm Job Completion Logging API</a>.</p>
 
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Directory-Structure"></a>
 <h2>Directory Structure</h2>
@@ -58,7 +56,7 @@ types also have their own documentation available, such as
 detail as the structure is descended. The top level directory contains the scripts
 and tools required to build the entire Slurm system. It also contains a variety
 of subdirectories for each type of file.</p>
-<p>General build tools/files include: <b>acinclude.m4</b>, <b>autogen.sh</b>,
+<p>General build tools/files include: <b>acinclude.m4</b>,
 <b>configure.ac</b>, <b>Makefile.am</b>, <b>Make-rpm.mk</b>, <b>META</b>, <b>README</b>,
 <b>slurm.spec.in</b>, and the contents of the <b>auxdir</b> directory. <span class="commandline">autoconf</span>
 and <span class="commandline">make</span> commands are used to build and install
@@ -81,7 +79,6 @@ described above.<br>
 <b>testsuite</b> &mdash; DejaGnu and Expect are used for testing all of its files
 are here.</p>
 
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Documentation"></a>
 <h2>Documentation</h2>
@@ -92,7 +89,6 @@ Two directories are of particular interest:</p>
 <b>doc/man</b> &mdash; contains the man pages for the APIs,
 configuration file, commands, and daemons.<br>
 <b>doc/html</b> &mdash; contains the web pages.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Source-Code"></a>
 <h2>Source Code</h2>
@@ -115,7 +111,7 @@ behavior. A separate subdirectory is used for each plugin class:<br>
 <li><b>accounting_storage</b> for specifying the type of storage for accounting,<br>
 <li><b>auth</b> for user authentication,<br>
 <li><b>checkpoint</b> for system-initiated checkpoint and restart of user jobs,<br>
-<li><b>crypto</b> for cryptographic functions,<br>
+<li><b>cred</b> for job credential functions,<br>
 <li><b>jobacct_gather</b> for job accounting,<br>
 <li><b>jobcomp</b> for job completion logging,<br>
 <li><b>mpi</b> for MPI support,<br>
@@ -146,9 +142,6 @@ with an existing Slurm job.<br>
 the execution of user applications.<br>
 <b>slurmdbd</b> &mdash; Slurm database daemon managing access to the accounting
 storage database.<br>
-<b>smap</b> &mdash; User command to view layout of nodes, partitions, and jobs.
-This is particularly valuable on systems like Cray XT/XE, which has a three
-dimension torus topography.<br>
 <b>sprio</b> &mdash; User command to see the breakdown of a job's priority
 calculation when the Multifactor Job Priority plugin is installed.<br>
 <b>squeue</b> &mdash; User command to get information on Slurm jobs and job steps.<br>
@@ -156,7 +149,6 @@ calculation when the Multifactor Job Priority plugin is installed.<br>
 usage across the enterprise.<br>
 <b>srun</b> &mdash; User command to submit a job, get an allocation, and/or
 initiation a parallel job step.<br>
-<b>srun_cr</b> &mdash; Checkpoint/Restart wrapper for srun.<br>
 <b>sshare</b> &mdash; User command to view shares and usage when the Multifactor
 Job Priority plugin is installed.<br>
 <b>sstat</b> &mdash; User command to view detailed statistics about running
@@ -165,7 +157,6 @@ jobs when a Job Accounting Gather plugin is installed.<br>
 <b>sview</b> &mdash; User command to view and update node, partition, and
 job state information.<br>
 
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Source-Code-Management"></a>
 <h2>Source Code Management</h2>
@@ -173,29 +164,26 @@ job state information.<br>
 <a href="https://github.com/SchedMD/slurm">https://github.com/SchedMD/slurm</a>.
 Creating your own branch will make it easier to keep it synchronized
 with our work.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Adding-New-Modules"></a>
 <h2>Adding New Modules</h2>
 <p>Add the new file name to the Makefile.am file in the appropriate directory.
-Then execute autogen.sh (at the top level of the Slurm source directory).
+Then execute autoreconf (at the top level of the Slurm source directory).
 Note that a relatively current version of auotmake is required.
-The autogen.sh program will build Makefile.in files from the Makefile.am files.
+The autoreconf program will build Makefile.in files from the Makefile.am files.
 If any new files need to be installed, update the slurm.spec file to identify
 the RPM in which the new files should be placed</p>
 
 <p>If new directories need to be added, add to the configure.ac file the path
 to the Makefile to be built in the new directory. In summary:<br>
-<u>autogen.sh</u> translates <u>.am</u> files into <u>.in</u> files<br>
+<u>autoreconf</u> translates <u>.am</u> files into <u>.in</u> files<br>
 <u>configure</u> tranlates <u>.in</u> files, adding paths and version numbers.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Compiling"></a>
 <h2>Compiling</h2>
 <p>Sending the standard output of "make" to a file makes it easier to see any
 warning or error messages:<br>
 <i>"make -j install &gt;make.out"</i></p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Configuration"></a>
 <h2>Configuration</h2>
@@ -206,7 +194,6 @@ for more details.
 <b>init.d.slurm</b> is a script that determines which
 Slurm daemon(s) should execute on any node based upon the configuration file contents.
 It will also manage these daemons: starting, signaling, restarting, and stopping them.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Test-Suite"></a>
 <h2>Test Suite</h2>
@@ -227,15 +214,13 @@ starting these tests.  Tests may be executed individually by name
 (e.g.  <i>test1.1</i>)
 or the full test suite may be executed with the single command <i>regression</i>.
 See <b>testsuite/expect/README</b> for more information.</p>
-<p class="footer"><a href="#top">top</a></p>
 
 <a id="Adding-Files-and-Directories"></a>
 <h2>Adding Files and Directories</h2>
 <p>If you are adding files and directories to Slurm, it will be necessary to
 re-build configuration files before executing the <b>configure</b> command.
 Update <b>Makefile.am</b> files as needed then execute
-<b>autogen.sh</b> before executing <b>configure</b>.
-<p class="footer"><a href="#top">top</a></p>
+<b>autoreconf</b> before executing <b>configure</b>.
 
 <a id="Tricks-of-the-Trade"></a>
 <h2>Tricks of the Trade</h2>
@@ -336,8 +321,7 @@ systemctl start/stop/restart slurmd@nodeXYZ
 </pre>
 
 </p>
-<p class="footer"><a href="#top">top</a></p>
 
-<p style="text-align:center;">Last modified 2 November 2016</p>
+<p style="text-align:center;">Last modified 23 September 2019</p>
 
 <!--#include virtual="footer.txt"-->

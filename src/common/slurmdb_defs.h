@@ -55,7 +55,9 @@
 /* This is used to point out constants that exist in the
  * TRES records.  This should be the same order as
  * the enum pointing out the order in the array that is defined in
- * src/slurmctld/slurmctld.h
+ * src/slurmctld/slurmctld.h.  If this changes please also update
+ * src/plugins/accounting_storage/filetxt/accounting_storage_filetxt.c
+ * acct_storage_p_get_tres() to reflect things as it is static.
  */
 typedef enum {
 	TRES_CPU = 1,
@@ -158,6 +160,8 @@ extern char *get_qos_complete_str(List qos_list, List num_qos_list);
 
 extern char *get_classification_str(uint16_t classification);
 extern uint16_t str_2_classification(char *classification);
+
+extern const char *rollup_interval_to_string(int interval);
 
 extern char *slurmdb_problem_str_get(uint16_t problem);
 extern uint16_t str_2_slurmdb_problem(char *problem);
@@ -290,5 +294,8 @@ extern char *slurmdb_ave_tres_usage(char *tres_string, int tasks);
 
 /* Setup cluster rec with plugin_id that indexes into select list */
 extern int slurmdb_setup_cluster_rec(slurmdb_cluster_rec_t *cluster_rec);
+
+extern void slurmdb_job_cond_def_start_end(slurmdb_job_cond_t *job_cond);
+extern int slurmdb_job_sort_by_submit_time(void *v1, void *v2);
 
 #endif

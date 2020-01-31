@@ -60,13 +60,13 @@
 #define MAX_PACK_ARRAY_LEN	(128 * 1024)
 #define MAX_PACK_MEM_LEN	(1024 * 1024 * 1024)
 
-struct slurm_buf {
+typedef struct slurm_buf {
 	uint32_t magic;
 	char *head;
 	uint32_t size;
 	uint32_t processed;
 	bool mmaped;
-};
+} buf_t;
 
 typedef struct slurm_buf * Buf;
 
@@ -293,22 +293,6 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	packmem(NULL, 0, buf); \
 } while (0)
 
-/* DEPRECATED - DO NOT USE THIS IN NEW CODE */
-/* On larger systems the full result from bit_fmt can be
- * longer than 0xfffe bytes and thus truncated.
- * Use pack_bit_str_hex instead. */
-#define pack_bit_fmt(bitmap,buf) do {			\
-	assert(buf->magic == BUF_MAGIC);		\
-	if (bitmap) {					\
-		char _tmp_str[0xfffe];			\
-		uint32_t _size;				\
-		bit_fmt(_tmp_str,0xfffe,bitmap);	\
-		_size = strlen(_tmp_str)+1;		\
-		packmem(_tmp_str,_size,buf);		\
-	} else						\
-		packmem(NULL,(uint32_t)0,buf);		\
-} while (0)
-
 #define pack_bit_str_hex(bitmap,buf) do {		\
 	assert(buf->magic == BUF_MAGIC);		\
 	if (bitmap) {					\
@@ -332,8 +316,15 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	safe_unpack32(&_size, buf);					\
 	if (_size != NO_VAL) {						\
 		safe_unpackstr_xmalloc(&tmp_str, &_tmp_uint32, buf);	\
-		*bitmap = bit_alloc(_size);				\
-		bit_unfmt_hexmask(*bitmap, tmp_str);			\
+		if (_size) {						\
+			*bitmap = bit_alloc(_size);			\
+			if (bit_unfmt_hexmask(*bitmap, tmp_str)) {	\
+				FREE_NULL_BITMAP(*bitmap);		\
+				xfree(tmp_str);				\
+				goto unpack_error;			\
+			}						\
+		} else							\
+			*bitmap = NULL;					\
 		xfree(tmp_str);						\
 	} else								\
 		*bitmap = NULL;						\
@@ -347,9 +338,6 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	*inx = bitstr2inx(b);				\
 	FREE_NULL_BITMAP(b);				\
 } while (0)
-
-#define unpackstr_ptr		                        \
-        unpackmem_ptr
 
 #define unpackstr_malloc	                        \
         unpackmem_malloc
@@ -379,6 +367,23 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	assert(sizeof(size) == sizeof(uint32_t)); 	\
 	assert(buf->magic == BUF_MAGIC);		\
 	if (unpackmem_array(valp,size,buf))		\
+		goto unpack_error;			\
+} while (0)
+
+#define safe_xcalloc(p, cnt, sz) do {			\
+	size_t _cnt = cnt;				\
+	size_t _sz = sz;				\
+	if (!_cnt || !_sz)				\
+		p = NULL;				\
+	else if (!(p = try_xcalloc(_cnt, _sz)))		\
+		goto unpack_error;			\
+} while (0)
+
+#define safe_xmalloc(p, sz) do {			\
+	size_t _sz = sz;				\
+	if (!_sz)					\
+		p = NULL;				\
+	else if (!(p = try_xmalloc(_sz)))		\
 		goto unpack_error;			\
 } while (0)
 

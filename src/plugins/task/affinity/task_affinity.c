@@ -39,6 +39,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE
+
 #include "config.h"
 
 #include <ctype.h>
@@ -97,7 +99,7 @@ extern int init (void)
 
 	slurm_getaffinity(0, sizeof(cur_mask), &cur_mask);
 	task_cpuset_to_str(&cur_mask, mstr);
-	verbose("%s loaded with CPU mask %s", plugin_name, mstr);
+	verbose("%s loaded with CPU mask 0x%s", plugin_name, mstr);
 
 	return SLURM_SUCCESS;
 }

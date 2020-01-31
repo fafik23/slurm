@@ -92,17 +92,14 @@ static int thru_put_size = 0;
 static void _get_config(void)
 {
 	char *opt;
-	char *params = slurm_get_sched_params();
+	char *sched_params = slurm_get_sched_params();
 
-	if (params) {
-		/*                    01234567890123456789012 */
-		opt = strstr(params, "jobs_per_user_per_hour=");
-		if (opt)
-			jobs_per_user_per_hour = atoi(opt + 23);
-		info("job_submit/throttle: jobs_per_user_per_hour=%d",
-		     jobs_per_user_per_hour);
-		xfree(params);
-	}
+	/*                                    01234567890123456789012 */
+	if ((opt = xstrcasestr(sched_params, "jobs_per_user_per_hour=")))
+		jobs_per_user_per_hour = atoi(opt + 23);
+	info("%s: jobs_per_user_per_hour=%d",
+	     plugin_type, jobs_per_user_per_hour);
+	xfree(sched_params);
 }
 
 static void _reset_counters(void)
@@ -150,7 +147,7 @@ extern int fini(void)
 	return SLURM_SUCCESS;
 }
 
-extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid,
+extern int job_submit(job_desc_msg_t *job_desc, uint32_t submit_uid,
 		      char **err_msg)
 {
 	int i;
@@ -180,8 +177,8 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid,
 	return SLURM_SUCCESS;
 }
 
-extern int job_modify(struct job_descriptor *job_desc,
-		      struct job_record *job_ptr, uint32_t submit_uid)
+extern int job_modify(job_desc_msg_t *job_desc, job_record_t *job_ptr,
+		      uint32_t submit_uid)
 {
 	return SLURM_SUCCESS;
 }

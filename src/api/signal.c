@@ -62,7 +62,7 @@ static int _local_send_recv_rc_msgs(const char *nodelist,
 	msg->msg_type = type;
 	msg->data = data;
 
-	if ((ret_list = slurm_send_recv_msgs(nodelist, msg, 0, false))) {
+	if ((ret_list = slurm_send_recv_msgs(nodelist, msg, 0))) {
 		while ((ret_data_info = list_pop(ret_list))) {
 			temp_rc = slurm_get_return_code(ret_data_info->type,
 							ret_data_info->data);
@@ -94,6 +94,7 @@ static int _signal_batch_script_step(const resource_allocation_response_msg_t
 		      allocation->node_list);
 		return -1;
 	}
+	memset(&rpc, 0, sizeof(rpc));
 	rpc.job_id = allocation->job_id;
 	rpc.job_step_id = SLURM_BATCH_SCRIPT;
 	rpc.signal = signal;
@@ -102,7 +103,8 @@ static int _signal_batch_script_step(const resource_allocation_response_msg_t
 	slurm_msg_t_init(&msg);
 	msg.msg_type = REQUEST_SIGNAL_TASKS;
 	msg.data = &rpc;
-	if (slurm_conf_get_addr(name, &msg.address) == SLURM_ERROR) {
+	if (slurm_conf_get_addr(name, &msg.address, msg.flags)
+	    == SLURM_ERROR) {
 		error("_signal_batch_script_step: "
 		      "can't find address for host %s, check slurm.conf",
 		      name);
@@ -125,9 +127,11 @@ static int _signal_job_step(const job_step_info_t *step,
 	int rc = SLURM_SUCCESS;
 
 	/* same remote procedure call for each node */
+	memset(&rpc, 0, sizeof(rpc));
 	rpc.job_id = step->job_id;
 	rpc.job_step_id = step->step_id;
-	rpc.signal = (uint32_t)signal;
+	rpc.signal = signal;
+
 	rc = _local_send_recv_rc_msgs(allocation->node_list,
 				      REQUEST_SIGNAL_TASKS, &rpc);
 	return rc;
@@ -148,6 +152,7 @@ static int _terminate_batch_script_step(const resource_allocation_response_msg_t
 		return -1;
 	}
 
+	memset(&rpc, 0, sizeof(rpc));
 	rpc.job_id = allocation->job_id;
 	rpc.job_step_id = SLURM_BATCH_SCRIPT;
 	rpc.signal = (uint16_t)-1; /* not used by slurmd */
@@ -156,7 +161,8 @@ static int _terminate_batch_script_step(const resource_allocation_response_msg_t
 	msg.msg_type = REQUEST_TERMINATE_TASKS;
 	msg.data = &rpc;
 
-	if (slurm_conf_get_addr(name, &msg.address) == SLURM_ERROR) {
+	if (slurm_conf_get_addr(name, &msg.address, msg.flags)
+	    == SLURM_ERROR) {
 		error("_terminate_batch_script_step: "
 		      "can't find address for host %s, check slurm.conf",
 		      name);
@@ -187,6 +193,7 @@ static int _terminate_job_step(const job_step_info_t *step,
 	/*
 	 *  Send REQUEST_TERMINATE_TASKS to all nodes of the step
 	 */
+	memset(&rpc, 0, sizeof(rpc));
 	rpc.job_id = step->job_id;
 	rpc.job_step_id = step->step_id;
 	rpc.signal = (uint16_t)-1; /* not used by slurmd */
@@ -219,8 +226,9 @@ slurm_signal_job (uint32_t job_id, uint16_t signal)
 	}
 
 	/* same remote procedure call for each node */
+	memset(&rpc, 0, sizeof(rpc));
 	rpc.job_id = job_id;
-	rpc.signal = (uint32_t)signal;
+	rpc.signal = signal;
 	rpc.flags = KILL_STEPS_ONLY;
 
 	rc = _local_send_recv_rc_msgs(alloc_info->node_list,
@@ -367,6 +375,7 @@ extern int slurm_notify_job (uint32_t job_id, char *message)
 	/*
 	 * Request message:
 	 */
+	memset(&req, 0, sizeof(req));
 	req.job_id      = job_id;
 	req.job_step_id = NO_VAL;	/* currently not used */
 	req.message     = message;

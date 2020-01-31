@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2011 Bull.
  *  Written by Martin Perry, <martin.perry@bull.com>, who borrowed heavily
- *  from other parts of SLURM
+ *  from other parts of Slurm
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of Slurm, a resource management program.
@@ -59,11 +59,9 @@
  * overwritten when linking with the slurmd.
  */
 #if defined (__APPLE__)
-slurmd_conf_t *conf __attribute__((weak_import));
-int bg_recover __attribute__((weak_import)) = NOT_FROM_CONTROLLER;
+extern slurmd_conf_t *conf __attribute__((weak_import));
 #else
 slurmd_conf_t *conf;
-int bg_recover = NOT_FROM_CONTROLLER;
 #endif
 
 
@@ -96,28 +94,60 @@ const char plugin_name[] = "Job accounting gather cgroup plugin";
 const char plugin_type[] = "jobacct_gather/cgroup";
 const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
-static void _prec_extra(jag_prec_t *prec)
+static void _prec_extra(jag_prec_t *prec, uint32_t taskid)
 {
 	unsigned long utime, stime, total_rss, total_pgpgin;
 	char *cpu_time = NULL, *memory_stat = NULL, *ptr;
 	size_t cpu_time_size = 0, memory_stat_size = 0;
+	xcgroup_t *task_cpuacct_cg = NULL;;
+	xcgroup_t *task_memory_cg = NULL;
+	bool exit_early = false;
+
+	/* Find which task cgroups to use */
+	task_memory_cg = list_find_first(task_memory_cg_list,
+					 find_task_cg_info,
+					 &taskid);
+	task_cpuacct_cg = list_find_first(task_cpuacct_cg_list,
+					  find_task_cg_info,
+					  &taskid);
+
+	/*
+	 * We should always find the task cgroups; if we don't for some reason,
+	 * just print an error and return.
+	 */
+	if (!task_cpuacct_cg) {
+		error("%s: Could not find task_cpuacct_cg, this should never happen",
+		      __func__);
+		exit_early = true;
+	}
+	if (!task_memory_cg) {
+		error("%s: Could not find task_memory_cg, this should never happen",
+		      __func__);
+		exit_early = true;
+	}
+	if (exit_early)
+		return;
 
 	//DEF_TIMERS;
 	//START_TIMER;
 	/* info("before"); */
 	/* print_jag_prec(prec); */
-	xcgroup_get_param(&task_cpuacct_cg, "cpuacct.stat",
+	xcgroup_get_param(task_cpuacct_cg, "cpuacct.stat",
 			  &cpu_time, &cpu_time_size);
 	if (cpu_time == NULL) {
 		debug2("%s: failed to collect cpuacct.stat pid %d ppid %d",
 		       __func__, prec->pid, prec->ppid);
 	} else {
 		sscanf(cpu_time, "%*s %lu %*s %lu", &utime, &stime);
+		/*
+		 * Store unnormalized times, we will normalize in when
+		 * transfering to a struct jobacctinfo in job_common_poll_data()
+		 */
 		prec->usec = utime;
 		prec->ssec = stime;
 	}
 
-	xcgroup_get_param(&task_memory_cg, "memory.stat",
+	xcgroup_get_param(task_memory_cg, "memory.stat",
 			  &memory_stat, &memory_stat_size);
 	if (memory_stat == NULL) {
 		debug2("%s: failed to collect memory.stat  pid %d ppid %d",
@@ -185,19 +215,6 @@ static void _prec_extra(jag_prec_t *prec)
 
 }
 
-static bool _run_in_daemon(void)
-{
-	static bool set = false;
-	static bool run = false;
-
-	if (!set) {
-		set = 1;
-		run = run_in_daemon("slurmstepd");
-	}
-
-	return run;
-}
-
 /*
  * init() is called when the plugin is loaded, before any other functions
  * are called.  Put global initialization here.
@@ -207,7 +224,7 @@ extern int init (void)
 	/* If running on the slurmctld don't do any of this since it
 	   isn't needed.
 	*/
-	if (_run_in_daemon()) {
+	if (running_in_slurmstepd()) {
 		jag_common_init(0);
 
 		/* initialize cpuinfo internal data */
@@ -244,7 +261,7 @@ extern int init (void)
 
 extern int fini (void)
 {
-	if (_run_in_daemon()) {
+	if (running_in_slurmstepd()) {
 		jobacct_gather_cgroup_cpuacct_fini();
 		jobacct_gather_cgroup_memory_fini();
 		/* jobacct_gather_cgroup_blkio_fini(); */
@@ -355,4 +372,25 @@ extern char* jobacct_cgroup_create_slurm_cg(xcgroup_ns_t* ns)
 	}
 
 	return pre;
+}
+
+extern int find_task_cg_info(void *x, void *key)
+{
+	task_cg_info_t *task_cg = (task_cg_info_t*)x;
+	uint32_t taskid = *(uint32_t*)key;
+
+	if (task_cg->taskid == taskid)
+		return 1;
+
+	return 0;
+}
+
+extern void free_task_cg_info(void *object)
+{
+	task_cg_info_t *task_cg = (task_cg_info_t *)object;
+
+	if (task_cg) {
+		xcgroup_destroy(&task_cg->task_cg);
+		xfree(task_cg);
+	}
 }

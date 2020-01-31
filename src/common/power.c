@@ -48,14 +48,9 @@
 #include "src/common/xstring.h"
 #include "src/slurmctld/slurmctld.h"
 
-/*
- * WARNING:  Do not change the order of these fields or add additional
- * fields at the beginning of the structure.  If you do, the plugin will stop
- * working.  If you need to add fields, add them at the end of the structure.
- */
 typedef struct slurm_power_ops {
-	void		(*job_resume)	(struct job_record *job_ptr);
-	void		(*job_start)	(struct job_record *job_ptr);
+	void		(*job_resume)	(job_record_t *job_ptr);
+	void		(*job_start)	(job_record_t *job_ptr);
 	void		(*reconfig)	(void);
 } slurm_power_ops_t;
 
@@ -166,7 +161,7 @@ extern void power_g_reconfig(void)
 }
 
 /* Note that a suspended job has been resumed */
-extern void power_g_job_resume(struct job_record *job_ptr)
+extern void power_g_job_resume(job_record_t *job_ptr)
 {
 	int i;
 
@@ -178,7 +173,7 @@ extern void power_g_job_resume(struct job_record *job_ptr)
 }
 
 /* Note that a job has been allocated resources and is ready to start */
-extern void power_g_job_start(struct job_record *job_ptr)
+extern void power_g_job_start(job_record_t *job_ptr)
 {
 	int i;
 

@@ -60,6 +60,18 @@
 /* must come after the above pmixp includes */
 #include "src/common/forward.h"
 
+extern int pmixp_count_digits_base10(uint32_t val)
+{
+	int digit_count = 0;
+
+	while (val) {
+		digit_count++;
+		val /= 10;
+	}
+
+	return digit_count;
+}
+
 void pmixp_xfree_xmalloced(void *x)
 {
 	xfree(x);
@@ -363,7 +375,8 @@ int pmixp_stepd_send(const char *nodelist, const char *address,
 
 		/* wait with constantly increasing delay */
 		struct timespec ts =
-		{(delay / 1000), ((delay % 1000) * 1000000)};
+		{(delay / MSEC_IN_SEC),
+		 ((delay % MSEC_IN_SEC) * NSEC_IN_MSEC)};
 		nanosleep(&ts, NULL);
 		delay *= 2;
 	}
@@ -394,7 +407,8 @@ static int _pmix_p2p_send_core(const char *nodename, const char *address,
 	msg.msg_type = REQUEST_FORWARD_DATA;
 	msg.data = &req;
 
-	if (slurm_conf_get_addr(nodename, &msg.address) == SLURM_ERROR) {
+	if (slurm_conf_get_addr(nodename, &msg.address, msg.flags)
+	    == SLURM_ERROR) {
 		PMIXP_ERROR("Can't find address for host "
 			    "%s, check slurm.conf", nodename);
 		return SLURM_ERROR;
@@ -460,7 +474,8 @@ int pmixp_p2p_send(const char *nodename, const char *address, const char *data,
 
 		/* wait with constantly increasing delay */
 		struct timespec ts =
-		{(delay / 1000), ((delay % 1000) * 1000000)};
+		{(delay / MSEC_IN_SEC),
+		 ((delay % MSEC_IN_SEC) * NSEC_IN_MSEC)};
 		nanosleep(&ts, NULL);
 		delay *= 2;
 	}

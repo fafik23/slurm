@@ -1,7 +1,6 @@
 <!--#include virtual="header.txt"-->
 
-<h1><a name="top">External Sensors Plugin API (ExtSensorsType)
-</a></h1>
+<h1><a name="top">External Sensors Plugin API (ExtSensorsType)</a></h1>
 
 <h2> Overview</h2>
 <p> This document describe. Slurm external sensors plugins and the API that
@@ -32,7 +31,7 @@ RRD database.
 If specified, identifies the version of Slurm used to build this plugin and
 any attempt to load the plugin from a different version of Slurm will result
 in an error.
-If not specified, then the plugin may be loadeed by Slurm commands and
+If not specified, then the plugin may be loaded by Slurm commands and
 daemons from any version, however this may result in difficult to diagnose
 failures due to changes in the arguments to plugin functions or changes
 in other Slurm functions used by the plugin.</p>
@@ -41,7 +40,6 @@ in other Slurm functions used by the plugin.</p>
 <span class="commandline">src/plugins/ext_sensors/rrd</span> and
 <span class="commandline">src/common/slurm_ext_sensors.c</span>
 for a sample implementation of a Slurm external sensors plugin.
-<p class="footer"><a href="#top">top</a>
 
 <h2>API Functions</h2>
 <p>All of the following functions are required. Functions which are not
@@ -100,7 +98,7 @@ Called by the slurmctld daemon.
 <span class="commandline">SLURM_SUCCESS</span> on success, or<br>
 <span class="commandline">SLURM_ERROR</span> on failure.
 
-<p class="commandline">extern int ext_sensors_p_get_stepstartdata(struct step_record *step_rec)
+<p class="commandline">extern int ext_sensors_p_get_stepstartdata(step_record_t *step_rec)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 Sets external sensors data in the step record when a job step starts.
 Called by slurmctld.
@@ -110,7 +108,7 @@ Called by slurmctld.
 <span class="commandline">SLURM_SUCCESS</span> on success, or<br>
 <span class="commandline">SLURM_ERROR</span> on failure.
 
-<p class="commandline">extern int ext_sensors_p_get_stependdata(struct step_record *step_rec)
+<p class="commandline">extern int ext_sensors_p_get_stependdata(step_record_t *step_rec)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 Sets external sensors data in the step record when a job step ends.
 Called by slurmctld.
@@ -130,8 +128,7 @@ plugin and the frequency at which to gather external sensors data.</p>
 <dd>Time interval between pollings in seconds.
 </dl>>
 
-<p class="footer"><a href="#top">top</a>
 
-<p style="text-align:center;">Last modified 27 March 2015</p>
+<p style="text-align:center;">Last modified 23 October 2019</p>
 
 <!--#include virtual="footer.txt"-->

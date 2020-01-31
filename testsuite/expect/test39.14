@@ -43,9 +43,12 @@ set file_out2        "test$test_id.output2"
 
 print_header $test_id
 
-set select_type [test_select_type]
-if {![string compare $select_type "cons_tres"] ||
-    (![string compare $select_type "cray"] && [test_select_type_params "other_cons_tres"])} {
+if {![test_scheduler_params "permit_job_expansion"]} {
+        send_user "\nWARNING: This test is only compatible with SchedulerParameters=permit_job_expansion\n"
+        exit $exit_code
+}
+
+if {[test_cons_tres]} {
         send_user "\nValid configuration, using select/cons_tres\n"
 } else {
         send_user "\nWARNING: This test is only compatible with select/cons_tres\n"
@@ -56,10 +59,19 @@ if {[test_front_end]} {
         exit $exit_code
 }
 
-set available [available_nodes $partition ""]
-if {$available < 2} {
-    send_user "\nWARNING: not enough nodes currently available ($available avail, $node_cnt needed)\n"
+set nb_nodes [available_nodes $partition ""]
+if {$nb_nodes < 2} {
+    send_user "\nWARNING: not enough nodes currently available ($nb_nodes avail, 2 needed)\n"
     exit $exit_code
+}
+set gpu_cnt [get_gpu_count 2]
+if {$gpu_cnt < 0} {
+	send_user "\nFAILURE: Error getting GPU count\n"
+	exit 1
+}
+if {$gpu_cnt < 1} {
+	send_user "\nWARNING: This test requires 1 or more GPUs per node in the default partition\n"
+	exit 0
 }
 
 #

@@ -46,17 +46,18 @@
 #include "src/common/node_conf.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_topology.h"
+#include "src/slurmctld/locks.h"
 
 /* These are defined here so when we link with something other than
  * the slurmctld we will have these symbols defined.  They will get
  * overwritten when linking with the slurmctld.
  */
 #if defined (__APPLE__)
-struct switch_record *switch_record_table __attribute__((weak_import)) = NULL;
-int switch_record_cnt __attribute__((weak_import)) = 0;
-int switch_levels __attribute__((weak_import)) = 0;
+extern switch_record_t *switch_record_table __attribute__((weak_import));
+extern int switch_record_cnt __attribute__((weak_import));
+extern int switch_levels __attribute__((weak_import));
 #else
-struct switch_record *switch_record_table = NULL;
+switch_record_t *switch_record_table = NULL;
 int switch_record_cnt = 0;
 int switch_levels = 0;
 #endif
@@ -93,6 +94,7 @@ const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 /* Global data */
 static uint64_t debug_flags = 0;
 static pthread_mutex_t route_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool run_in_slurmctld = false;
 
 /*****************************************************************************\
  *  Functions required of all plugins
@@ -110,6 +112,7 @@ extern int init(void)
 	}
 	xfree(topotype);
 	debug_flags = slurm_get_debug_flags();
+	run_in_slurmctld = running_in_slurmctld();
 	verbose("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }
@@ -147,10 +150,13 @@ extern int route_p_split_hostlist(hostlist_t hl,
 	char  *buf;
 	bitstr_t *nodes_bitmap = NULL;		/* nodes in message list */
 	bitstr_t *fwd_bitmap = NULL;		/* nodes in forward list */
+	slurmctld_lock_t node_read_lock = { .node = READ_LOCK };
 
 	msg_count = hostlist_count(hl);
 	slurm_mutex_lock(&route_lock);
 	if (switch_record_cnt == 0) {
+		if (run_in_slurmctld)
+			fatal_abort("%s: Somehow we have 0 for switch_record_cnt and we are here in the slurmctld.  This should never happen.", __func__);
 		/* configs have not already been processed */
 		slurm_conf_init(NULL);
 		if (init_node_conf()) {
@@ -167,11 +173,16 @@ extern int route_p_split_hostlist(hostlist_t hl,
 	}
 	slurm_mutex_unlock(&route_lock);
 	*sp_hl = (hostlist_t*) xmalloc(switch_record_cnt * sizeof(hostlist_t));
+	/* Only acquire the slurmctld lock if running as the slurmctld. */
+	if (run_in_slurmctld)
+		lock_slurmctld(node_read_lock);
 	/* create bitmap of nodes to send message too */
 	if (hostlist2bitmap (hl, false, &nodes_bitmap) != SLURM_SUCCESS) {
 		buf = hostlist_ranged_string_xmalloc(hl);
 		fatal("ROUTE: Failed to make bitmap from hostlist=%s.", buf);
 	}
+	if (run_in_slurmctld)
+		unlock_slurmctld(node_read_lock);
 
 	/* Find lowest level switch containing all the nodes in the list */
 	j = 0;

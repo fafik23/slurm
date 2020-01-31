@@ -54,15 +54,16 @@ enum {
 };
 
 enum {
-	GROUPED_TOP_ACCT,
+	GROUPED_ACCT,
 	GROUPED_WCKEY,
-	GROUPED_TOP_ACCT_AND_WCKEY,
+	GROUPED_ACCT_AND_WCKEY,
 };
 
 static List print_fields_list = NULL; /* types are of print_field_t */
 static List grouping_print_fields_list = NULL; /* types are of print_field_t */
 static int print_job_count = 0;
 static bool flat_view = false;
+static bool acct_as_parent = false;
 static bool individual_grouping = 0;
 
 /*
@@ -252,7 +253,7 @@ static int _set_cond(int *start, int argc, char **argv,
 	int command_len = 0;
 
 	if (!job_cond->cluster_list)
-		job_cond->cluster_list = list_create(slurm_destroy_char);
+		job_cond->cluster_list = list_create(xfree_ptr);
 	if (cluster_flag)
 		slurm_addto_char_list(job_cond->cluster_list, cluster_flag);
 
@@ -266,6 +267,10 @@ static int _set_cond(int *start, int argc, char **argv,
 		if (!end && !xstrncasecmp(argv[i], "all_clusters",
 					  MAX(command_len, 1))) {
 			local_cluster_flag = 1;
+			continue;
+		} else if (!end && !xstrncasecmp(argv[i], "AcctAsParent",
+						 MAX(command_len, 2))) {
+			acct_as_parent = true;
 			continue;
 		} else if (!end && !xstrncasecmp(argv[i], "PrintJobCount",
 						 MAX(command_len, 2))) {
@@ -286,16 +291,14 @@ static int _set_cond(int *start, int argc, char **argv,
 			   || !xstrncasecmp(argv[i], "Acct",
 					   MAX(command_len, 4))) {
 			if (!job_cond->acct_list)
-				job_cond->acct_list =
-					list_create(slurm_destroy_char);
+				job_cond->acct_list = list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->acct_list,
 					      argv[i]+end);
 			set = 1;
 		} else if (!xstrncasecmp(argv[i], "Associations",
 					 MAX(command_len, 2))) {
 			if (!job_cond->associd_list)
-				job_cond->associd_list =
-					list_create(slurm_destroy_char);
+				job_cond->associd_list = list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->associd_list,
 					      argv[i]+end);
 			set = 1;
@@ -309,8 +312,7 @@ static int _set_cond(int *start, int argc, char **argv,
 				slurm_addto_char_list(format_list, argv[i]+end);
 		} else if (!xstrncasecmp(argv[i], "Gid", MAX(command_len, 2))) {
 			if (!job_cond->groupid_list)
-				job_cond->groupid_list =
-					list_create(slurm_destroy_char);
+				job_cond->groupid_list = list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->groupid_list,
 					      argv[i]+end);
 			set = 1;
@@ -327,8 +329,7 @@ static int _set_cond(int *start, int argc, char **argv,
 			slurmdb_selected_step_t *selected_step = NULL;
 			char *dot = NULL;
 			if (!job_cond->step_list)
-				job_cond->step_list =
-					list_create(slurm_destroy_char);
+				job_cond->step_list = list_create(xfree_ptr);
 
 			while ((end_char = strstr(start_char, ","))) {
 				*end_char = 0;
@@ -350,7 +351,7 @@ static int _set_cond(int *start, int argc, char **argv,
 				}
 				selected_step->jobid = atoi(start_char);
 				selected_step->array_task_id = NO_VAL;
-				selected_step->pack_job_offset = NO_VAL;
+				selected_step->het_job_offset = NO_VAL;
 				start_char = end_char + 1;
 			}
 
@@ -370,7 +371,7 @@ static int _set_cond(int *start, int argc, char **argv,
 					 MAX(command_len, 2))) {
 			if (!job_cond->partition_list)
 				job_cond->partition_list =
-					list_create(slurm_destroy_char);
+					list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->partition_list,
 					      argv[i]+end);
 			set = 1;
@@ -381,16 +382,14 @@ static int _set_cond(int *start, int argc, char **argv,
 		} else if (!xstrncasecmp(argv[i], "Users",
 					 MAX(command_len, 1))) {
 			if (!job_cond->userid_list)
-				job_cond->userid_list =
-					list_create(slurm_destroy_char);
+				job_cond->userid_list = list_create(xfree_ptr);
 			_addto_uid_char_list(job_cond->userid_list,
 					     argv[i]+end);
 			set = 1;
 		} else if (!xstrncasecmp(argv[i], "Wckeys",
 					 MAX(command_len, 2))) {
 			if (!job_cond->wckey_list)
-				job_cond->wckey_list =
-					list_create(slurm_destroy_char);
+				job_cond->wckey_list = list_create(xfree_ptr);
 			slurm_addto_char_list(job_cond->wckey_list,
 					      argv[i]+end);
 			set = 1;
@@ -774,8 +773,8 @@ static int _run_report(int type, int argc, char **argv)
 	slurmdb_report_time_format_t temp_format;
 	List slurmdb_report_cluster_grouping_list = NULL;
 	List assoc_list = NULL;
-	List format_list = list_create(slurm_destroy_char);
-	List grouping_list = list_create(slurm_destroy_char);
+	List format_list = list_create(xfree_ptr);
+	List grouping_list = list_create(xfree_ptr);
 	List header_list = NULL;
 	char *object_str = "";
 
@@ -789,10 +788,11 @@ static int _run_report(int type, int argc, char **argv)
 		slurm_addto_char_list(grouping_list, "50,250,500,1000");
 
 	switch (type) {
-	case GROUPED_TOP_ACCT:
+	case GROUPED_ACCT:
 		if (!(slurmdb_report_cluster_grouping_list =
-		      slurmdb_report_job_sizes_grouped_by_top_account(
-			      db_conn, job_cond, grouping_list, flat_view))) {
+		      slurmdb_report_job_sizes_grouped_by_account(
+			      db_conn, job_cond, grouping_list, flat_view,
+			      acct_as_parent))) {
 			exit_code = 1;
 			goto end_it;
 		}
@@ -810,10 +810,11 @@ static int _run_report(int type, int argc, char **argv)
 			slurm_addto_char_list(format_list, "Cl,wc");
 		object_str = "by Wckey ";
 		break;
-	case GROUPED_TOP_ACCT_AND_WCKEY:
+	case GROUPED_ACCT_AND_WCKEY:
 		if (!(slurmdb_report_cluster_grouping_list =
-		      slurmdb_report_job_sizes_grouped_by_top_account_then_wckey(
-			      db_conn, job_cond, grouping_list, flat_view))) {
+		      slurmdb_report_job_sizes_grouped_by_account_then_wckey(
+			      db_conn, job_cond, grouping_list, flat_view,
+			      acct_as_parent))) {
 			exit_code = 1;
 			goto end_it;
 		}
@@ -838,7 +839,7 @@ static int _run_report(int type, int argc, char **argv)
 	list_iterator_destroy(itr2);
 	if (tres_cnt > 1) {
 		fprintf(stderr,
-		        " Job report only support a single --tres type.\n"
+		        " Job report only supports a single --tres type.\n"
 			" Generate a separate report for each TRES type.\n");
 		exit_code = 1;
 		goto end_it;
@@ -1015,9 +1016,9 @@ end_it:
 	return rc;
 }
 
-extern int job_sizes_grouped_by_top_acct(int argc, char **argv)
+extern int job_sizes_grouped_by_acct(int argc, char **argv)
 {
-	return _run_report(GROUPED_TOP_ACCT, argc, argv);
+	return _run_report(GROUPED_ACCT, argc, argv);
 }
 
 extern int job_sizes_grouped_by_wckey(int argc, char **argv)
@@ -1025,7 +1026,7 @@ extern int job_sizes_grouped_by_wckey(int argc, char **argv)
 	return _run_report(GROUPED_WCKEY, argc, argv);
 }
 
-extern int job_sizes_grouped_by_top_acct_and_wckey(int argc, char **argv)
+extern int job_sizes_grouped_by_acct_and_wckey(int argc, char **argv)
 {
-	return _run_report(GROUPED_TOP_ACCT_AND_WCKEY, argc, argv);
+	return _run_report(GROUPED_ACCT_AND_WCKEY, argc, argv);
 }

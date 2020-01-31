@@ -39,7 +39,9 @@ set file_in2        "test$test_id.input2"
 set file_out        "test$test_id.output"
 set file_out2       "test$test_id.output2"
 set job_id           0
-
+set gpu_tot          0
+set job_tres_cnt     0
+set hostname         ""
 
 print_header $test_id
 
@@ -48,10 +50,9 @@ if {[test_front_end]} {
         exit $exit_code
 }
 
-if {[test_launch_poe]} {
-	set node_name_env MP_I_UPMD_HOSTNAME
-} else {
-	set node_name_env SLURMD_NODENAME
+if {![get_node_config 2]} {
+	log_warn "This test requires 2 or more GPUs in a node of the default partition. Skipping.\n"
+	exit $exit_code
 }
 
 #
@@ -232,6 +233,41 @@ expect {
 
 if { $matches != 1 } {
 	send_user "\nFAILURE: Problem --exclusive and --immediate option for step ($matches != 1)\n"
+	set exit_code 1
+}
+
+#
+# Verify that all GPUs are allocated with the --exclusive flag
+#
+set job_id 0
+
+spawn $srun -N1 -w $hostname --gres=gpu --exclusive $bin_printenv SLURM_JOBID
+expect {
+	-re "($number)" {
+		set job_id $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		log_error "srun not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+set job_gpu_cnt [get_job_gpu_cnt $job_id]
+
+if {$gpu_tot != $job_gpu_cnt} {
+	log_error "Job didn't allocate all GPUs ($gpu_tot != $job_gpu_cnt)"
+	set exit_code 1
+} else {
+	log_info "Node GPU count matches Job GPU count ($gpu_tot == $job_gpu_cnt)"
+}
+
+if {[wait_for_job $job_id "DONE"] != 0} {
+	log_error "job wasn't able to complete\n"
+	cancel_job $job_id
 	set exit_code 1
 }
 

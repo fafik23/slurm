@@ -61,7 +61,7 @@
 
 #define PATH_TO_CPU	"/sys/devices/system/cpu/"
 #define LINE_LEN	100
-#define FREQ_LIST_MAX	32
+#define FREQ_LIST_MAX	64
 #define GOV_NAME_LEN	24
 
 #define GOV_CONSERVATIVE	0x01
@@ -291,7 +291,7 @@ cpu_freq_init(slurmd_conf_t *conf)
 	xfree(slurmd_spooldir);
 	slurmd_spooldir = xstrdup(conf->spooldir);
 
-	if (run_in_daemon("slurmstepd"))
+	if (running_in_slurmstepd())
 		return;
 
 	/* check for cpufreq support */
@@ -1267,9 +1267,19 @@ cpu_freq_reset(stepd_step_rec_t *job)
 {
 	int i, rc, fd;
 	char freq_detail[100];
+	uint32_t jobid;
 
 	if ((!cpu_freq_count) || (!cpufreq))
 		return;
+
+#ifdef HAVE_NATIVE_CRAY
+	if (job->het_job_id && (job->het_job_id != NO_VAL))
+		jobid = job->het_job_id;
+	else
+		jobid = job->jobid;
+#else
+	jobid = job->jobid;
+#endif
 
 	for (i = 0; i < cpu_freq_count; i++) {
 		if (cpufreq[i].new_frequency == NO_VAL
@@ -1278,7 +1288,7 @@ cpu_freq_reset(stepd_step_rec_t *job)
 		    && cpufreq[i].new_governor[0] == '\0')
 			continue; /* Nothing to reset on this CPU */
 
-		fd = _test_cpu_owner_lock(i, job->jobid);
+		fd = _test_cpu_owner_lock(i, jobid);
 		if (fd < 0)
 			continue;
 
@@ -1365,14 +1375,10 @@ cpu_freq_to_string(char *buf, int buf_size, uint32_t cpu_freq)
 				  UNIT_KILO, NO_VAL, 1000, 0);
 }
 
-/*
- * Set environment variables associated with the frequency variables.
- */
-extern int
-cpu_freq_set_env(char* var, uint32_t argmin, uint32_t argmax, uint32_t arggov)
+extern char *cpu_freq_to_cmdline(uint32_t min, uint32_t max, uint32_t gov)
 {
-	uint32_t min, max, gov;
-	char bfgov[32], bfmin[32], bfmax[32], bfall[96];
+	char bfgov[32], bfmin[32], bfmax[32];
+	char *bfall = NULL;
 	bfgov[0] = '\0';
 	bfmin[0] = '\0';
 	bfmax[0] = '\0';
@@ -1382,49 +1388,59 @@ cpu_freq_set_env(char* var, uint32_t argmin, uint32_t argmax, uint32_t arggov)
 	 * Default value from slurmstepd for batch jobs is 0
 	 * Convert slurmstepd values to command line ones.
 	 */
-	min = argmin;
 	if (min == 0)
 		min = NO_VAL;
-	max = argmax;
 	if (max == 0)
 		max = NO_VAL;
-	gov = arggov;
 	if (gov == 0)
 		gov = NO_VAL;
 
 	if ((min == NO_VAL) && (max == NO_VAL) && (gov == NO_VAL))
-		return SLURM_SUCCESS;
+		return NULL;
 
 	if (min != NO_VAL) {
 		if (min & CPU_FREQ_RANGE_FLAG) {
 			cpu_freq_to_string(bfmin, sizeof(bfmin), min);
 		} else {
-			sprintf(bfmin, "%u", min);
+			snprintf(bfmin, 32, "%u", min);
 		}
 	}
 	if (max != NO_VAL) {
 		if (max & CPU_FREQ_RANGE_FLAG) {
 			cpu_freq_to_string(bfmax, sizeof(bfmax), max);
 		} else {
-			sprintf(bfmax, "%u", max);
+			snprintf(bfmax, 32, "%u", max);
 		}
 	}
 	if (gov != NO_VAL) {
 		cpu_freq_to_string(bfgov, sizeof(bfgov), gov);
 	}
 	if ((min != NO_VAL) && (max != NO_VAL) && (gov != NO_VAL)) {
-		sprintf(bfall, "%s-%s:%s", bfmin, bfmax, bfgov);
+		xstrfmtcat(bfall, "%s-%s:%s", bfmin, bfmax, bfgov);
 	} else if ((min != NO_VAL) && (max != NO_VAL)) {
-		sprintf(bfall, "%s-%s", bfmin, bfmax);
+		xstrfmtcat(bfall, "%s-%s", bfmin, bfmax);
 	} else if (max != NO_VAL) {
-		sprintf(bfall, "%s", bfmax);
+		xstrcat(bfall, bfmax);
 	} else if (gov != NO_VAL) {
-		sprintf(bfall, "%s", bfgov);
+		xstrcat(bfall, bfgov);
 	}
-	if (setenvf(NULL, var, "%s", bfall)) {
+
+	return bfall;
+}
+
+/*
+ * Set environment variables associated with the frequency variables.
+ */
+extern int cpu_freq_set_env(char *var, uint32_t min, uint32_t max,
+			    uint32_t gov)
+{
+	char *bfall = cpu_freq_to_cmdline(min, max, gov);
+	if (bfall && setenvf(NULL, var, "%s", bfall)) {
+		xfree(bfall);
 		error("Unable to set %s", var);
 		return SLURM_ERROR;
 	}
+	xfree(bfall);
 	return SLURM_SUCCESS;
 }
 

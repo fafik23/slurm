@@ -59,6 +59,7 @@
 #include "src/common/macros.h"
 #include "src/common/node_select.h"
 #include "src/common/parse_time.h"
+#include "src/common/proc_args.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/strlcpy.h"
@@ -137,6 +138,7 @@ static void _free_node_info(void)
  * %a - Job array ID (index) number.
  * %j - Job ID
  * %u - User name
+ * %x - Job name
  */
 static void _fname_format(char *buf, int buf_size, job_info_t * job_ptr,
 			  char *fname)
@@ -180,6 +182,8 @@ static void _fname_format(char *buf, int buf_size, job_info_t * job_ptr,
 		tmp = tmp2;
 		tmp2 = NULL;
 	}
+	xstrsubstituteall(tmp, "%x", job_ptr->name);	/* Job name */
+
 	if (tmp[0] == '/')
 		snprintf(buf, buf_size, "%s", tmp);
 	else
@@ -218,7 +222,7 @@ extern void slurm_get_job_stdin(char *buf, int buf_size, job_info_t * job_ptr)
 	else if (job_ptr->batch_flag == 0)
 		snprintf(buf, buf_size, "%s", "");
 	else
-		snprintf(buf, buf_size, "%s", "StdIn=/dev/null");
+		snprintf(buf, buf_size, "%s", "/dev/null");
 }
 
 /* Given a job record pointer, return its stdout path in buf */
@@ -347,7 +351,6 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	char *tmp6_ptr;
 	char tmp_line[1024 * 128];
 	char tmp_path[MAXPATHLEN];
-	char *ionodes = NULL;
 	uint16_t exit_status = 0, term_sig = 0;
 	job_resources_t *job_resrcs = job_ptr->job_resrcs;
 	char *out = NULL;
@@ -383,16 +386,20 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 				   job_ptr->array_job_id,
 				   job_ptr->array_task_id);
 		}
-	} else if (job_ptr->pack_job_id) {
-		xstrfmtcat(out, "PackJobId=%u PackJobOffset=%u ",
-			   job_ptr->pack_job_id, job_ptr->pack_job_offset);
+		if (job_ptr->array_max_tasks) {
+			xstrfmtcat(out, "ArrayTaskThrottle=%u ",
+				   job_ptr->array_max_tasks);
+		}
+	} else if (job_ptr->het_job_id) {
+		xstrfmtcat(out, "HetJobId=%u HetJobOffset=%u ",
+			   job_ptr->het_job_id, job_ptr->het_job_offset);
 	}
 	xstrfmtcat(out, "JobName=%s", job_ptr->name);
 	xstrcat(out, line_end);
 
 	/****** Line ******/
-	if (job_ptr->pack_job_id_set) {
-		xstrfmtcat(out, "PackJobIdSet=%s", job_ptr->pack_job_id_set);
+	if (job_ptr->het_job_id_set) {
+		xstrfmtcat(out, "HetJobIdSet=%s", job_ptr->het_job_id_set);
 		xstrcat(out, line_end);
 	}
 
@@ -533,24 +540,36 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 	xstrcat(out, line_end);
 
-	/****** Line 10 ******/
-	if (job_ptr->preempt_time == 0)
-		xstrcat(out, "PreemptTime=None ");
-	else {
-		slurm_make_time_str(&job_ptr->preempt_time, time_str, sizeof(time_str));
-		xstrfmtcat(out, "PreemptTime=%s ", time_str);
+	/****** Line ******/
+	/*
+	 * only print this line if preemption is enabled and job started
+	 * 	see src/slurmctld/job_mgr.c:pack_job, 'preemptable'
+	 */
+	if (job_ptr->preemptable_time) {
+		slurm_make_time_str(&job_ptr->preemptable_time,
+				    time_str, sizeof(time_str));
+		xstrfmtcat(out, "PreemptEligibleTime=%s ", time_str);
+
+		if (job_ptr->preempt_time == 0)
+			xstrcat(out, "PreemptTime=None");
+		else {
+			slurm_make_time_str(&job_ptr->preempt_time, time_str,
+					    sizeof(time_str));
+			xstrfmtcat(out, "PreemptTime=%s", time_str);
+		}
+
+		xstrcat(out, line_end);
 	}
 
+	/****** Line 10 ******/
 	if (job_ptr->suspend_time) {
 		slurm_make_time_str(&job_ptr->suspend_time, time_str, sizeof(time_str));
 		xstrfmtcat(out, "SuspendTime=%s ", time_str);
 	} else
 		xstrcat(out, "SuspendTime=None ");
 
-	xstrfmtcat(out, "SecsPreSuspend=%ld", (long int)job_ptr->pre_sus_time);
-	xstrcat(out, line_end);
+	xstrfmtcat(out, "SecsPreSuspend=%ld ", (long int)job_ptr->pre_sus_time);
 
-	/****** Line ******/
 	slurm_make_time_str(&job_ptr->last_sched_eval, time_str,
 			    sizeof(time_str));
 	xstrfmtcat(out, "LastSchedEval=%s", time_str);
@@ -568,10 +587,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 
 	/****** Line 13 ******/
 	xstrfmtcat(out, "%s=%s", nodelist, job_ptr->nodes);
-	if (job_ptr->nodes && ionodes) {
-		xstrfmtcat(out, "[%s]", ionodes);
-		xfree(ionodes);
-	}
+
 	if (job_ptr->sched_nodes)
 		xstrfmtcat(out, " Sched%s=%s", nodelist, job_ptr->sched_nodes);
 
@@ -615,7 +631,10 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrfmtcat(out, "NumCPUs=%s ", tmp_line);
 
 	xstrfmtcat(out, "NumTasks=%u ", job_ptr->num_tasks);
-	xstrfmtcat(out, "CPUs/Task=%u ", job_ptr->cpus_per_task);
+	if (job_ptr->cpus_per_task == NO_VAL16)
+		xstrfmtcat(out, "CPUs/Task=N/A ");
+	else
+		xstrfmtcat(out, "CPUs/Task=%u ", job_ptr->cpus_per_task);
 
 	if (job_ptr->boards_per_node == NO_VAL16)
 		xstrcat(out, "ReqB:S:C:T=*:");
@@ -685,7 +704,11 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 	xstrcat(out, line_end);
 
 	if (job_resrcs && job_resrcs->core_bitmap &&
-		   ((last = bit_fls(job_resrcs->core_bitmap)) != -1)) {
+	    ((last = bit_fls(job_resrcs->core_bitmap)) != -1)) {
+
+		xstrfmtcat(out, "JOB_GRES=%s", job_ptr->gres_total);
+		xstrcat(out, line_end);
+
 		hl = hostlist_create(job_resrcs->nodes);
 		if (!hl) {
 			error("slurm_sprint_job_info: hostlist_create: %s",
@@ -761,6 +784,7 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 					hostlist_destroy(hl_last);
 					hl_last = hostlist_create(NULL);
 				}
+
 				strcpy(tmp2, tmp1);
 				if (rel_node_inx < job_ptr->gres_detail_cnt) {
 					gres_last = job_ptr->
@@ -985,6 +1009,12 @@ slurm_sprint_job_info ( job_info_t * job_ptr, int one_liner )
 		xstrcat(out, line_end);
 		xstrfmtcat(out, "TresPerTask=%s", job_ptr->tres_per_task);
 	}
+
+	/****** Line ******/
+	xstrcat(out, line_end);
+	xstrfmtcat(out, "MailUser=%s MailType=%s",
+		   job_ptr->mail_user,
+		   print_mail_type(job_ptr->mail_type));
 
 	/****** END OF JOB RECORD ******/
 	if (one_liner)
@@ -1231,7 +1261,7 @@ extern int slurm_job_batch_script(FILE *out, uint32_t jobid)
 	slurm_msg_t_init(&req);
 	slurm_msg_t_init(&resp);
 
-	memset(&msg, 0, sizeof(job_id_msg_t));
+	memset(&msg, 0, sizeof(msg));
 	msg.job_id = jobid;
 	req.msg_type = REQUEST_BATCH_SCRIPT;
 	req.data = &msg;
@@ -1269,7 +1299,7 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 		 uint16_t show_flags)
 {
 	slurm_msg_t req_msg;
-	job_info_request_msg_t req = {0};
+	job_info_request_msg_t req;
 	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
@@ -1292,6 +1322,7 @@ slurm_load_jobs (time_t update_time, job_info_msg_t **job_info_msg_pptr,
 	}
 
 	slurm_msg_t_init(&req_msg);
+	memset(&req, 0, sizeof(req));
 	req.last_update  = update_time;
 	req.show_flags   = show_flags;
 	req_msg.msg_type = REQUEST_JOB_INFO;
@@ -1327,7 +1358,7 @@ extern int slurm_load_job_user (job_info_msg_t **job_info_msg_pptr,
 				uint16_t show_flags)
 {
 	slurm_msg_t req_msg;
-	job_user_id_msg_t req = {0};
+	job_user_id_msg_t req;
 	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
@@ -1343,6 +1374,7 @@ extern int slurm_load_job_user (job_info_msg_t **job_info_msg_pptr,
 	}
 
 	slurm_msg_t_init(&req_msg);
+	memset(&req, 0, sizeof(req));
 	req.show_flags   = show_flags;
 	req.user_id      = user_id;
 	req_msg.msg_type = REQUEST_JOB_USER_INFO;
@@ -1379,7 +1411,7 @@ slurm_load_job (job_info_msg_t **job_info_msg_pptr, uint32_t job_id,
 		uint16_t show_flags)
 {
 	slurm_msg_t req_msg;
-	job_id_msg_t req = {0};
+	job_id_msg_t req;
 	char *cluster_name = NULL;
 	void *ptr = NULL;
 	slurmdb_federation_rec_t *fed;
@@ -1394,7 +1426,7 @@ slurm_load_job (job_info_msg_t **job_info_msg_pptr, uint32_t job_id,
 		}
 	}
 
-	memset(&req, 0, sizeof(job_id_msg_t));
+	memset(&req, 0, sizeof(req));
 	slurm_msg_t_init(&req_msg);
 	req.job_id       = job_id;
 	req.show_flags   = show_flags;
@@ -1441,7 +1473,8 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 
 	if (cluster_flags & CLUSTER_FLAG_MULTSD) {
 		if ((this_addr = getenv("SLURMD_NODENAME"))) {
-			slurm_conf_get_addr(this_addr, &req_msg.address);
+			slurm_conf_get_addr(this_addr, &req_msg.address,
+					    req_msg.flags);
 		} else {
 			this_addr = "localhost";
 			slurm_set_addr(&req_msg.address,
@@ -1463,6 +1496,7 @@ slurm_pid2jobid (pid_t job_pid, uint32_t *jobid)
 		xfree(this_addr);
 	}
 
+	memset(&req, 0, sizeof(req));
 	req.job_pid      = job_pid;
 	req_msg.msg_type = REQUEST_JOB_ID;
 	req_msg.data     = &req;
@@ -1557,7 +1591,7 @@ slurm_get_end_time(uint32_t jobid, time_t *end_time_ptr)
 	int rc;
 	slurm_msg_t resp_msg;
 	slurm_msg_t req_msg;
-	job_alloc_info_msg_t job_msg = {0};
+	job_alloc_info_msg_t job_msg;
 	srun_timeout_msg_t *timeout_msg;
 	time_t now = time(NULL);
 	static uint32_t jobid_cache = 0;
@@ -1594,6 +1628,7 @@ slurm_get_end_time(uint32_t jobid, time_t *end_time_ptr)
 		return SLURM_SUCCESS;
 	}
 
+	memset(&job_msg, 0, sizeof(job_msg));
 	job_msg.job_id     = jobid;
 	req_msg.msg_type   = REQUEST_JOB_END_TIME;
 	req_msg.data       = &job_msg;
@@ -1644,7 +1679,7 @@ extern int slurm_job_node_ready(uint32_t job_id)
 	slurm_msg_t_init(&req);
 	slurm_msg_t_init(&resp);
 
-	memset(&msg, 0, sizeof(job_id_msg_t));
+	memset(&msg, 0, sizeof(msg));
 	msg.job_id   = job_id;
 	req.msg_type = REQUEST_JOB_READY;
 	req.data     = &msg;
@@ -2074,10 +2109,8 @@ static int _load_fed_job_prio(slurm_msg_t *req_msg,
 			continue;
 		hash_job_inx = prio_obj->job_id % JOB_HASH_SIZE;
 		if (prio_obj->partition) {
-			uint32_t hf_hashv = 0;
 			HASH_FCN(prio_obj->partition,
-				 strlen(prio_obj->partition), 1000000,
-				 hf_hashv, hash_part_inx);
+				 strlen(prio_obj->partition), hash_part_inx);
 		} else {
 			hash_part_inx = 0;
 		}
@@ -2156,7 +2189,7 @@ slurm_load_job_prio(priority_factors_response_msg_t **factors_resp,
 		show_flags &= (~SHOW_FEDERATION);
 	}
 
-	memset(&factors_req, 0, sizeof(priority_factors_request_msg_t));
+	memset(&factors_req, 0, sizeof(factors_req));
 	factors_req.job_id_list = job_id_list;
 	factors_req.partitions  = partitions;
 	factors_req.uid_list    = uid_list;
