@@ -315,10 +315,6 @@ AC_SUBST(HAVE_MAN2HTML)
 
 dnl check if we can use standard printf functions
 dnl
-old_CFLAGS=$CFLAGS
-AX_CHECK_COMPILE_FLAG([-Wformat-truncation],
-		      [CFLAGS=$CFLAGS" -Wno-format-truncation"],
-		      [],[-Werror])
 X_AC_PRINTF_NULL
 
 dnl Check for whether to include readline support
@@ -539,8 +535,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/priority/Makefile
 		 src/plugins/priority/basic/Makefile
 		 src/plugins/priority/multifactor/Makefile
-		 src/plugins/prep/Makefile
-		 src/plugins/prep/script/Makefile
 		 src/plugins/proctrack/Makefile
 		 src/plugins/proctrack/cray_aries/Makefile
 		 src/plugins/proctrack/cgroup/Makefile
